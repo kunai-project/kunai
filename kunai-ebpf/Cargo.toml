@@ -1,0 +1,49 @@
+# used to specify --cfg debug in config.toml
+cargo-features = ["profile-rustflags"]
+
+[package]
+name = "kunai-ebpf"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# enable debug probes
+debug = []
+
+[dependencies]
+aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
+kunai-common = { path = "../kunai-common" }
+kunai-macros = { path = "../kunai-macros" }
+paste = "1.0"
+
+[[bin]]
+name = "kunai-ebpf"
+path = "src/main.rs"
+
+[profile.dev]
+opt-level = 3
+# prevents LLVM from segfaulting
+debug = 2
+debug-assertions = false
+overflow-checks = false
+lto = true
+panic = "abort"
+incremental = false
+codegen-units = 1
+rpath = false
+
+[profile.release]
+# prevents LLVM from segfaulting
+debug = 2
+debug-assertions = false
+lto = true
+panic = "abort"
+codegen-units = 1
+
+[workspace]
+members = []
+
+[patch.'https://github.com/aya-rs/aya']
+#aya-bpf = { path = "/home/quentin/Workspace/Rust/aya-dev/bpf/aya-bpf" }
+#aya-log-ebpf = { path = "/home/quentin/Workspace/Rust/aya-dev/bpf/aya-log-ebpf" }

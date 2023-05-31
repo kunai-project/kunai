@@ -1,0 +1,107 @@
+use super::*;
+use aya_bpf::{maps::LruHashMap, programs::ProbeContext};
+
+#[map]
+static mut BPF_PROG_TRACK: LruHashMap<u64, co_re::bpf_prog> = LruHashMap::with_max_entries(1024, 0);
+
+// this function gets called at the end of bpf_prog_load
+// and contains all useful information about program
+// being loaded
+#[kprobe(name = "entry.security_bpf_prog")]
+pub fn security_bpf_prog_alloc(ctx: ProbeContext) -> u32 {
+    match unsafe { try_security_bpf_prog(&ctx) } {
+        Ok(_) => error::BPF_PROG_SUCCESS,
+        Err(s) => {
+            log_err!(&ctx, s);
+            error::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_security_bpf_prog(ctx: &ProbeContext) -> ProbeResult<()> {
+    let bpf_prog = co_re::bpf_prog::from_ptr(ctx.arg(0).ok_or(ProbeError::KProbeArgFailure)?);
+
+    ignore_result!(BPF_PROG_TRACK.insert(&bpf_task_tracking_id(), &bpf_prog, 0));
+
+    Ok(())
+}
+
+// this probe gets executed after security_bpf_prog because of fexit
+#[kretprobe(name = "exit.bpf_prog_load")]
+pub fn bpf_prog_load(ctx: ProbeContext) -> u32 {
+    match unsafe { try_bpf_prog_load(&ctx) } {
+        Ok(_) => error::BPF_PROG_SUCCESS,
+        Err(s) => {
+            log_err!(&ctx, s);
+            error::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
+    let rc = ctx.ret().unwrap_or(-1);
+    let key = bpf_task_tracking_id();
+
+    if let Some(bpf_prog) = BPF_PROG_TRACK.get(&key) {
+        alloc::init()?;
+
+        let bpf_prog_aux = bpf_prog.aux().ok_or(ProbeError::CoReFieldMissing)?;
+
+        let event = alloc::alloc_zero::<BpfProgLoadEvent>()?;
+
+        if let Some(ksym) = bpf_prog_aux.ksym() {
+            if let Some(p_name) = ksym.name() {
+                ignore_result!(event.data.ksym.read_kernel_str_bytes(p_name));
+            }
+        }
+
+        event.data.id = bpf_prog_aux.id().unwrap_or_default();
+        event.data.tag = bpf_prog.tag_array();
+
+        if let Some(p_name) = bpf_prog_aux.name() {
+            if !p_name.is_null() {
+                // for unclear reason program name sometime fails to be read
+                ignore_result!(event.data.name.read_kernel_str_bytes(p_name));
+                /*inspect_err!(event.data.name.read_kernel_str_bytes(p_name), |_| error!(
+                    ctx,
+                    "failed to read bpf program name: id={} name={:x}",
+                    event.data.id,
+                    p_name as usize,
+                ));*/
+            }
+        }
+
+        event.data.prog_type = bpf_prog.ty().unwrap_or_default();
+        event.data.attach_type = bpf_prog.expected_attach_type().unwrap_or_default();
+
+        // problematic on ubuntu 22.04 (kernel 5.15.0-70-generic)
+        // needs to be implemented like that not to cause a read_ok! verifier error
+        // on some kernels
+        if let Some(vi) = bpf_prog_aux.verified_insns() {
+            event.data.verified_insns = Some(vi)
+        }
+
+        // get attached_func_name
+        if let Some(afn) = bpf_prog_aux.attach_func_name() {
+            inspect_err!(
+                event.data.attached_func_name.read_kernel_str_bytes(afn),
+                |_| error!(ctx, "failed to read attach_func_name")
+            );
+        }
+
+        // initializing event from task
+        event.init_from_btf_task(Type::BpfProgLoad);
+
+        // successful loading if rc > 0
+        event.data.loaded = rc > 0;
+
+        pipe_event(ctx, event);
+    } else {
+        error!(ctx, "failed to retrieve BPF program load event")
+    }
+
+    // we use a LruHashmap so we can safely ignore result
+    ignore_result!(BPF_PROG_TRACK.remove(&key));
+
+    Ok(())
+}

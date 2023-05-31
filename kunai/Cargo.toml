@@ -1,0 +1,52 @@
+[package]
+name = "kunai"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Non aya deps
+hex = "0.4.3"
+md-5 = "0.10.5"
+sha1 = "0.10.5"
+sha2 = "0.10.6"
+chrono = { version = "0.4.24", features = ["clock"] }
+libc = "0.2"
+json = "0.12"
+thiserror = "1.0"
+procfs = "0.15"
+users = "0.11"
+ip_network = "0.4"
+
+lru-st = { git = "https://github.com/0xrawsec/lru-st/", branch = "master", features = [
+    "async",
+] }
+
+aya = { git = "https://github.com/aya-rs/aya", branch = "main", features = [
+    "async_tokio",
+] }
+# part of tokio framework
+bytes = "1"
+futures = "0.3"
+
+aya-log = { git = "https://github.com/aya-rs/aya", branch = "main" }
+aya-obj = { git = "https://github.com/aya-rs/aya", branch = "main" }
+kunai-common = { path = "../kunai-common", features = ["user"] }
+anyhow = "1.0.68"
+env_logger = "0.10"
+log = "0.4"
+tokio = { version = "1.24", features = [
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "net",
+    "signal",
+    "fs",
+    "io-util",
+    "time",
+    "sync",
+] }
+
+[[bin]]
+name = "kunai"
+path = "src/main.rs"
