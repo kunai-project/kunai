@@ -1,5 +1,5 @@
 use super::*;
-use aya_bpf::cty::c_long;
+
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::ProbeContext;
 use kunai_common::inspect_err;
@@ -71,7 +71,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     );
 
     if event.data.path.starts_with("/etc/") {
-        event.init_from_btf_task(Type::ReadConfig);
+        event.init_from_btf_task(Type::ReadConfig)?;
         pipe_event(ctx, event);
     }
 
@@ -119,7 +119,7 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
     );
 
     if event.data.path.starts_with("/etc/") {
-        event.init_from_btf_task(Type::WriteConfig);
+        event.init_from_btf_task(Type::WriteConfig)?;
         pipe_event(ctx, event);
     }
 
@@ -151,7 +151,7 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
     alloc::init()?;
     let event = alloc::alloc_zero::<FileRenameEvent>()?;
 
-    event.init_from_btf_task(Type::FileRename);
+    event.init_from_btf_task(Type::FileRename)?;
 
     let name = core_read_kernel!(old_dentry, d_name, name)?;
     let len = core_read_kernel!(old_dentry, d_name, len)?;

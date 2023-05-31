@@ -60,7 +60,7 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
     let args = SysEnterArgs::<InitModuleArgs>::from_context(ctx)?.args;
     let event = alloc::alloc_zero::<InitModuleEvent>()?;
 
-    event.init_from_btf_task(Type::InitModule);
+    event.init_from_btf_task(Type::InitModule)?;
 
     // setting event data
     event.data.umod = args.umod;

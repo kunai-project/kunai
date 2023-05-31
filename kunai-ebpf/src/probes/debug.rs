@@ -1,4 +1,4 @@
-use aya_bpf::{bindings::task_struct, programs::ProbeContext};
+use aya_bpf::{programs::ProbeContext};
 
 #[allow(unused_imports)]
 use super::*;

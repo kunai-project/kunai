@@ -146,6 +146,8 @@ pub enum Error {
     BootTimeMissing,
     #[error("group_leader field is missing")]
     GroupLeaderMissing,
+    #[error("comm field is missing")]
+    CommMissing,
 }
 
 }
@@ -173,7 +175,7 @@ impl TaskInfo {
 
         // copy comm
         //self.comm.copy_from_slice(&task.comm()[..]);
-        self.comm = task.comm();
+        self.comm = task.comm_array().ok_or(Error::CommMissing)?;
 
         // if task_struct is valid cannot be null
         self.uid = task.cred().ok_or(Error::CredFieldMissing)?.uid();

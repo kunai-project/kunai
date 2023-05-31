@@ -36,7 +36,7 @@ unsafe fn try_sys_enter_exit(ctx: &TracePointContext, t: Type) -> ProbeResult<()
     let args = SysEnterArgs::<SysEnterExitArgs>::from_context(ctx)?.args;
     let event = alloc::alloc_zero::<ExitEvent>()?;
 
-    event.init_from_btf_task(t);
+    event.init_from_btf_task(t)?;
 
     // set event data
     event.data.error_code = args.error_code;

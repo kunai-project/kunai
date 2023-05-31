@@ -78,7 +78,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
-    event.init_from_btf_task(Type::TaskSched);
+    event.init_from_btf_task(Type::TaskSched)?;
 
     // we do not really care if that is failing
     inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {

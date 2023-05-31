@@ -45,7 +45,7 @@ unsafe fn try_exit_connect(
     alloc::init()?;
     let event = alloc::alloc_zero::<events::ConnectEvent>()?;
 
-    event.init_from_btf_task(events::Type::Connect);
+    event.init_from_btf_task(events::Type::Connect)?;
 
     let ip_port = match sa_family {
         AF_INET => {

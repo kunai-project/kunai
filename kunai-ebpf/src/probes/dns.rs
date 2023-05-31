@@ -269,7 +269,6 @@ impl SockHelper {
     unsafe fn dns_event(
         &self,
         ctx: &ProbeContext,
-        event_ts: u64,
         opt_server: Option<IpPort>, // optional server IpPort
         tcp_header: bool,           // whether the data contains tcp_header
     ) -> ProbeResult<()> {
@@ -313,7 +312,7 @@ impl SockHelper {
             }
         }
 
-        event.init_from_btf_task(events::Type::DnsQuery);
+        event.init_from_btf_task(events::Type::DnsQuery)?;
         pipe_event(ctx, event);
 
         Ok(())
@@ -351,7 +350,7 @@ unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
         rc as usize,
     );
 
-    sh.dns_event(ctx, entry_ctx.timestamp, None, true)?;
+    sh.dns_event(ctx, None, true)?;
 
     Ok(())
 }
@@ -399,7 +398,7 @@ unsafe fn try_exit_recv(
         rc as usize,
     );
 
-    sh.dns_event(exit_ctx, entry_ctx.timestamp, None, false)?;
+    sh.dns_event(exit_ctx, None, false)?;
 
     Ok(())
 }
@@ -463,6 +462,6 @@ unsafe fn try_exit_recvmsg(
         }
     }
 
-    sh.dns_event(exit_ctx, entry_ctx.timestamp, server, false)?;
+    sh.dns_event(exit_ctx, server, false)?;
     Ok(())
 }

@@ -42,7 +42,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     alloc::init()?;
     let event = alloc::alloc_zero::<SendEntropyEvent>()?;
 
-    event.init_from_btf_task(events::Type::SendData);
+    event.init_from_btf_task(events::Type::SendData)?;
 
     let iov_iter = pmsg.msg_iter().ok_or(ProbeError::CoReFieldMissing)?;
 

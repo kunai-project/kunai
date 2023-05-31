@@ -1,5 +1,5 @@
 use super::gen::{self, *};
-use super::{rust_shim_impl, CoRe};
+use super::{CoRe};
 
 #[allow(non_camel_case_types)]
 pub type cred = CoRe<gen::cred>;

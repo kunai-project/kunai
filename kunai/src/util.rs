@@ -24,6 +24,7 @@ pub(crate) fn get_clk_tck() -> i64 {
 
 // inspired from: https://github.com/itchyny/uptime-rs
 // the code panics if we cannot retrieve boot time
+#[allow(dead_code)]
 pub(crate) fn get_boot_time() -> DateTime<Utc> {
     let mut info: libc::sysinfo = unsafe { zeroed() };
     let ret = unsafe { libc::sysinfo(&mut info) };

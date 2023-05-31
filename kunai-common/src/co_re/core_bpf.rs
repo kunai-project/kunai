@@ -1,4 +1,4 @@
-use aya_bpf::helpers::{bpf_probe_read_kernel_buf};
+use aya_bpf::helpers::bpf_probe_read_kernel_buf;
 
 use super::gen::{self, *};
 use super::{rust_shim_impl, CoRe};
@@ -21,12 +21,12 @@ impl bpf_prog {
     rust_shim_impl!(pub, bpf_prog, aux, bpf_prog_aux);
     rust_shim_impl!(pub, bpf_prog, tag, *mut u8);
 
-    pub unsafe fn tag_array(&self) -> [u8; 8] {
+    pub unsafe fn tag_array(&self) -> Option<[u8; 8]> {
         let mut out = [0; 8];
         if let Some(tag) = self.tag() {
-            bpf_probe_read_kernel_buf(tag, out.as_mut_slice());
+            bpf_probe_read_kernel_buf(tag, out.as_mut_slice()).ok()?;
         }
-        out
+        Some(out)
     }
 }
 

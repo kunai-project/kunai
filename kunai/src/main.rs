@@ -57,13 +57,11 @@ impl StdEventInfo {
         CorrInfo::corr_key(self.info.parent.tg_uuid)
     }
 
-    fn from_event_info(mut i: EventInfo, rand: u32, boot_time_sec: DateTime<Utc>) -> Self {
-        let ts_since_boot = chrono::Duration::nanoseconds(i.timestamp as i64);
+    fn from_event_info(mut i: EventInfo, rand: u32) -> Self {
         // we set the random part needed to generate uuids for events
         i.set_uuid_random(rand);
         StdEventInfo {
             info: i,
-            //utc_timestamp: boot_time_sec + ts_since_boot,
             // on older kernels bpf_ktime_get_boot_ns() is not available so it is not
             // easy to compute correct event timestamp from eBPF so utc_timestamp is
             // the time at which the event is processed.
@@ -200,7 +198,6 @@ struct CorrelationData {
 }
 
 struct EventProcessor {
-    utc_boot_time_sec: DateTime<Utc>,
     random: u32,
     hcache: hcache::Hcache,
     batch: usize,
@@ -228,7 +225,6 @@ impl EventProcessor {
 
     pub fn init(bpf: &mut Bpf) -> Arc<Mutex<Self>> {
         let mut ep = EventProcessor {
-            utc_boot_time_sec: util::get_boot_time(),
             random: util::getrandom::<u32>().unwrap(),
             hcache: hcache::Hcache::with_max_entries(0x1000),
             pipe: VecDeque::new(),
@@ -690,7 +686,7 @@ impl EventProcessor {
             return;
         }
 
-        let std_info = StdEventInfo::from_event_info(*i, self.random, self.utc_boot_time_sec);
+        let std_info = StdEventInfo::from_event_info(*i, self.random);
 
         match i.etype {
             events::Type::Execve => match unsafe { enc_event.as_event_with_data() } {
@@ -810,7 +806,7 @@ impl EventProcessor {
             .iter()
             .enumerate()
             .rev()
-            .find(|(i, e)| {
+            .find(|(_, e)| {
                 unsafe { e.info() }
                     .expect("info should never fail here")
                     .batch

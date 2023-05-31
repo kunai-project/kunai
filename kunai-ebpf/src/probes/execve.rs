@@ -90,7 +90,7 @@ unsafe fn execve_event<C: BpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
     let event = &mut (*event);
 
     // initializing event
-    event.init_from_btf_task(Type::Execve);
+    event.init_from_btf_task(Type::Execve)?;
 
     // file should not be null here
     // we are getting interpreter which is set to the file attribute by exec_binprm kernel function

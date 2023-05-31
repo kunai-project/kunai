@@ -43,11 +43,12 @@ impl task_struct {
         self.start_boottime()
     }
 
-    pub unsafe fn comm(&self) -> [u8; 16] {
-        let mut comm = [0u8; 16];
-        bpf_probe_read_kernel_buf(shim_task_struct_comm(self.as_ptr_mut()), &mut comm[..]);
+    rust_shim_impl!(pub, task_struct, comm, *mut u8);
 
-        comm
+    pub unsafe fn comm_array(&self) -> Option<[u8; 16]> {
+        let mut comm = [0u8; 16];
+        bpf_probe_read_kernel_buf(self.comm()?, comm.as_mut_slice()).ok()?;
+        Some(comm)
     }
 
     rust_shim_impl!(pub, task_struct, tgid, pid_t);

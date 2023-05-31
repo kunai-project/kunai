@@ -55,8 +55,8 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
             }
         }
 
-        event.data.id = bpf_prog_aux.id().unwrap_or_default();
-        event.data.tag = bpf_prog.tag_array();
+        event.data.id = core_read_kernel!(bpf_prog_aux, id)?;
+        event.data.tag = core_read_kernel!(bpf_prog, tag_array)?;
 
         if let Some(p_name) = bpf_prog_aux.name() {
             if !p_name.is_null() {
@@ -90,7 +90,7 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
         }
 
         // initializing event from task
-        event.init_from_btf_task(Type::BpfProgLoad);
+        event.init_from_btf_task(Type::BpfProgLoad)?;
 
         // successful loading if rc > 0
         event.data.loaded = rc > 0;
