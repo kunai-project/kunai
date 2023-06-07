@@ -334,7 +334,8 @@ pub fn exit_vfs_read(ctx: ProbeContext) -> u32 {
 unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     let rc = ctx.ret().unwrap_or(-1);
 
-    let entry_ctx = restore_entry_ctx(ProbeFn::vfs_read).ok_or(ProbeError::KProbeArgFailure)?;
+    let entry_ctx =
+        restore_entry_ctx(ProbeFn::vfs_read).ok_or(ProbeError::KProbeCtxRestoreFailure)?;
     let saved_ctx = entry_ctx.restore();
 
     let file = co_re::file::from_ptr(kprobe_arg!(&saved_ctx, 0)?);

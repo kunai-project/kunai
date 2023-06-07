@@ -7,9 +7,10 @@ not_bpf_target_code! {
 }
 
 bpf_target_code! {
+    use crate::co_re::core_read_kernel;
     use crate::co_re::task_struct;
     use aya_bpf::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
-    use aya_bpf::cty::c_void;
+    use aya_bpf::cty::{c_void};
     use kunai_macros::BpfError;
 }
 
@@ -22,6 +23,7 @@ pub use connect::*;
 mod execve;
 pub use execve::*;
 mod mmap;
+use kunai_macros::StrEnum;
 pub use mmap::*;
 mod mprotect;
 pub use mprotect::*;
@@ -39,56 +41,71 @@ mod bpf;
 pub use bpf::*;
 mod schedule;
 pub use schedule::*;
+mod mount;
+pub use mount::*;
+
+// used to pipe events to userland
 mod perfs;
 pub use perfs::*;
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[repr(u32)]
+#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Type {
+    #[str("unknown")]
     Unknown = 0,
-    Execve,
-    ExecveScript,
-    TaskSched,
-    BpfProgLoad,
-    MprotectExec,
-    MmapExec,
-    Connect,
-    DnsQuery,
-    SendData,
-    InitModule,
-    ReadConfig,
-    WriteConfig,
-    FileRename,
-    Exit,
-    ExitGroup,
-}
 
-impl Type {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Type::Unknown => "unknown",
-            Type::Execve => "execve",
-            Type::ExecveScript => "execve_script",
-            Type::TaskSched => "task_sched",
-            Type::BpfProgLoad => "bpf_prog_load",
-            Type::MprotectExec => "mprotect_exec",
-            Type::MmapExec => "mmap_exec",
-            Type::Connect => "connect",
-            Type::DnsQuery => "dns_query",
-            Type::SendData => "send_data",
-            Type::InitModule => "init_module",
-            Type::ReadConfig => "read_config",
-            Type::WriteConfig => "write_config",
-            Type::FileRename => "file_rename",
-            Type::Exit => "exit",
-            Type::ExitGroup => "exit_group",
-        }
-    }
+    // process events
+    #[str("execve")]
+    Execve,
+    #[str("execve_script")]
+    ExecveScript,
+    #[str("task_sched")]
+    TaskSched,
+    #[str("exit")]
+    Exit,
+    #[str("exit_group")]
+    ExitGroup,
+
+    // stuff loaded in kernel
+    #[str("init_module")]
+    InitModule = 20,
+    #[str("bpf_prog_load")]
+    BpfProgLoad,
+
+    // memory stuffs
+    #[str("mprotect_exec")]
+    MprotectExec = 40,
+    #[str("mmap_exec")]
+    MmapExec,
+
+    // networking events
+    #[str("connect")]
+    Connect = 60,
+    #[str("dns_query")]
+    DnsQuery,
+    #[str("send_data")]
+    SendData,
+
+    // filesystem events
+    #[str("mount")]
+    Mount = 80,
+    #[str("read_config")]
+    ReadConfig,
+    #[str("write_config")]
+    WriteConfig,
+    #[str("file_rename")]
+    FileRename,
 }
 
 impl Default for Type {
     fn default() -> Self {
         Self::Unknown
+    }
+}
+
+impl Type {
+    pub fn id(&self) -> u32 {
+        *self as u32
     }
 }
 
@@ -104,6 +121,12 @@ not_bpf_target_code! {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
+pub struct Namespaces {
+    pub mnt: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct TaskInfo {
     pub comm: [u8; COMM_SIZE],
     pub uid: u32,
@@ -115,6 +138,7 @@ pub struct TaskInfo {
     pub pid: i32,
     // task group uuid -> used to group tasks
     pub tg_uuid: TaskUuid,
+    pub namespaces: Namespaces,
     pub start_time: u64,
 }
 
@@ -132,56 +156,60 @@ impl TaskInfo {
 
 bpf_target_code! {
 
-#[derive(BpfError)]
-pub enum Error {
-    #[error("pid field is missing")]
-    PidFieldMissing,
-    #[error("tgid field is missing")]
-    TgidFieldMissing,
-    #[error("cred field is missing")]
-    CredFieldMissing,
-    #[error("real_parent field is missing")]
-    RealParentFieldMissing,
-    #[error("boot time field is missing")]
-    BootTimeMissing,
-    #[error("group_leader field is missing")]
-    GroupLeaderMissing,
-    #[error("comm field is missing")]
-    CommMissing,
-}
+    #[derive(BpfError)]
+    pub enum Error {
+        #[error("pid field is missing")]
+        PidFieldMissing,
+        #[error("tgid field is missing")]
+        TgidFieldMissing,
+        #[error("cred field is missing")]
+        CredFieldMissing,
+        #[error("real_parent field is missing")]
+        RealParentFieldMissing,
+        #[error("boot time field is missing")]
+        BootTimeMissing,
+        #[error("group_leader field is missing")]
+        GroupLeaderMissing,
+        #[error("comm field is missing")]
+        CommMissing,
+        #[error("mnt_namespace")]
+        MntNamespaceFailure,
+    }
 
 }
 
-#[cfg(target_arch = "bpf")]
-impl TaskInfo {
-    /// # Safety
-    /// * task must be a pointer to a valid task_struct
-    #[inline(always)]
-    pub(crate) unsafe fn from_task(&mut self, task: &task_struct) -> Result<(), Error> {
-        // process start time
-        self.start_time = task.start_boottime().ok_or(Error::BootTimeMissing)?;
-        self.tgid = task.tgid().ok_or(Error::TgidFieldMissing)?;
-        self.pid = task.pid().ok_or(Error::PidFieldMissing)?;
+bpf_target_code! {
+    impl TaskInfo {
+        /// # Safety
+        /// * task must be a pointer to a valid task_struct
+        #[inline(always)]
+        pub(crate) unsafe fn from_task(&mut self, task: &task_struct) -> Result<(), Error> {
+            // process start time
+            self.start_time = task.start_boottime().ok_or(Error::BootTimeMissing)?;
+            self.tgid = task.tgid().ok_or(Error::TgidFieldMissing)?;
+            self.pid = task.pid().ok_or(Error::PidFieldMissing)?;
 
-        // the leader structure member points to the task leader of the thread group
-        let leader = task.group_leader().ok_or(Error::GroupLeaderMissing)?;
+            // the leader structure member points to the task leader of the thread group
+            let leader = task.group_leader().ok_or(Error::GroupLeaderMissing)?;
 
-        // start_time is the time in jiffies and is contained in /proc/$pid/stat
-        // file -> this way we can also compute unique ID from procfs
-        self.tg_uuid.init(
-            leader.start_boottime().ok_or(Error::BootTimeMissing)?,
-            self.tgid as u32,
-        );
+            // start_time is the time in jiffies and is contained in /proc/$pid/stat
+            // file -> this way we can also compute unique ID from procfs
+            self.tg_uuid.init(
+                leader.start_boottime().ok_or(Error::BootTimeMissing)?,
+                self.tgid as u32,
+            );
 
-        // copy comm
-        //self.comm.copy_from_slice(&task.comm()[..]);
-        self.comm = task.comm_array().ok_or(Error::CommMissing)?;
+            // copy comm
+            self.comm = task.comm_array().ok_or(Error::CommMissing)?;
 
-        // if task_struct is valid cannot be null
-        self.uid = task.cred().ok_or(Error::CredFieldMissing)?.uid();
-        self.gid = task.cred().ok_or(Error::CredFieldMissing)?.gid();
+            // if task_struct is valid cannot be null
+            self.uid = task.cred().ok_or(Error::CredFieldMissing)?.uid();
+            self.gid = task.cred().ok_or(Error::CredFieldMissing)?.gid();
 
-        Ok(())
+            self.namespaces.mnt = core_read_kernel!(task, nsproxy, mnt_ns, ns, inum).ok_or(Error::MntNamespaceFailure)?;
+
+            Ok(())
+        }
     }
 }
 
@@ -285,6 +313,7 @@ bpf_target_code! {
 not_bpf_target_code! {
 
     #[repr(C)]
+    #[derive(Clone)]
     pub struct EncodedEvent {
         event: Vec<u8>,
     }
@@ -337,6 +366,7 @@ not_bpf_target_code! {
             Ok(&(*(self.event.as_ptr() as *const Event<D>)))
         }
 
+
         /// # Safety
         /// * the bytes decoded must be a valid Event<T>
         pub unsafe fn as_mut_event_with_data<D>(&mut self) -> Result<&mut Event<D>, DecoderError> {
@@ -348,6 +378,28 @@ not_bpf_target_code! {
             Ok(&mut (*(self.event.as_mut_ptr() as *mut Event<D>)))
         }
     }
+
+    #[macro_export]
+    macro_rules! mut_event {
+        ($enc:expr, $event:ty) => {{
+            let event: Result<&mut $event, ::kunai_common::events::DecoderError> =
+            unsafe { $enc.as_mut_event_with_data() };
+            event
+        }};
+    }
+
+    pub use mut_event;
+
+    #[macro_export]
+    macro_rules! event {
+        ($enc:expr, $event:ty) => {{
+            let event: Result<&$event, ::kunai_common::events::DecoderError> =
+            unsafe { $enc.as_event_with_data() };
+            event
+        }};
+    }
+
+    pub use event;
 
 }
 

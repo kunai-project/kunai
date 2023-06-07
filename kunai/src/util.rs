@@ -7,6 +7,7 @@ use sha2::{Sha256, Sha512};
 use std::net::IpAddr;
 
 pub mod bpf;
+pub mod namespaces;
 
 #[inline]
 pub(crate) fn is_public_ip(ip: IpAddr) -> bool {

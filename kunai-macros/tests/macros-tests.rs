@@ -1,6 +1,7 @@
-use kunai_macros::BpfError;
+use kunai_macros::{BpfError, StrEnum};
 use syn::{Attribute, MetaNameValue};
 
+#[allow(dead_code)]
 #[test]
 fn test_as_str() {
     #[derive(BpfError)]
@@ -56,4 +57,28 @@ fn test_meta_list() {
             assert!(b.value)
         }
     }
+}
+
+#[allow(dead_code)]
+#[test]
+fn test_named_enum() {
+    #[repr(u32)]
+    #[derive(StrEnum, Debug, PartialEq, Eq)]
+    enum MyError {
+        #[str("foo")]
+        Variant0 = 0,
+        #[str("variant1")]
+        Variant1,
+        #[str("variant3")]
+        Variant3,
+        #[str("variant100")]
+        Variant100 = 100,
+        #[str("variant101")]
+        Variant101,
+    }
+
+    assert_eq!(MyError::Variant1.as_str(), "variant1");
+    assert_eq!(MyError::Variant100.as_str(), "variant100");
+    assert_eq!(MyError::Variant101.as_str(), "variant101");
+    assert_eq!(MyError::Variant101 as u32, 101);
 }

@@ -13,6 +13,7 @@ const S_IFSOCK: u16 = 0o0140000;
 impl inode {
     rust_shim_impl!(pub, inode, i_ino, u64);
     rust_shim_impl!(pub, inode, i_mode, u16);
+    rust_shim_impl!(pub, inode, i_sb, super_block);
 
     pub unsafe fn is_file(&self) -> Option<bool> {
         Some(self.i_mode()? & S_IFMT == S_IFREG)
@@ -113,6 +114,7 @@ impl mount {
     rust_shim_impl!(pub, mount, mnt, vfsmount);
     rust_shim_impl!(pub, mount, mnt_mountpoint, dentry);
     rust_shim_impl!(pub, mount, mnt_parent, mount);
+    rust_shim_impl!(mount, mnt_mp, mountpoint);
 }
 
 #[allow(non_camel_case_types)]
@@ -124,4 +126,11 @@ impl vfsmount {
     }
 
     rust_shim_impl!(pub, vfsmount, mnt_root, dentry);
+}
+
+#[allow(non_camel_case_types)]
+pub type mountpoint = CoRe<gen::mountpoint>;
+
+impl mountpoint {
+    rust_shim_impl!(mountpoint, m_dentry, dentry);
 }

@@ -16,12 +16,10 @@ pub mod events;
 pub mod net;
 pub mod path;
 
-//pub mod btf_info;
-
 pub mod consts;
 
 pub mod buffer;
 pub mod perf;
-pub mod transfer;
+//pub mod transfer;
 
 pub mod uuid;

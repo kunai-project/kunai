@@ -1,5 +1,9 @@
 use super::*;
-use aya_bpf::{helpers::bpf_ktime_get_ns, programs::ProbeContext};
+use aya_bpf::{
+    helpers::{self, bpf_ktime_get_ns},
+    programs::ProbeContext,
+    BpfContext,
+};
 
 #[kprobe(name = "kprobe.enter.vfs_read")]
 pub fn enter_vfs_read(ctx: ProbeContext) -> u32 {
@@ -27,6 +31,18 @@ pub fn enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
             bpf_ktime_get_ns(),
             &ctx
         ))
+    }
+    0
+}
+
+#[kprobe(name = "kprobe.enter.security_sb_mount")]
+pub fn enter_path_mount(ctx: ProbeContext) -> u32 {
+    unsafe {
+        ignore_result!(save_context(
+            ProbeFn::security_sb_mount,
+            bpf_ktime_get_ns(),
+            &ctx
+        ));
     }
     0
 }

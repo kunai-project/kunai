@@ -80,6 +80,7 @@ pub struct mount {
     pub mnt_parent: *mut mount,
     pub mnt_mountpoint: *mut dentry,
     pub mnt: vfsmount,
+    pub mnt_mp: *mut mountpoint,
 }
 extern "C" {
     pub fn shim_mount_mnt_parent(mount: *mut mount) -> *mut mount;
@@ -107,6 +108,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_mount_mnt_exists(mount: *mut mount) -> bool;
+}
+extern "C" {
+    pub fn shim_mount_mnt_mp(mount: *mut mount) -> *mut mountpoint;
+}
+extern "C" {
+    pub fn shim_mount_mnt_mp_user(mount: *mut mount) -> *mut mountpoint;
+}
+extern "C" {
+    pub fn shim_mount_mnt_mp_exists(mount: *mut mount) -> bool;
 }
 extern "C" {
     pub fn shim_mount_from_vfsmount(vfs: *mut vfsmount) -> *mut mount;
@@ -181,6 +191,20 @@ extern "C" {
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct mountpoint {
+    pub m_dentry: *mut dentry,
+}
+extern "C" {
+    pub fn shim_mountpoint_m_dentry(mountpoint: *mut mountpoint) -> *mut dentry;
+}
+extern "C" {
+    pub fn shim_mountpoint_m_dentry_user(mountpoint: *mut mountpoint) -> *mut dentry;
+}
+extern "C" {
+    pub fn shim_mountpoint_m_dentry_exists(mountpoint: *mut mountpoint) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct path {
     pub mnt: *mut vfsmount,
     pub dentry: *mut dentry,
@@ -209,6 +233,7 @@ pub type umode_t = ::core::ffi::c_ushort;
 pub struct inode {
     pub i_mode: umode_t,
     pub i_ino: ::core::ffi::c_ulong,
+    pub i_sb: *mut super_block,
 }
 extern "C" {
     pub fn shim_inode_i_ino(inode: *mut inode) -> ::core::ffi::c_ulong;
@@ -227,6 +252,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_inode_i_mode_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
+    pub fn shim_inode_i_sb(inode: *mut inode) -> *mut super_block;
+}
+extern "C" {
+    pub fn shim_inode_i_sb_user(inode: *mut inode) -> *mut super_block;
+}
+extern "C" {
+    pub fn shim_inode_i_sb_exists(inode: *mut inode) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -322,8 +356,33 @@ extern "C" {
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct ns_common {
+    pub inum: ::core::ffi::c_uint,
+}
+extern "C" {
+    pub fn shim_ns_common_inum(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_ns_common_inum_user(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_ns_common_inum_exists(ns_common: *mut ns_common) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct mnt_namespace {
+    pub ns: ns_common,
     pub root: *mut mount,
+    pub mounts: ::core::ffi::c_uint,
+}
+extern "C" {
+    pub fn shim_mnt_namespace_ns(mnt_namespace: *mut mnt_namespace) -> *mut ns_common;
+}
+extern "C" {
+    pub fn shim_mnt_namespace_ns_user(mnt_namespace: *mut mnt_namespace) -> *mut ns_common;
+}
+extern "C" {
+    pub fn shim_mnt_namespace_ns_exists(mnt_namespace: *mut mnt_namespace) -> bool;
 }
 extern "C" {
     pub fn shim_mnt_namespace_root(mnt_namespace: *mut mnt_namespace) -> *mut mount;
@@ -333,6 +392,16 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_mnt_namespace_root_exists(mnt_namespace: *mut mnt_namespace) -> bool;
+}
+extern "C" {
+    pub fn shim_mnt_namespace_mounts(mnt_namespace: *mut mnt_namespace) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_mnt_namespace_mounts_user(mnt_namespace: *mut mnt_namespace)
+        -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_mnt_namespace_mounts_exists(mnt_namespace: *mut mnt_namespace) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

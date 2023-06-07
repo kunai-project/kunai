@@ -12,8 +12,10 @@ pub const MAX_PATH_LEN: usize = 4096;
 pub const MAX_NAME: usize = u8::MAX as usize;
 
 #[repr(C)]
-#[derive(BpfError, Debug, Clone, Copy)]
+#[derive(BpfError, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
+    #[error("should not happen")]
+    ShouldNotHappen,
     #[error("filename is too long")]
     FileNameTooLong(u64, u32),
     #[error("filepath is too long")]
@@ -60,22 +62,33 @@ pub enum Error {
     DNameNameMissing,
     #[error("d_name.len field missing")]
     DNameLenMissing,
+    #[error("failed to get path ino")]
+    PathInoFailure,
+    #[error("failed to get path sb ino")]
+    PathSbInoFailure,
+    #[error("failed to read dentry.d_inode")]
+    DentryDinode,
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Append,
     Prepend,
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Path {
     buffer: [u8; MAX_PATH_LEN],
     len: u32,
     depth: u16,
-    mode: Mode,
+    real: bool, // flag if path is a realpath
+    // inode number of the file
+    pub ino: Option<u64>,
+    // inode number of superblock
+    pub sb_ino: Option<u64>,
+    pub mode: Mode,
     pub error: Option<Error>,
 }
 
@@ -84,8 +97,11 @@ impl Default for Path {
         Path {
             buffer: [0; MAX_PATH_LEN],
             len: 0,
-            mode: Mode::Append,
             depth: 0,
+            real: false,
+            ino: None,
+            sb_ino: None,
+            mode: Mode::Append,
             error: None,
         }
     }
@@ -135,6 +151,10 @@ impl Path {
             return s[0] == b'/';
         }
         false
+    }
+
+    pub fn is_realpath(&self) -> bool {
+        self.real
     }
 
     pub fn as_ptr(&self) -> *const u8 {
@@ -217,11 +237,60 @@ not_bpf_target_code! {
 
     use {core::fmt::Display, std::path};
 
+    impl std::error::Error for Error {
+        fn cause(&self) -> Option<&dyn std::error::Error> {
+            None
+        }
+
+        fn description(&self) -> &str {
+            self.description()
+        }
+
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            None
+        }
+    }
+
+    impl Display for Error{
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{}", self.description())
+        }
+    }
+
     impl From<Path> for path::PathBuf {
         fn from(value: Path) -> Self {
             // Path is supposed to hold valid utf8 characters controlled by the kernel
             let p = unsafe { core::str::from_utf8_unchecked(value.as_slice()) };
             path::PathBuf::from(p)
+        }
+    }
+
+    impl TryFrom<path::PathBuf> for Path {
+        type Error = Error;
+        fn try_from(value: path::PathBuf) -> Result<Self, Self::Error> {
+            Self::try_from(&value)
+        }
+    }
+
+    impl TryFrom<&path::PathBuf> for Path {
+        type Error = Error;
+
+        fn try_from(value: &path::PathBuf) -> Result<Self, Self::Error> {
+            let mut out = Self::default();
+            let path_buf_len = value.to_string_lossy().as_bytes().len();
+
+            if  path_buf_len > out.buffer.len(){
+                return Err(Error::FilePathTooLong);
+            }
+
+            let len = min(path_buf_len, out.buffer.len());
+
+            out.buffer[..len].as_mut().copy_from_slice(&value.to_string_lossy().as_bytes()[..len]);
+
+            out.mode = Mode::Append;
+            out.len = len as u32;
+
+            Ok(out)
         }
     }
 
@@ -232,6 +301,12 @@ not_bpf_target_code! {
     }
 
     impl Path {
+        pub fn try_from_realpath<T:AsRef<path::Path>>(p: T) -> Result<Self,Error> {
+            let mut p = Self::try_from(p.as_ref().to_path_buf())?;
+            p.real = true;
+            Ok(p)
+        }
+
         pub fn to_path_buf(self) -> path::PathBuf {
             self.into()
         }
@@ -244,6 +319,7 @@ bpf_target_code! {
 
     use super::{bpf_utils::*};
     use aya_bpf::helpers::gen;
+    use aya_bpf::helpers::bpf_probe_read_buf;
     use crate::co_re::{self, core_read_kernel};
 
     type Result<T> = core::result::Result<T, Error>;
@@ -256,8 +332,8 @@ bpf_target_code! {
             }
             Ok(())
         }
-        // without this inline fentry probes get read! error, maybe there is an issue while
-        // passing bpf_types to functions
+
+        // without this inline fentry probes get read! error, maybe there is an issue while passing bpf_types to functions
         #[inline(always)]
         pub unsafe fn core_resolve(&mut self, p: &co_re::path, max_depth: u16) -> Result<()> {
             // if path is null we return Ok
@@ -266,7 +342,13 @@ bpf_target_code! {
                 return Ok(());
             }
 
+            let mut entry = p.dentry().ok_or(Error::DentryMissing)?;
+            let d_inode = core_read_kernel!(entry, d_inode).ok_or(Error::DentryDinode)?;
+
+            // initialization
             self.mode = Mode::Prepend;
+            self.ino = Some(core_read_kernel!(d_inode, i_ino).ok_or(Error::PathInoFailure)?);
+            self.sb_ino = Some(core_read_kernel!(d_inode, i_sb ,s_root, d_inode, i_ino).ok_or(Error::PathSbInoFailure)?);
 
             let mnt = p.mnt().ok_or(Error::RFPathMnt)?;
             let mut mount = mnt.mount();
@@ -275,7 +357,6 @@ bpf_target_code! {
 
             let mut mnt_root = mnt.mnt_root().ok_or(Error::MntRootMissing)?;
 
-            let mut entry = p.dentry().ok_or(Error::DentryMissing)?;
 
             for _i in 0..max_depth {
                 if entry == mnt_root {
@@ -378,6 +459,57 @@ bpf_target_code! {
             Ok(())
         }
 
+        pub fn prepend_qstr_name_new(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
+            // needed so that the verifier knows self.len is bounded
+            let len = cap_size(self.len, MAX_PATH_LEN as u32);
+
+            // we need this check otherwise verifier fails with invalid numeric error
+            if qstr_len > MAX_NAME as u32 {
+                self.error = Some(Error::FileNameTooLong(name as u64, qstr_len));
+                return Err(Error::FileNameTooLong(name as u64, qstr_len));
+            }
+
+            // we check if we can append the qstr to the path
+            if len + qstr_len > MAX_PATH_LEN as u32 {
+                self.error = Some(Error::FilePathTooLong);
+                return Err(Error::FilePathTooLong);
+            }
+
+            // we reached max path depth
+            if self.depth == MAX_PATH_DEPTH {
+                self.error = Some(Error::ReachedMaxPathDepth);
+                return Err(Error::ReachedMaxPathDepth);
+            }
+
+            // we compute where we should put the qstr
+            let i = self.buffer.len() as isize - len as isize - qstr_len as isize;
+            let j = i+qstr_len as isize;
+
+            if i < 0 {
+                self.error = Some(Error::FileNameTooLong(name as u64, qstr_len));
+                return Err(Error::FileNameTooLong(name as u64, qstr_len));
+            }
+
+            // to make verifier happy
+            if j>i || j > self.buffer.len() as isize{
+                return Err(Error::ShouldNotHappen);
+            }
+
+
+            let dst = &mut self.buffer[i as usize..j as usize];
+
+            if unsafe{bpf_probe_read_buf(name, dst)}.is_ok(){
+                self.len += qstr_len;
+                self.depth += 1;
+            }else {
+                self.error = Some(Error::RFPathSegment);
+                return Err(Error::RFPathSegment);
+            }
+
+
+            Ok(())
+        }
+
         pub unsafe fn bpf_probe_read_str(&mut self, addr: u64) -> Result<()> {
             self.mode = Mode::Append;
 
@@ -447,5 +579,12 @@ mod test {
         assert!(p.starts_with("/bin/true"));
         assert!(!p.starts_with("/bin/this is way too long"));
         assert!(!p.starts_with("/bin/truez"));
+    }
+
+    #[test]
+    fn test_realpath() {
+        let pb = std::path::PathBuf::from("/bin/true");
+        let p = Path::try_from(&pb).unwrap();
+        assert_eq!(p.to_path_buf(), pb);
     }
 }

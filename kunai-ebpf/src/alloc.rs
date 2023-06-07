@@ -34,7 +34,8 @@ const HEAP_MAX_ALLOC_SIZE: usize = max!(
     mem::size_of::<events::ConfigEvent>(),
     mem::size_of::<events::SendEntropyEvent>(),
     mem::size_of::<events::FileRenameEvent>(),
-    mem::size_of::<events::MprotectEvent>()
+    mem::size_of::<events::MprotectEvent>(),
+    mem::size_of::<events::MountEvent>()
 );
 
 const ZEROS: [u8; HEAP_MAX_ALLOC_SIZE] = [0; HEAP_MAX_ALLOC_SIZE];

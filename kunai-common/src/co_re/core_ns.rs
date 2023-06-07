@@ -1,5 +1,3 @@
-
-
 use super::gen::{self, *};
 use super::{mount, rust_shim_impl, CoRe};
 
@@ -11,8 +9,17 @@ impl nsproxy {
 }
 
 #[allow(non_camel_case_types)]
+pub type ns_common = CoRe<gen::ns_common>;
+
+impl ns_common {
+    rust_shim_impl!(ns_common, inum, u32);
+}
+
+#[allow(non_camel_case_types)]
 pub type mnt_namespace = CoRe<gen::mnt_namespace>;
 
 impl mnt_namespace {
-    rust_shim_impl!(pub, mnt_namespace, root, mount);
+    rust_shim_impl!(mnt_namespace, ns, ns_common);
+    rust_shim_impl!(mnt_namespace, root, mount);
+    rust_shim_impl!(mnt_namespace, mounts, u32);
 }

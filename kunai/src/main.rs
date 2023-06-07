@@ -2,13 +2,22 @@ mod compat;
 mod hcache;
 mod util;
 
+use anyhow::anyhow;
+use futures::channel::mpsc::Receiver;
 use json::{object, JsonValue};
 
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
+use std::hash::Hash;
+use std::io::{BufRead, BufReader};
 use std::net::IpAddr;
+use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use std::str::FromStr;
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
+use std::thread;
 use users::get_current_uid;
 use util::*;
 
@@ -31,6 +40,7 @@ use chrono::prelude::*;
 
 use log::{debug, error, info, warn};
 
+//use tokio::sync::{Barrier, Mutex};
 use tokio::sync::{Barrier, Mutex};
 use tokio::{signal, task, time};
 
@@ -83,7 +93,7 @@ impl From<&StdEventInfo> for JsonValue {
 
         object! {
             event: object!{
-                //id: info.etype.id(),
+                id: info.etype.id(),
                 name: info.etype.as_str(),
                 uuid: info.uuid.into_uuid().hyphenated().to_string(),
                 batch: info.batch,
@@ -199,11 +209,21 @@ struct CorrelationData {
 
 struct EventProcessor {
     random: u32,
-    hcache: hcache::Hcache,
+    hcache: hcache::FsCache,
+    receiver: Receiver<EncodedEvent>,
+    correlations: HashMap<u128, CorrelationData>,
+    mounts: HashMap<u64, PathBuf>,
+}
+
+struct EventReader {
+    random: u32,
+    hcache: hcache::FsCache,
     batch: usize,
     //transfers: Arc<Mutex<TransferMap>>,
     pipe: VecDeque<EncodedEvent>,
+    sender: Sender<EncodedEvent>,
     correlations: HashMap<u128, CorrelationData>,
+    mounts: HashMap<u64, PathBuf>,
 }
 
 macro_rules! format_ptr {
@@ -212,7 +232,7 @@ macro_rules! format_ptr {
     };
 }
 
-impl EventProcessor {
+impl EventReader {
     #[inline]
     fn json_event(info: StdEventInfo, data: JsonValue) -> JsonValue {
         object! {data: data, info: info,}
@@ -223,13 +243,15 @@ impl EventProcessor {
         object! {data: data, info: info}
     }
 
-    pub fn init(bpf: &mut Bpf) -> Arc<Mutex<Self>> {
-        let mut ep = EventProcessor {
+    pub fn init(bpf: &mut Bpf, sender: Sender<EncodedEvent>) -> anyhow::Result<Arc<Mutex<Self>>> {
+        let mut ep = EventReader {
             random: util::getrandom::<u32>().unwrap(),
-            hcache: hcache::Hcache::with_max_entries(0x1000),
+            hcache: hcache::FsCache::with_max_entries(0x1000),
             pipe: VecDeque::new(),
             batch: 0,
             correlations: HashMap::new(),
+            mounts: HashMap::new(),
+            sender,
         };
 
         // should not raise any error, we just print it
@@ -238,9 +260,12 @@ impl EventProcessor {
             |e: anyhow::Error| warn!("failed to initialize correlations with procfs: {}", e)
         };
 
+        ep.init_superblock_inodes()
+            .map_err(|e| anyhow::Error::msg(format!("failed to init superblock: {e}")))?;
+
         let safe = Arc::new(Mutex::new(ep));
         Self::read_events(&safe, bpf);
-        safe
+        Ok(safe)
     }
 
     fn init_correlations_from_procfs(&mut self) -> anyhow::Result<()> {
@@ -253,6 +278,28 @@ impl EventProcessor {
                 )
             }
         }
+        Ok(())
+    }
+
+    fn init_superblock_inodes(&mut self) -> anyhow::Result<()> {
+        let file = File::open("/etc/mtab").map_err(anyhow::Error::msg)?;
+
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line.map_err(anyhow::Error::msg)?;
+            let mountpoint = Path::new(
+                line.split_whitespace()
+                    .nth(1)
+                    .ok_or(anyhow::Error::msg("mountpoint is missing"))?,
+            );
+            let Ok(meta) = mountpoint.metadata() else {
+                continue;
+            };
+
+            self.mounts.insert(meta.ino(), mountpoint.into());
+        }
+
         Ok(())
     }
 
@@ -385,23 +432,89 @@ impl EventProcessor {
     }
 
     #[inline]
-    async fn json_execve(&mut self, mut info: StdEventInfo, event: &ExecveEvent) -> JsonValue {
+    async fn get_hashes_with_ns<P: AsRef<Path> + Clone>(&mut self, ns_inum: u32, p: P) -> Hashes {
+        let cp = p.clone();
+        self.hcache
+            .get_or_cache_with_ns(ns_inum, p)
+            .await
+            .unwrap_or(Hashes {
+                file: cp.as_ref().to_path_buf(),
+                ..Default::default()
+            })
+    }
+
+    #[inline]
+    fn make_realpath(&self, p: &mut kunai_common::path::Path) -> Result<PathBuf, anyhow::Error> {
+        // if path is already a realpath
+        if p.is_realpath() {
+            return Ok(p.to_path_buf());
+        }
+
+        /*if !p.is_absolute() {
+            debug!(
+                "{} is not absolute sb_ino={:?} ino={:?}",
+                p, p.sb_ino, p.ino
+            );
+            return Err(anyhow!("path must be absolute"));
+        }*/
+
+        let mut path = p.to_path_buf();
+        let sb_ino = p.sb_ino.ok_or(anyhow!("sb_ino field is missing in Path"))?;
+
+        /*let Some(sb_path) = self.mounts.get(&sb_ino) else {
+            return Err(anyhow!("superblock mount point not found"));
+        };*/
+        let unk_path = PathBuf::from("?");
+        let sb_path = self.mounts.get(&sb_ino).unwrap_or(&unk_path);
+
+        if !path.starts_with(sb_path) {
+            // we cannot directly use PathBuf::join method as it checks
+            // for file existance at some point
+            let mut tmp = sb_path.to_string_lossy().to_string();
+            if tmp.ends_with('/') {
+                tmp.push_str(&path.to_string_lossy()[1..]);
+            } else {
+                tmp.push_str(&path.to_string_lossy());
+            }
+            // canonicalize fails if path does not exists
+            //path = PathBuf::from(tmp).canonicalize()?;
+            //path = tokio::fs::canonicalize(tmp).await?;
+            path = PathBuf::from(tmp);
+            *p = kunai_common::path::Path::try_from_realpath(&path)?;
+        }
+
+        Ok(p.to_path_buf())
+    }
+
+    async fn make_realpath_and_cache_hash(
+        &mut self,
+        p: &mut kunai_common::path::Path,
+    ) -> Result<(), anyhow::Error> {
+        let realpath = self.make_realpath(p)?;
+        self.hcache.cache(realpath).await;
+        Ok(())
+    }
+
+    #[inline]
+    async fn json_execve(&mut self, mut info: StdEventInfo, event: &mut ExecveEvent) -> JsonValue {
         let ancestors = self.get_ancestors(&info);
+
         let executable = event.data.executable.to_path_buf();
         let interpreter = event.data.interpreter.to_path_buf();
+        let mnt_ns = event.info.process.namespaces.mnt;
 
         let mut data = object! {
             ancestors: ancestors.join("|"),
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
-            exe: self.get_hashes(&executable).await,
+            exe: self.get_hashes_with_ns(mnt_ns, &executable).await,
 
         };
 
         // we check wether a script is being interpreted
         if executable != interpreter {
             info.info.etype = Type::ExecveScript;
-            data["interpreter"] = self.get_hashes(&interpreter).await.into();
+            data["interpreter"] = self.get_hashes_with_ns(mnt_ns, &interpreter).await.into();
         }
 
         let out = Self::json_event_info_ref(&info, data);
@@ -410,7 +523,7 @@ impl EventProcessor {
         let corr_key = info.correlation_key();
         let correlations = CorrelationData {
             command_line: event.data.argv.to_argv(),
-            image: event.data.executable.to_path_buf(),
+            image: executable,
             resolved: HashMap::new(),
             info: CorrInfo::Event(info),
         };
@@ -434,16 +547,12 @@ impl EventProcessor {
     }
 
     #[inline]
-    async fn json_mmap_exec(&mut self, info: StdEventInfo, event: &MmapExecEvent) -> JsonValue {
+    async fn json_mmap_exec(&mut self, info: StdEventInfo, event: &mut MmapExecEvent) -> JsonValue {
+        // todo : handle this better
         let filename = event.data.filename.to_path_buf();
+        let mnt_ns = event.info.process.namespaces.mnt;
+        let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename).await;
 
-        let mmapped_hashes = self
-            .hcache
-            .get_or_cache(filename.clone())
-            .await
-            .unwrap_or_default();
-
-        //let info = self.std_event_info(event.info);
         let ck = info.correlation_key();
 
         let exe = self.get_exe(ck);
@@ -522,6 +631,24 @@ impl EventProcessor {
                 path: event.data.path.to_string(),
             },
         )
+    }
+
+    #[inline]
+    fn json_mount_event(&mut self, info: StdEventInfo, event: &MountEvent) -> JsonValue {
+        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+
+        let mut data = object! {
+            command_line: cmd_line,
+            exe: exe.to_string_lossy().to_string(),
+            dev_name: event.data.dev_name.to_string(),
+            path: event.data.path.to_string(),
+            success: event.data.rc == 0,
+        };
+
+        // we cannot use type keyword in object! macro
+        data["type"] = event.data.ty.to_string().into();
+
+        Self::json_event(info, data)
     }
 
     #[inline]
@@ -677,7 +804,7 @@ impl EventProcessor {
         Self::json_event(info, data)
     }
 
-    async fn handle_event(&mut self, enc_event: &EncodedEvent) {
+    async fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
         let i = unsafe { enc_event.info() }.unwrap();
 
         // we don't handle our own events
@@ -687,31 +814,32 @@ impl EventProcessor {
         }
 
         let std_info = StdEventInfo::from_event_info(*i, self.random);
+        let etype = std_info.info.etype;
 
-        match i.etype {
-            events::Type::Execve => match unsafe { enc_event.as_event_with_data() } {
+        match etype {
+            events::Type::Execve => match unsafe { enc_event.as_mut_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_execve(std_info, e).await),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::TaskSched => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => self.track_task(std_info, e),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::MmapExec => match unsafe { enc_event.as_event_with_data() } {
+            events::Type::MmapExec => match unsafe { enc_event.as_mut_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_mmap_exec(std_info, e).await),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::MprotectExec => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_mprotect(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::Connect => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_connect(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::DnsQuery => match unsafe { enc_event.as_event_with_data() } {
@@ -720,40 +848,45 @@ impl EventProcessor {
                         std::println!("{json}");
                     }
                 }
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::SendData => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_send_data(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::InitModule => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_init_module(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::WriteConfig | events::Type::ReadConfig => {
                 match unsafe { enc_event.as_event_with_data() } {
                     Ok(e) => std::println!("{}", self.json_config_event(std_info, e)),
-                    Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
                 }
             }
 
+            events::Type::Mount => match unsafe { enc_event.as_event_with_data() } {
+                Ok(e) => std::println!("{}", self.json_mount_event(std_info, e)),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
             events::Type::FileRename => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_file_rename(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::BpfProgLoad => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_bpf_prog_load(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::Exit | events::Type::ExitGroup => {
                 match unsafe { enc_event.as_event_with_data() } {
                     Ok(e) => std::println!("{}", self.json_exit(std_info, e)),
-                    Err(e) => error!("failed to decode {} event: {:?}", i.etype, e),
+                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
                 }
             }
 
@@ -819,15 +952,85 @@ impl EventProcessor {
         // are sorted ascending by timestamp
         while count > 0 {
             // at this point pop_front cannot fail as count takes account of the elements in the pipe
-            let enc_evt = self
+            let mut enc_evt = self
                 .pipe
                 .pop_front()
                 .expect("pop_front should never fail here");
 
-            self.handle_event(&enc_evt).await;
+            //self.pre_process_events(&mut enc_evt).await;
+            self.handle_event(&mut enc_evt).await;
 
             count -= 1;
         }
+    }
+
+    // The aim of this function is to be run as soon as the event gets available in userland.
+    // So any processing on events that requires realtime properties must be done here. A direct
+    // consequence of this is that anything that do not require realtime property should not
+    // be done here as it may slow down the event processing.
+    async fn pre_process_events(
+        &mut self,
+        enc_event: &mut EncodedEvent,
+    ) -> Result<(), anyhow::Error> {
+        let i = unsafe { enc_event.info_mut() }?;
+        let etype = i.etype;
+
+        match etype {
+            Type::Execve => {
+                let event = mut_event!(enc_event, ExecveEvent)?;
+                let p = event.data.executable.to_path_buf();
+
+                if let Some(hash) = self
+                    .hcache
+                    .get_or_cache_with_ns(event.info.process.namespaces.mnt, p)
+                    .await
+                {
+                    info!("got hash from namespace: exe={:#?}", hash)
+                }
+
+                if event.data.executable != event.data.interpreter {
+                    self.make_realpath_and_cache_hash(&mut event.data.interpreter)
+                        .await;
+                }
+                self.make_realpath_and_cache_hash(&mut event.data.executable)
+                    .await;
+            }
+
+            Type::MmapExec => {
+                let event = mut_event!(enc_event, MmapExecEvent)?;
+
+                self.make_realpath_and_cache_hash(&mut event.data.filename)
+                    .await;
+            }
+
+            Type::Mount => {
+                let event = mut_event!(enc_event, MountEvent)?;
+                // we hook into those events in order to get superblock inode information
+                self.mounts.insert(
+                    event
+                        .data
+                        .path
+                        .ino
+                        .expect("path ino should never be missing"),
+                    event.data.path.to_path_buf(),
+                );
+            }
+
+            Type::ReadConfig | Type::WriteConfig => {
+                let event = mut_event!(enc_event, ConfigEvent)?;
+                self.make_realpath(&mut event.data.path);
+            }
+
+            Type::FileRename => {
+                let event = mut_event!(enc_event, FileRenameEvent)?;
+                self.make_realpath(&mut event.data.new_name);
+                self.make_realpath(&mut event.data.old_name);
+            }
+
+            _ => {}
+        }
+
+        Ok(())
     }
 
     fn read_events(ep: &Arc<Mutex<Self>>, bpf: &mut Bpf) {
@@ -857,6 +1060,9 @@ impl EventProcessor {
 
             // process each perf buffer in a separate task
             task::spawn(async move {
+                // only the reducer thread will be allowed to switch between namespaces
+                if cpu_id == reducer_cpu_id {}
+
                 // the number of buffers we want to use gives us the number of events we can read
                 // in one go in userland
                 let mut buffers = perf::event_buffers(MAX_EVENT_SIZE, 64, MAX_EVENT_COUNT);
@@ -897,14 +1103,34 @@ impl EventProcessor {
                     // and is always <= buffers.len()
                     for buf in buffers.iter().take(events.read) {
                         match EncodedEvent::from_bytes(buf) {
-                            Ok(dec) => {
+                            Ok(mut dec) => {
                                 let mut ep = event_proc.lock().await;
+
+                                /*match ep.fast_hook(&mut dec).await {
+                                    // if there is no error we queue event to be processed later on
+                                    // todo: add a way to skip our own events
+                                    Ok(_) => ep.pipe.push_back(dec),
+                                    // if there is an error we print it
+                                    Err(e) => error!("{}", e),
+                                }*/
 
                                 // we make sure here that only events for which we can grab info for
                                 // are pushed to the pipe. It is simplifying the error handling process
                                 // in sorting the pipe afterwards
                                 if let Ok(info) = unsafe { dec.info_mut() } {
                                     info.batch = ep.batch;
+                                    // todo: add a way to handle events directly here and eventually abort their processing
+                                    // tgid is the PID of the process in userland
+                                    let pid = info.process.tgid;
+                                    let ns = info.process.namespaces.mnt;
+                                    if let Err(e) = ep
+                                        .hcache
+                                        .cache_ns(info.process.pid, info.process.namespaces.mnt)
+                                    {
+                                        debug!("failed to cache namespace pid={pid} ns={ns}: {e}");
+                                    } else {
+                                        debug!("successfully cached namespace pid={pid} ns={ns}");
+                                    }
                                 } else {
                                     error!("failed to decode info");
                                     continue;
@@ -924,6 +1150,9 @@ impl EventProcessor {
                     if cpu_id == reducer_cpu_id {
                         let mut ep = event_proc.lock().await;
                         if ep.has_pending_events() {
+                            for e in ep.pipe.iter() {
+                                ep.sender.send(e.clone()).unwrap()
+                            }
                             ep.process_piped_events().await;
                             ep.batch += 1;
                         }
@@ -953,7 +1182,6 @@ impl EventProcessor {
 // todo: make single-threaded / multi-threaded features
 #[tokio::main(flavor = "current_thread")]
 //#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-//#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
 
@@ -1103,8 +1331,16 @@ async fn main() -> Result<(), anyhow::Error> {
         p.attach(&btf)?;
     }
 
-    //read_events(&mut bpf);
-    EventProcessor::init(&mut bpf);
+    let (sender, receiver) = channel::<EncodedEvent>();
+    // Spawn off an expensive computation
+    thread::spawn(move || {
+        while let Ok(enc) = receiver.recv() {
+            let i = unsafe { enc.info() }.expect("info should always be valid");
+            info!("received event {}", i.etype);
+        }
+    });
+
+    EventReader::init(&mut bpf, sender)?;
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;

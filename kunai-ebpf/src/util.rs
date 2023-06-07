@@ -13,6 +13,10 @@ pub unsafe fn restore_entry_ctx(pfn: ProbeFn) -> Option<&'static mut KProbeEntry
     Some(&mut (*ctx))
 }
 
+// in order to save ctx in the same map for several kinds of probes
+// we need to have a fix id between kprobe and kretprobes. The
+// only way (I found) to do that is to set a enum that must be used
+// in the two kinds of probes
 #[repr(u64)]
 #[derive(Clone, Copy)]
 #[allow(non_camel_case_types)]
@@ -21,6 +25,7 @@ pub enum ProbeFn {
     __sys_recvfrom,
     __sys_recvmsg,
     __sys_connect,
+    security_sb_mount,
 }
 
 impl ProbeFn {

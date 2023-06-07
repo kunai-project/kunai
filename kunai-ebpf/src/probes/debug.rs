@@ -1,9 +1,13 @@
-use aya_bpf::{programs::ProbeContext};
+use core::ptr;
+
+use aya_bpf::cty::c_int;
+use aya_bpf::helpers::gen::bpf_probe_read;
+use aya_bpf::programs::{FExitContext, ProbeContext};
+use aya_bpf::{helpers, BpfContext};
+use kunai_common::string::String;
 
 #[allow(unused_imports)]
 use super::*;
-
-// place where to put test probes
 
 #[kprobe(name = "debug.schedule")]
 pub fn debug_schedule(ctx: ProbeContext) -> u32 {
@@ -16,11 +20,13 @@ pub fn debug_schedule(ctx: ProbeContext) -> u32 {
     }
 }
 
-#[inline(always)]
 unsafe fn try_debug_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
     let ts = co_re::task_struct::current();
-    let root = core_read_kernel!(ts, nsproxy, mnt_ns, root)?;
 
-    info!(ctx, "root={}", root.as_ptr() as usize);
+    let pid = core_read_kernel!(ts, pid)?;
+    let mnt_ns = core_read_kernel!(ts, nsproxy, mnt_ns, ns, inum)?;
+
+    info!(ctx, "pid={} mnt_namespace={}", pid, mnt_ns);
+
     Ok(())
 }

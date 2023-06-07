@@ -111,3 +111,50 @@ pub fn error_derive(item: TokenStream) -> TokenStream {
     )
     .into()
 }
+
+#[proc_macro_derive(StrEnum, attributes(str))]
+pub fn str_enum_derive(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    let enum_name = &input.ident;
+
+    let data_enum = match input.data {
+        syn::Data::Enum(data_enum) => data_enum,
+        _ => panic!("This macro only supports enums."),
+    };
+
+    let mut as_str_arms = vec![];
+
+    // we iterate over the enum variants
+    for v in data_enum.variants.iter() {
+        // name of the variant
+        let name = &v.ident;
+
+        // we find error attributes associated to the variant
+        let str_attr = v.attrs.iter().find(|&attr| attr.path().is_ident("str"));
+
+        if let Some(str_attr) = str_attr {
+            // we expect a literal string
+            let args: syn::LitStr = str_attr.parse_args().expect("failed to parse args");
+
+            // we generate a match arm delivering the good error name
+            if v.fields.is_empty() {
+                as_str_arms.push(quote!(Self::#name => #args,));
+            } else {
+                let v = vec![quote!(_); v.fields.len()];
+                as_str_arms.push(quote!(Self::#name(#(#v),*) => #args,));
+            }
+        }
+    }
+
+    quote!(
+        impl #enum_name {
+            #[inline(always)]
+            pub const fn as_str(&self) -> &'static str{
+                match self {
+                    #(#as_str_arms)*
+                }
+            }
+        }
+    )
+    .into()
+}

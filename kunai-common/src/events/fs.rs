@@ -8,10 +8,10 @@ pub struct ConfigData {
     pub path: Path,
 }
 
-pub type FileRenameEvent = Event<RenameData>;
+pub type FileRenameEvent = Event<FileRenameData>;
 
 #[repr(C)]
-pub struct RenameData {
+pub struct FileRenameData {
     pub old_name: Path,
     pub new_name: Path,
 }

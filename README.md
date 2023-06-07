@@ -8,7 +8,7 @@
 
 ## Minimum Kernel Version
 
-* bprm_execve: 5.9
+* Tested until: 5.4
 
 # Enhancements
 
@@ -58,6 +58,11 @@ One can build a full standalone binary using musl
 # BPF Notes
 
 [BPF Core Reference](https://nakryiko.com/posts/bpf-core-reference-guide/)
+
+## Memo
+
+To understand how to parse kernel data structure, looking at how **procfs** is 
+parsing the data is a great source of information.
 
 ## Improvements
 

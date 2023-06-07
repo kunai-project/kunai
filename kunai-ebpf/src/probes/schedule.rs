@@ -58,7 +58,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
     let arg_len = core_read_kernel!(mm, arg_len)?;
 
     // we check that arg_start is not a null pointer
-    if arg_start != 0 {
+    if arg_start != 0 && arg_len != 0 {
         inspect_err!(
             event
                 .data
