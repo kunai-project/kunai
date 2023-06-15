@@ -35,6 +35,12 @@ pub use core_iov::*;
 mod core_ns;
 pub use core_ns::*;
 
+mod core_cgroup;
+pub use core_cgroup::*;
+
+mod core_kernfs;
+pub use core_kernfs::*;
+
 #[derive(Clone, Copy)]
 pub struct CoRe<P> {
     ptr: *const P,
@@ -77,13 +83,6 @@ impl<P> CoRe<P> {
         self.ptr as *mut _
     }
 
-    /*pub fn from_ptr(ptr: *const P) -> Self {
-        CoRe {
-            ptr: ptr as *const _,
-        }
-    }*/
-
-    //pub fn from_ptr<Ptr>(ptr: *const Ptr) -> Self {
     pub fn from_ptr(ptr: *const P) -> Self {
         CoRe {
             ptr: ptr as *const _,
@@ -91,13 +90,13 @@ impl<P> CoRe<P> {
     }
 }
 
-macro_rules! rust_shim_impl {
+macro_rules! rust_shim_kernel_impl {
     ($struct:ident, $member:ident, $ret:ty) => {
-        rust_shim_impl! (pub, $member, $struct, $member, $ret);
+        rust_shim_kernel_impl! (pub, $member, $struct, $member, $ret);
     };
 
     ($pub:vis, $struct:ident, $member:ident, $ret:ty) => {
-        rust_shim_impl! ($pub, $member, $struct, $member, $ret);
+        rust_shim_kernel_impl! ($pub, $member, $struct, $member, $ret);
     };
 
     ($pub:vis, $fn_name:ident, $struct: ident, $member:ident, $ret:ty) => {
@@ -113,7 +112,7 @@ macro_rules! rust_shim_impl {
     };
 }
 
-pub(crate) use rust_shim_impl;
+pub(crate) use rust_shim_kernel_impl;
 
 macro_rules! rust_shim_user_impl {
     ($pub:vis, $struct:ident, $member:ident, $ret:ty) => {

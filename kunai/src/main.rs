@@ -1,21 +1,18 @@
+mod cache;
 mod compat;
-mod hcache;
+mod info;
 mod util;
 
-use anyhow::anyhow;
-use futures::channel::mpsc::Receiver;
+use info::{AdditionalFields, StdEventInfo};
 use json::{object, JsonValue};
+use kunai_common::cgroup::Cgroup;
 
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
-use std::hash::Hash;
-use std::io::{BufRead, BufReader};
-use std::net::IpAddr;
-use std::os::unix::prelude::MetadataExt;
-use std::path::{Path, PathBuf};
 
-use std::str::FromStr;
-use std::sync::mpsc::{channel, Sender};
+use std::net::IpAddr;
+use std::path::PathBuf;
+
+use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::Arc;
 use std::thread;
 use users::get_current_uid;
@@ -36,99 +33,25 @@ use kunai_common::{
     uuid::TaskUuid,
 };
 
-use chrono::prelude::*;
-
 use log::{debug, error, info, warn};
 
 //use tokio::sync::{Barrier, Mutex};
 use tokio::sync::{Barrier, Mutex};
 use tokio::{signal, task, time};
 
-use hcache::*;
+use cache::*;
 
-use crate::compat::KernelVersion;
+use crate::compat::{KernelVersion, Programs};
+use crate::util::namespaces::unshare;
 
 const PAGE_SIZE: usize = 4096;
 const MAX_EVENT_SIZE: usize = core::mem::size_of::<Event<ExecveData>>();
 const MAX_EVENT_COUNT: usize = 256;
 
-#[derive(Debug, Clone)]
-struct StdEventInfo {
-    info: events::EventInfo,
-    utc_timestamp: DateTime<Utc>,
-}
-
-impl StdEventInfo {
-    fn correlation_key(&self) -> u128 {
-        CorrInfo::corr_key(self.info.process.tg_uuid)
-    }
-
-    fn parent_correlation_key(&self) -> u128 {
-        CorrInfo::corr_key(self.info.parent.tg_uuid)
-    }
-
-    fn from_event_info(mut i: EventInfo, rand: u32) -> Self {
-        // we set the random part needed to generate uuids for events
-        i.set_uuid_random(rand);
-        StdEventInfo {
-            info: i,
-            // on older kernels bpf_ktime_get_boot_ns() is not available so it is not
-            // easy to compute correct event timestamp from eBPF so utc_timestamp is
-            // the time at which the event is processed.
-            utc_timestamp: chrono::Utc::now(),
-        }
-    }
-}
-
-impl From<StdEventInfo> for JsonValue {
-    fn from(value: StdEventInfo) -> Self {
-        Self::from(&value)
-    }
-}
-
-impl From<&StdEventInfo> for JsonValue {
-    fn from(i: &StdEventInfo) -> Self {
-        let ts = i.utc_timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true);
-        let info = i.info;
-
-        object! {
-            event: object!{
-                id: info.etype.id(),
-                name: info.etype.as_str(),
-                uuid: info.uuid.into_uuid().hyphenated().to_string(),
-                batch: info.batch,
-            },
-            // current task
-            task: object!{
-                name: info.process.comm_string(),
-                // start_time
-                // start_time: info.process.start_time,
-                // task pid
-                pid: info.process.pid,
-                // task group id -> equals to pid when single threaded
-                tgid: info.process.tgid,
-                // group uuid
-                guuid: info.process.tg_uuid.into_uuid().hyphenated().to_string(),
-                uid: info.process.uid,
-                gid: info.process.gid,
-            },
-            // parent task
-            parent_task: object!{
-                name: info.parent.comm_string(),
-                // start_time
-                // start_time: info.parent.start_time,
-                // task pid
-                pid: info.parent.pid,
-                // task group id -> equals to pid when single threaded
-                tgid: info.parent.tgid,
-                // group uuid
-                guuid: info.parent.tg_uuid.into_uuid().hyphenated().to_string(),
-                uid: info.parent.uid,
-                gid: info.parent.gid,
-            },
-            utc_time: ts,
-        }
-    }
+macro_rules! format_ptr {
+    ($value:expr) => {
+        format!("{:p}", $value as *const u8)
+    };
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -204,35 +127,37 @@ struct CorrelationData {
     image: PathBuf,
     command_line: Vec<String>,
     resolved: HashMap<IpAddr, String>,
+    container: Option<String>,
     info: CorrInfo,
 }
 
 struct EventProcessor {
     random: u32,
-    hcache: hcache::FsCache,
+    hcache: cache::Cache,
     receiver: Receiver<EncodedEvent>,
     correlations: HashMap<u128, CorrelationData>,
-    mounts: HashMap<u64, PathBuf>,
 }
 
-struct EventReader {
-    random: u32,
-    hcache: hcache::FsCache,
-    batch: usize,
-    //transfers: Arc<Mutex<TransferMap>>,
-    pipe: VecDeque<EncodedEvent>,
-    sender: Sender<EncodedEvent>,
-    correlations: HashMap<u128, CorrelationData>,
-    mounts: HashMap<u64, PathBuf>,
-}
+impl EventProcessor {
+    #[inline]
+    fn container_type_from_cgroup(cgrp: &Cgroup) -> Option<String> {
+        let s: Vec<String> = cgrp.to_vec();
 
-macro_rules! format_ptr {
-    ($value:expr) => {
-        format!("{:p}", $value as *const u8)
-    };
-}
+        if let Some(last) = s.last() {
+            if last.starts_with("docker-") {
+                return Some("docker".into());
+            }
+        }
 
-impl EventReader {
+        if let Some(first) = s.get(1) {
+            if first.starts_with("lxc.payload.") {
+                return Some("lxc".into());
+            }
+        }
+
+        None
+    }
+
     #[inline]
     fn json_event(info: StdEventInfo, data: JsonValue) -> JsonValue {
         object! {data: data, info: info,}
@@ -243,15 +168,12 @@ impl EventReader {
         object! {data: data, info: info}
     }
 
-    pub fn init(bpf: &mut Bpf, sender: Sender<EncodedEvent>) -> anyhow::Result<Arc<Mutex<Self>>> {
-        let mut ep = EventReader {
+    pub fn init(receiver: Receiver<EncodedEvent>) {
+        let mut ep = Self {
             random: util::getrandom::<u32>().unwrap(),
-            hcache: hcache::FsCache::with_max_entries(0x1000),
-            pipe: VecDeque::new(),
-            batch: 0,
+            hcache: Cache::with_max_entries(10000),
             correlations: HashMap::new(),
-            mounts: HashMap::new(),
-            sender,
+            receiver,
         };
 
         // should not raise any error, we just print it
@@ -260,12 +182,16 @@ impl EventReader {
             |e: anyhow::Error| warn!("failed to initialize correlations with procfs: {}", e)
         };
 
-        ep.init_superblock_inodes()
-            .map_err(|e| anyhow::Error::msg(format!("failed to init superblock: {e}")))?;
+        thread::spawn(move || {
+            // the thread must drop CLONE_FS in order to be able to navigate
+            // in namespaces
+            unshare(libc::CLONE_FS).unwrap();
+            while let Ok(mut enc) = ep.receiver.recv() {
+                ep.handle_event(&mut enc);
+            }
+        });
 
-        let safe = Arc::new(Mutex::new(ep));
-        Self::read_events(&safe, bpf);
-        Ok(safe)
+        //ep
     }
 
     fn init_correlations_from_procfs(&mut self) -> anyhow::Result<()> {
@@ -278,28 +204,6 @@ impl EventReader {
                 )
             }
         }
-        Ok(())
-    }
-
-    fn init_superblock_inodes(&mut self) -> anyhow::Result<()> {
-        let file = File::open("/etc/mtab").map_err(anyhow::Error::msg)?;
-
-        let reader = BufReader::new(file);
-
-        for line in reader.lines() {
-            let line = line.map_err(anyhow::Error::msg)?;
-            let mountpoint = Path::new(
-                line.split_whitespace()
-                    .nth(1)
-                    .ok_or(anyhow::Error::msg("mountpoint is missing"))?,
-            );
-            let Ok(meta) = mountpoint.metadata() else {
-                continue;
-            };
-
-            self.mounts.insert(meta.ino(), mountpoint.into());
-        }
-
         Ok(())
     }
 
@@ -325,7 +229,6 @@ impl EventReader {
             parent: ppi,
         });
 
-        // let std_info = StdEventInfo::from_event_info(i, self.random, self.utc_boot_time_sec);
         let ck = ci.correlation_key();
 
         if self.correlations.contains_key(&ck) {
@@ -336,6 +239,7 @@ impl EventReader {
             image: p.exe().unwrap_or("?".into()),
             command_line: p.cmdline().unwrap_or(vec!["?".into()]),
             resolved: HashMap::new(),
+            container: None,
             info: ci,
         };
 
@@ -423,135 +327,50 @@ impl EventReader {
     }
 
     #[inline]
-    async fn get_hashes<P: AsRef<Path> + Clone>(&mut self, p: P) -> Hashes {
-        let cp = p.clone();
-        self.hcache.get_or_cache(p).await.unwrap_or(Hashes {
-            file: cp.as_ref().to_path_buf(),
-            ..Default::default()
-        })
-    }
-
-    #[inline]
-    async fn get_hashes_with_ns<P: AsRef<Path> + Clone>(&mut self, ns_inum: u32, p: P) -> Hashes {
-        let cp = p.clone();
-        self.hcache
-            .get_or_cache_with_ns(ns_inum, p)
-            .await
-            .unwrap_or(Hashes {
-                file: cp.as_ref().to_path_buf(),
+    fn get_hashes_with_ns(&mut self, ns_inum: u32, p: &kunai_common::path::Path) -> Hashes {
+        match self.hcache.get_or_cache_in_ns(ns_inum, p) {
+            Ok(h) => h,
+            Err(e) => Hashes {
+                file: p.to_path_buf(),
+                error: Some(format!("{e}")),
                 ..Default::default()
-            })
+            },
+        }
     }
 
     #[inline]
-    fn make_realpath(&self, p: &mut kunai_common::path::Path) -> Result<PathBuf, anyhow::Error> {
-        // if path is already a realpath
-        if p.is_realpath() {
-            return Ok(p.to_path_buf());
-        }
-
-        /*if !p.is_absolute() {
-            debug!(
-                "{} is not absolute sb_ino={:?} ino={:?}",
-                p, p.sb_ino, p.ino
-            );
-            return Err(anyhow!("path must be absolute"));
-        }*/
-
-        let mut path = p.to_path_buf();
-        let sb_ino = p.sb_ino.ok_or(anyhow!("sb_ino field is missing in Path"))?;
-
-        /*let Some(sb_path) = self.mounts.get(&sb_ino) else {
-            return Err(anyhow!("superblock mount point not found"));
-        };*/
-        let unk_path = PathBuf::from("?");
-        let sb_path = self.mounts.get(&sb_ino).unwrap_or(&unk_path);
-
-        if !path.starts_with(sb_path) {
-            // we cannot directly use PathBuf::join method as it checks
-            // for file existance at some point
-            let mut tmp = sb_path.to_string_lossy().to_string();
-            if tmp.ends_with('/') {
-                tmp.push_str(&path.to_string_lossy()[1..]);
-            } else {
-                tmp.push_str(&path.to_string_lossy());
-            }
-            // canonicalize fails if path does not exists
-            //path = PathBuf::from(tmp).canonicalize()?;
-            //path = tokio::fs::canonicalize(tmp).await?;
-            path = PathBuf::from(tmp);
-            *p = kunai_common::path::Path::try_from_realpath(&path)?;
-        }
-
-        Ok(p.to_path_buf())
-    }
-
-    async fn make_realpath_and_cache_hash(
-        &mut self,
-        p: &mut kunai_common::path::Path,
-    ) -> Result<(), anyhow::Error> {
-        let realpath = self.make_realpath(p)?;
-        self.hcache.cache(realpath).await;
-        Ok(())
-    }
-
-    #[inline]
-    async fn json_execve(&mut self, mut info: StdEventInfo, event: &mut ExecveEvent) -> JsonValue {
+    fn json_execve(&mut self, mut info: StdEventInfo, event: &mut ExecveEvent) -> JsonValue {
         let ancestors = self.get_ancestors(&info);
 
-        let executable = event.data.executable.to_path_buf();
-        let interpreter = event.data.interpreter.to_path_buf();
+        //let executable = event.data.executable.to_path_buf();
+        //let interpreter = event.data.interpreter.to_path_buf();
         let mnt_ns = event.info.process.namespaces.mnt;
 
         let mut data = object! {
             ancestors: ancestors.join("|"),
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
-            exe: self.get_hashes_with_ns(mnt_ns, &executable).await,
+            exe: self.get_hashes_with_ns(mnt_ns, &event.data.executable),
 
         };
 
         // we check wether a script is being interpreted
-        if executable != interpreter {
+        if event.data.executable != event.data.interpreter {
             info.info.etype = Type::ExecveScript;
-            data["interpreter"] = self.get_hashes_with_ns(mnt_ns, &interpreter).await.into();
+            data["interpreter"] = self
+                .get_hashes_with_ns(mnt_ns, &event.data.executable)
+                .into();
         }
 
-        let out = Self::json_event_info_ref(&info, data);
-
-        // updating correlations
-        let corr_key = info.correlation_key();
-        let correlations = CorrelationData {
-            command_line: event.data.argv.to_argv(),
-            image: executable,
-            resolved: HashMap::new(),
-            info: CorrInfo::Event(info),
-        };
-
-        self.correlations.insert(corr_key, correlations);
-
-        out
+        Self::json_event_info_ref(&info, data)
     }
 
     #[inline]
-    fn track_task(&mut self, info: StdEventInfo, event: &ScheduleEvent) {
-        let ck = info.correlation_key();
-
-        // we insert only if not existing
-        self.correlations.entry(ck).or_insert(CorrelationData {
-            image: event.data.exe.to_path_buf(),
-            command_line: event.data.argv.to_argv(),
-            resolved: HashMap::new(),
-            info: CorrInfo::Event(info),
-        });
-    }
-
-    #[inline]
-    async fn json_mmap_exec(&mut self, info: StdEventInfo, event: &mut MmapExecEvent) -> JsonValue {
+    fn json_mmap_exec(&mut self, info: StdEventInfo, event: &mut MmapExecEvent) -> JsonValue {
         // todo : handle this better
-        let filename = event.data.filename.to_path_buf();
+        let filename = event.data.filename;
         let mnt_ns = event.info.process.namespaces.mnt;
-        let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename).await;
+        let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename);
 
         let ck = info.correlation_key();
 
@@ -642,11 +461,12 @@ impl EventReader {
             exe: exe.to_string_lossy().to_string(),
             dev_name: event.data.dev_name.to_string(),
             path: event.data.path.to_string(),
-            success: event.data.rc == 0,
         };
 
         // we cannot use type keyword in object! macro
         data["type"] = event.data.ty.to_string().into();
+        // in order to display success after type
+        data["success"] = (event.data.rc == 0).into();
 
         Self::json_event(info, data)
     }
@@ -679,18 +499,12 @@ impl EventReader {
             loaded: event.data.loaded,
         };
 
-        // dumping eBPF program from userland
-        match util::bpf::bpf_dump_xlated_by_id_and_tag(event.data.id, event.data.tag) {
-            Ok(insns) => {
-                data["bpf_prog"]["md5"] = md5_data(insns.as_slice()).into();
-                data["bpf_prog"]["sha1"] = sha1_data(insns.as_slice()).into();
-                data["bpf_prog"]["sha256"] = sha256_data(insns.as_slice()).into();
-                data["bpf_prog"]["sha512"] = sha512_data(insns.as_slice()).into();
-                data["bpf_prog"]["size"] = insns.len().into();
-            }
-            Err(e) => {
-                error!("failed to retrieve bpf_prog instructions: {:?}", e)
-            }
+        if let Some(h) = &event.data.hashes {
+            data["bpf_prog"]["md5"] = h.md5.to_string().into();
+            data["bpf_prog"]["sha1"] = h.sha1.to_string().into();
+            data["bpf_prog"]["sha256"] = h.sha256.to_string().into();
+            data["bpf_prog"]["sha512"] = h.sha512.to_string().into();
+            data["bpf_prog"]["size"] = h.size.into();
         }
 
         Self::json_event(info, data)
@@ -804,7 +618,51 @@ impl EventReader {
         Self::json_event(info, data)
     }
 
-    async fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
+    #[inline]
+    fn handle_correlation_event(&mut self, info: StdEventInfo, event: &CorrelationEvent) {
+        let ck = info.correlation_key();
+
+        // early return if correlation key exists
+        if self.correlations.contains_key(&ck) {
+            return;
+        }
+
+        let cgroup = event.data.cgroup;
+
+        let container_type = Self::container_type_from_cgroup(&cgroup);
+
+        // we insert only if not existing
+        self.correlations.entry(ck).or_insert(CorrelationData {
+            image: event.data.exe.to_path_buf(),
+            command_line: event.data.argv.to_argv(),
+            resolved: HashMap::new(),
+            container: container_type,
+            info: CorrInfo::Event(info),
+        });
+    }
+
+    #[inline]
+    fn handle_hash_event(&mut self, info: StdEventInfo, event: &HashEvent) {
+        let mnt_ns = info.info.process.namespaces.mnt;
+        self.get_hashes_with_ns(mnt_ns, &event.data.path);
+    }
+
+    fn build_std_event_info(&mut self, i: EventInfo) -> StdEventInfo {
+        let ns = i.process.namespaces.mnt;
+
+        let std_info = StdEventInfo::with_event_info(i, self.random);
+
+        let cd = self.correlations.get(&std_info.correlation_key());
+
+        let additional = AdditionalFields {
+            hostname: self.hcache.get_hostname(ns).unwrap_or("?".into()),
+            container: cd.and_then(|cd| cd.container.clone()),
+        };
+
+        std_info.with_additional_fields(additional)
+    }
+
+    fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
         let i = unsafe { enc_event.info() }.unwrap();
 
         // we don't handle our own events
@@ -813,22 +671,26 @@ impl EventReader {
             return;
         }
 
-        let std_info = StdEventInfo::from_event_info(*i, self.random);
+        let pid = i.process.tgid;
+        let ns = i.process.namespaces.mnt;
+        if let Err(e) = self.hcache.cache_ns(pid, ns) {
+            debug!("failed to cache namespace pid={pid} ns={ns}: {e}");
+        } else {
+            debug!("successfully cached namespace pid={pid} ns={ns}");
+        }
+
+        let std_info = self.build_std_event_info(*i);
+
         let etype = std_info.info.etype;
 
         match etype {
             events::Type::Execve => match unsafe { enc_event.as_mut_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_execve(std_info, e).await),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::TaskSched => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => self.track_task(std_info, e),
+                Ok(e) => std::println!("{}", self.json_execve(std_info, e)),
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::MmapExec => match unsafe { enc_event.as_mut_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_mmap_exec(std_info, e).await),
+                Ok(e) => std::println!("{}", self.json_mmap_exec(std_info, e)),
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
@@ -890,10 +752,44 @@ impl EventReader {
                 }
             }
 
+            events::Type::Correlation => match event!(enc_event) {
+                Ok(e) => {
+                    self.handle_correlation_event(std_info, e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::CacheHash => match event!(enc_event) {
+                Ok(e) => {
+                    self.handle_hash_event(std_info, e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
             _ => {
                 unimplemented!("event type not implemented")
             }
         }
+    }
+}
+
+struct EventReader {
+    batch: usize,
+    pipe: VecDeque<EncodedEvent>,
+    sender: Sender<EncodedEvent>,
+}
+
+impl EventReader {
+    pub fn init(bpf: &mut Bpf, sender: Sender<EncodedEvent>) -> anyhow::Result<Arc<Mutex<Self>>> {
+        let ep = EventReader {
+            pipe: VecDeque::new(),
+            batch: 0,
+            sender,
+        };
+
+        let safe = Arc::new(Mutex::new(ep));
+        Self::read_events(&safe, bpf);
+        Ok(safe)
     }
 
     #[inline(always)]
@@ -952,13 +848,13 @@ impl EventReader {
         // are sorted ascending by timestamp
         while count > 0 {
             // at this point pop_front cannot fail as count takes account of the elements in the pipe
-            let mut enc_evt = self
+            let enc_evt = self
                 .pipe
                 .pop_front()
                 .expect("pop_front should never fail here");
 
-            //self.pre_process_events(&mut enc_evt).await;
-            self.handle_event(&mut enc_evt).await;
+            // send event to event processor
+            self.sender.send(enc_evt).unwrap();
 
             count -= 1;
         }
@@ -968,7 +864,7 @@ impl EventReader {
     // So any processing on events that requires realtime properties must be done here. A direct
     // consequence of this is that anything that do not require realtime property should not
     // be done here as it may slow down the event processing.
-    async fn pre_process_events(
+    /*async fn pre_process_events(
         &mut self,
         enc_event: &mut EncodedEvent,
     ) -> Result<(), anyhow::Error> {
@@ -1031,6 +927,74 @@ impl EventReader {
         }
 
         Ok(())
+    }*/
+
+    #[inline]
+    fn send_event<T>(&self, event: Event<T>) -> Result<(), SendError<EncodedEvent>> {
+        self.sender.send(EncodedEvent::from_event(event))
+    }
+
+    /// function used to pre-process some targetted events where time is critical and for which
+    /// processing can be done in EventReader
+    #[inline]
+    fn pre_process_events(&self, e: &mut EncodedEvent) {
+        let i = unsafe { e.info() }.expect("info should not fail here");
+
+        #[allow(clippy::single_match)]
+        match i.etype {
+            Type::BpfProgLoad => {
+                let mut event = mut_event!(e, BpfProgLoadEvent).unwrap();
+
+                // dumping eBPF program from userland
+                match util::bpf::bpf_dump_xlated_by_id_and_tag(event.data.id, event.data.tag) {
+                    Ok(insns) => {
+                        let h = ProgHashes {
+                            md5: md5_data(insns.as_slice()).try_into().unwrap(),
+                            sha1: sha1_data(insns.as_slice()).try_into().unwrap(),
+                            sha256: sha256_data(insns.as_slice()).try_into().unwrap(),
+                            sha512: sha512_data(insns.as_slice()).try_into().unwrap(),
+                            size: insns.len(),
+                        };
+
+                        event.data.hashes = Some(h);
+                    }
+
+                    Err(e) => {
+                        error!("failed to retrieve bpf_prog instructions: {:?}", e)
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// this method pass through some events directly to the event processor
+    fn pass_through_events(&self, e: &EncodedEvent) {
+        let i = unsafe { e.info() }.unwrap();
+
+        match i.etype {
+            Type::Execve => {
+                let execve = event!(e, ExecveEvent).unwrap();
+                let c: CorrelationEvent = execve.into();
+                self.send_event(c).unwrap();
+
+                for h in HashEvent::all_from_execve(execve) {
+                    self.send_event(h).unwrap();
+                }
+            }
+
+            Type::MmapExec => {
+                let event = event!(e, MmapExecEvent).unwrap();
+                self.send_event(HashEvent::from(event)).unwrap();
+            }
+
+            Type::TaskSched => {
+                let c: CorrelationEvent = event!(e, ScheduleEvent).unwrap().into();
+                self.send_event(c).unwrap();
+            }
+
+            _ => {}
+        }
     }
 
     fn read_events(ep: &Arc<Mutex<Self>>, bpf: &mut Bpf) {
@@ -1102,45 +1066,48 @@ impl EventReader {
                     // events.read contains the number of events that have been read,
                     // and is always <= buffers.len()
                     for buf in buffers.iter().take(events.read) {
-                        match EncodedEvent::from_bytes(buf) {
-                            Ok(mut dec) => {
-                                let mut ep = event_proc.lock().await;
+                        let mut dec = EncodedEvent::from_bytes(buf);
+                        let mut ep = event_proc.lock().await;
 
-                                /*match ep.fast_hook(&mut dec).await {
-                                    // if there is no error we queue event to be processed later on
-                                    // todo: add a way to skip our own events
-                                    Ok(_) => ep.pipe.push_back(dec),
-                                    // if there is an error we print it
-                                    Err(e) => error!("{}", e),
-                                }*/
+                        // we make sure here that only events for which we can grab info for
+                        // are pushed to the pipe. It is simplifying the error handling process
+                        // in sorting the pipe afterwards
+                        if let Ok(info) = unsafe { dec.info_mut() } {
+                            info.batch = ep.batch;
 
-                                // we make sure here that only events for which we can grab info for
-                                // are pushed to the pipe. It is simplifying the error handling process
-                                // in sorting the pipe afterwards
-                                if let Ok(info) = unsafe { dec.info_mut() } {
-                                    info.batch = ep.batch;
-                                    // todo: add a way to handle events directly here and eventually abort their processing
-                                    // tgid is the PID of the process in userland
-                                    let pid = info.process.tgid;
-                                    let ns = info.process.namespaces.mnt;
-                                    if let Err(e) = ep
-                                        .hcache
-                                        .cache_ns(info.process.pid, info.process.namespaces.mnt)
-                                    {
-                                        debug!("failed to cache namespace pid={pid} ns={ns}: {e}");
-                                    } else {
-                                        debug!("successfully cached namespace pid={pid} ns={ns}");
-                                    }
-                                } else {
-                                    error!("failed to decode info");
-                                    continue;
+                            /*let opt_evt = match CorrelationEvent::from_encoded(&dec) {
+                                Ok(opt_evt) => opt_evt,
+                                Err(e) => {
+                                    error!("failed to transform event: {e}");
+                                    None
                                 }
+                            };
 
-                                ep.pipe.push_back(dec);
-                            }
+                            if let Some(corr_event) = opt_evt {
+                                if let Ok(enc) = EncodedEvent::from_event(corr_event) {
+                                    ep.sender.send(enc);
+                                } else {
+                                    error!("failed to encode correlation event");
+                                }
+                            }*/
+                        } else {
+                            error!("failed to decode info");
+                            continue;
+                        }
 
-                            Err(e) => error!("failed to decode event: {}", e),
-                        };
+                        let etype = unsafe { dec.info() }
+                            .expect("info should not fail here")
+                            .etype;
+
+                        ep.pre_process_events(&mut dec);
+
+                        ep.pass_through_events(&dec);
+
+                        if matches!(etype, Type::TaskSched) {
+                            continue;
+                        }
+
+                        ep.pipe.push_back(dec);
                     }
 
                     // all threads wait here after some events have been collected
@@ -1150,9 +1117,6 @@ impl EventReader {
                     if cpu_id == reducer_cpu_id {
                         let mut ep = event_proc.lock().await;
                         if ep.has_pending_events() {
-                            for e in ep.pipe.iter() {
-                                ep.sender.send(e.clone()).unwrap()
-                            }
                             ep.process_piped_events().await;
                             ep.batch += 1;
                         }
@@ -1244,56 +1208,45 @@ async fn main() -> Result<(), anyhow::Error> {
         enable.split(',').for_each(|s| en_probes.push(s.into()));
     }
 
-    let mut programs = bpf
-        .programs_mut()
-        .map(|(name, p)| {
-            let mut prog = compat::Program::from_program(name.to_string(), p);
-            // disable debug probes by default
-            if name.starts_with("debug.") {
-                prog.disable();
-            }
-            (name.to_string(), prog)
-        })
-        .collect::<HashMap<String, compat::Program>>();
+    let mut programs = Programs::from_bpf(&mut bpf);
 
-    programs.get_mut("execve.security_bprm_check").unwrap().prio = 0;
+    programs.expect_mut("execve.security_bprm_check").prio = 0;
 
-    programs.get_mut("execve.exit.bprm_execve").unwrap().prio = 20;
+    programs.expect_mut("execve.exit.bprm_execve").prio = 20;
     programs
-        .get_mut("execve.exit.bprm_execve")
-        .unwrap()
-        .set_compat(Some("5.9.0".try_into().unwrap()), None);
+        .expect_mut("execve.exit.bprm_execve")
+        .min_kernel(kernel!(5, 9));
 
-    programs.get_mut("syscalls.sys_exit_execve").unwrap().prio = 20;
+    programs.expect_mut("syscalls.sys_exit_execve").prio = 20;
     programs
-        .get_mut("syscalls.sys_exit_execve")
-        .unwrap()
-        .set_compat(None, Some("5.9.0".try_into().unwrap()));
-    programs
-        .get_mut("syscalls.sys_exit_execveat")
-        .unwrap()
-        .set_compat(None, Some("5.9.0".try_into().unwrap()));
+        .expect_mut("syscalls.sys_exit_execve")
+        .max_kernel(kernel!(5, 9));
 
-    // dns probes
-    //programs.get_mut("dns.entry.sock_recvmsg").unwrap().prio = 90;
-    //programs.get_mut("dns.exit.sock_recvmsg").unwrap().prio = 100;
+    programs
+        .expect_mut("syscalls.sys_exit_execveat")
+        .max_kernel(kernel!(5, 9));
+
     // bpf probes
-    programs.get_mut("entry.security_bpf_prog").unwrap().prio = 90;
-    programs.get_mut("exit.bpf_prog_load").unwrap().prio = 100;
-    // fd_install
-    programs.get_mut("fd.fd_install").unwrap().prio = 0;
-    programs.get_mut("fd.entry.__fdget").unwrap().prio = 0;
-    programs.get_mut("fd.exit.__fdget").unwrap().prio = 10;
-    // mmap probe
-    programs.get_mut("syscalls.sys_enter_mmap").unwrap().prio = 90;
+    programs.expect_mut("entry.security_bpf_prog").prio = 90;
+    programs.expect_mut("exit.bpf_prog_load").prio = 100;
 
-    // we sort programs by their loading priority
-    //programs.sort_unstable_by_key(|p| p.prio);
-    let mut sorted: Vec<(String, compat::Program)> = programs.into_iter().collect();
-    sorted.sort_unstable_by_key(|(_, p)| p.prio_by_prog());
+    // fd_install
+    programs.expect_mut("fd.fd_install").prio = 0;
+    programs.expect_mut("fd.entry.__fdget").prio = 0;
+    programs.expect_mut("fd.exit.__fdget").prio = 10;
+
+    // kernel function name changed above 5.9
+    if current_kernel < kernel!(5, 9) {
+        programs
+            .expect_mut("fs.exit.path_mount")
+            .rename("fs.exit.do_mount")
+    }
+
+    // mmap probe
+    programs.expect_mut("syscalls.sys_enter_mmap").prio = 90;
 
     // generic program loader
-    for (_, mut p) in sorted {
+    for (_, mut p) in programs.into_vec_sorted_by_prio() {
         // filtering probes to enable (only available in debug)
         if !en_probes.is_empty() && en_probes.iter().filter(|e| p.name.contains(*e)).count() == 0 {
             continue;
@@ -1332,15 +1285,9 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     let (sender, receiver) = channel::<EncodedEvent>();
-    // Spawn off an expensive computation
-    thread::spawn(move || {
-        while let Ok(enc) = receiver.recv() {
-            let i = unsafe { enc.info() }.expect("info should always be valid");
-            info!("received event {}", i.etype);
-        }
-    });
 
     EventReader::init(&mut bpf, sender)?;
+    EventProcessor::init(receiver);
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;

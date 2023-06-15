@@ -3,13 +3,18 @@
 pub type __u8 = ::core::ffi::c_uchar;
 pub type __u16 = ::core::ffi::c_ushort;
 pub type __u32 = ::core::ffi::c_uint;
+pub type __s64 = ::core::ffi::c_longlong;
 pub type __u64 = ::core::ffi::c_ulonglong;
 pub type __kernel_size_t = ::core::ffi::c_uint;
 pub type __be16 = __u16;
 pub type __be32 = __u32;
+pub type __int64_t = ::core::ffi::c_longlong;
 pub type __uid_t = ::core::ffi::c_uint;
 pub type __gid_t = ::core::ffi::c_uint;
+pub type __off64_t = __int64_t;
 pub type __pid_t = ::core::ffi::c_int;
+pub type __loff_t = __off64_t;
+pub type loff_t = __loff_t;
 pub type gid_t = __gid_t;
 pub type uid_t = __uid_t;
 pub type pid_t = __pid_t;
@@ -227,6 +232,13 @@ extern "C" {
 extern "C" {
     pub fn shim_path_dentry_exists(path: *mut path) -> bool;
 }
+pub type time64_t = __s64;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct timespec64 {
+    pub tv_sec: time64_t,
+    pub tv_nsec: ::core::ffi::c_long,
+}
 pub type umode_t = ::core::ffi::c_ushort;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -234,6 +246,10 @@ pub struct inode {
     pub i_mode: umode_t,
     pub i_ino: ::core::ffi::c_ulong,
     pub i_sb: *mut super_block,
+    pub i_size: loff_t,
+    pub i_atime: timespec64,
+    pub i_mtime: timespec64,
+    pub i_ctime: timespec64,
 }
 extern "C" {
     pub fn shim_inode_i_ino(inode: *mut inode) -> ::core::ffi::c_ulong;
@@ -261,6 +277,42 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_inode_i_sb_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
+    pub fn shim_inode_i_size(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+extern "C" {
+    pub fn shim_inode_i_size_user(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+extern "C" {
+    pub fn shim_inode_i_size_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
+    pub fn shim_inode_i_atime(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode_i_atime_user(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode_i_atime_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
+    pub fn shim_inode_i_mtime(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode_i_mtime_user(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode_i_mtime_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
+    pub fn shim_inode_i_ctime(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode_i_ctime_user(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode_i_ctime_exists(inode: *mut inode) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -418,6 +470,78 @@ extern "C" {
     pub fn shim_nsproxy_mnt_ns_exists(nsproxy: *mut nsproxy) -> bool;
 }
 #[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct kernfs_node {
+    pub parent: *mut kernfs_node,
+    pub name: *const ::core::ffi::c_char,
+}
+extern "C" {
+    pub fn shim_kernfs_node_parent(kernfs_node: *mut kernfs_node) -> *mut kernfs_node;
+}
+extern "C" {
+    pub fn shim_kernfs_node_parent_user(kernfs_node: *mut kernfs_node) -> *mut kernfs_node;
+}
+extern "C" {
+    pub fn shim_kernfs_node_parent_exists(kernfs_node: *mut kernfs_node) -> bool;
+}
+extern "C" {
+    pub fn shim_kernfs_node_name(kernfs_node: *mut kernfs_node) -> *const ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_kernfs_node_name_user(kernfs_node: *mut kernfs_node) -> *const ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_kernfs_node_name_exists(kernfs_node: *mut kernfs_node) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct cgroup {
+    pub kn: *mut kernfs_node,
+}
+extern "C" {
+    pub fn shim_cgroup_kn(cgroup: *mut cgroup) -> *mut kernfs_node;
+}
+extern "C" {
+    pub fn shim_cgroup_kn_user(cgroup: *mut cgroup) -> *mut kernfs_node;
+}
+extern "C" {
+    pub fn shim_cgroup_kn_exists(cgroup: *mut cgroup) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct cgroup_subsys_state {
+    pub cgroup: *mut cgroup,
+}
+extern "C" {
+    pub fn shim_cgroup_subsys_state_cgroup(
+        cgroup_subsys_state: *mut cgroup_subsys_state,
+    ) -> *mut cgroup;
+}
+extern "C" {
+    pub fn shim_cgroup_subsys_state_cgroup_user(
+        cgroup_subsys_state: *mut cgroup_subsys_state,
+    ) -> *mut cgroup;
+}
+extern "C" {
+    pub fn shim_cgroup_subsys_state_cgroup_exists(
+        cgroup_subsys_state: *mut cgroup_subsys_state,
+    ) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct task_group {
+    pub css: cgroup_subsys_state,
+}
+extern "C" {
+    pub fn shim_task_group_css(task_group: *mut task_group) -> *mut cgroup_subsys_state;
+}
+extern "C" {
+    pub fn shim_task_group_css_user(task_group: *mut task_group) -> *mut cgroup_subsys_state;
+}
+extern "C" {
+    pub fn shim_task_group_css_exists(task_group: *mut task_group) -> bool;
+}
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct task_struct {
     pub pid: pid_t,
@@ -430,6 +554,7 @@ pub struct task_struct {
     pub group_leader: *mut task_struct,
     pub mm: *mut mm_struct,
     pub nsproxy: *mut nsproxy,
+    pub sched_task_group: *mut task_group,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -545,6 +670,16 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_task_struct_nsproxy_exists(task_struct: *mut task_struct) -> bool;
+}
+extern "C" {
+    pub fn shim_task_struct_sched_task_group(task_struct: *mut task_struct) -> *mut task_group;
+}
+extern "C" {
+    pub fn shim_task_struct_sched_task_group_user(task_struct: *mut task_struct)
+        -> *mut task_group;
+}
+extern "C" {
+    pub fn shim_task_struct_sched_task_group_exists(task_struct: *mut task_struct) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

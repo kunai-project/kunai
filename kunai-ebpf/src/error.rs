@@ -3,6 +3,7 @@ use crate::maps;
 
 use aya_log_ebpf::error;
 use kunai_common::buffer;
+use kunai_common::cgroup;
 use kunai_common::events;
 use kunai_common::net;
 use kunai_common::path;
@@ -47,8 +48,6 @@ macro_rules! loc_error {
     };
 }
 
-pub(crate) use loc_error;
-
 impl LocError {
     pub fn new(line: u32, err: ProbeError) -> Self {
         LocError { line, err }
@@ -82,6 +81,8 @@ pub enum ProbeError {
     FdMapError(maps::Error),
     #[wrap]
     EventError(events::Error),
+    #[wrap]
+    CgroupError(cgroup::Error),
 }
 
 #[macro_export]
@@ -133,6 +134,12 @@ impl From<alloc::Error> for ProbeError {
 impl From<events::Error> for ProbeError {
     fn from(value: events::Error) -> Self {
         Self::EventError(value)
+    }
+}
+
+impl From<cgroup::Error> for ProbeError {
+    fn from(value: cgroup::Error) -> Self {
+        Self::CgroupError(value)
     }
 }
 

@@ -43,7 +43,5 @@ codegen-units = 1
 
 [workspace]
 members = []
-
-[patch.'https://github.com/aya-rs/aya']
 #aya-bpf = { path = "/home/quentin/Workspace/Rust/aya-dev/bpf/aya-bpf" }
 #aya-log-ebpf = { path = "/home/quentin/Workspace/Rust/aya-dev/bpf/aya-log-ebpf" }

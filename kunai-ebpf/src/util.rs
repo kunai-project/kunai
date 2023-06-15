@@ -5,11 +5,11 @@ use kunai_common::bpf_utils::bpf_task_tracking_id;
 static mut SAVED_CTX: LruHashMap<u128, KProbeEntryContext> = LruHashMap::with_max_entries(4096, 0);
 
 pub unsafe fn save_context(pfn: ProbeFn, ts: u64, ctx: &ProbeContext) -> Result<(), i64> {
-    SAVED_CTX.insert(&pfn.map_key(), &KProbeEntryContext::new(pfn, ts, ctx), 0)
+    SAVED_CTX.insert(&pfn.uuid(), &KProbeEntryContext::new(pfn, ts, ctx), 0)
 }
 
 pub unsafe fn restore_entry_ctx(pfn: ProbeFn) -> Option<&'static mut KProbeEntryContext> {
-    let ctx = SAVED_CTX.get_ptr_mut(&pfn.map_key())?;
+    let ctx = SAVED_CTX.get_ptr_mut(&pfn.uuid())?;
     Some(&mut (*ctx))
 }
 
@@ -29,7 +29,7 @@ pub enum ProbeFn {
 }
 
 impl ProbeFn {
-    pub unsafe fn map_key(&self) -> u128 {
+    pub unsafe fn uuid(&self) -> u128 {
         core::mem::transmute([bpf_task_tracking_id(), *self as u64])
     }
 }
@@ -48,6 +48,10 @@ impl KProbeEntryContext {
             regs: *(ctx.regs),
             timestamp,
         }
+    }
+
+    pub unsafe fn uuid(&self) -> u128 {
+        self.ty.uuid()
     }
 
     pub unsafe fn restore(&mut self) -> ProbeContext {

@@ -2,7 +2,7 @@ use crate::{bpf_target_code, bpf_utils::bound_value_for_verifier, not_bpf_target
 use core::mem;
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct String<const N: usize> {
     s: [u8; N],
     len: usize,
@@ -172,64 +172,119 @@ impl<const N: usize> String<N> {
 
 // BPF specific implementation
 bpf_target_code! {
-use kunai_macros::BpfError;
-use aya_bpf::helpers::{bpf_probe_read_user_str_bytes,bpf_probe_read_kernel_str_bytes};
+    use kunai_macros::BpfError;
+    use aya_bpf::helpers::{bpf_probe_read_user_str_bytes,bpf_probe_read_kernel_str_bytes};
 
-#[repr(C)]
-#[derive(BpfError)]
-pub enum Error {
-    #[error("bpf probe for read failure")]
-    BpfProbeReadFailure,
-}
-
-impl<const N: usize> String<N>
-{
-    #[inline(always)]
-    pub unsafe fn read_user_str_bytes<T>(&mut self, src: *const T) -> Result<(),Error> {
-        // do not return error if attempting to read null pointer
-        if !src.is_null() {
-            let s = bpf_probe_read_user_str_bytes(src as *const _, self.s.as_mut()).map_err(|_| Error::BpfProbeReadFailure)?;
-            self.len = s.len();
-        }
-        Ok(())
+    #[repr(C)]
+    #[derive(BpfError)]
+    pub enum Error {
+        #[error("bpf probe for read failure")]
+        BpfProbeReadFailure,
+        #[error("string is full")]
+        StringIsFull,
+        #[error("reached append limit")]
+        AppendLimit,
     }
 
-    #[inline(always)]
-    pub unsafe fn read_kernel_str_bytes<T>(&mut self, src: *const T) -> Result<(),Error> {
-        // do not return error if attempting to read null pointer
-        if !src.is_null() {
-            let s = bpf_probe_read_kernel_str_bytes(src as *const _, self.s.as_mut()).map_err(|_| Error::BpfProbeReadFailure)?;
-            self.len = s.len();
+    impl<const N: usize> String<N>
+    {
+        #[inline(always)]
+        pub unsafe fn read_user_str_bytes<T>(&mut self, src: *const T) -> Result<(),Error> {
+            // do not return error if attempting to read null pointer
+            if !src.is_null() {
+                let s = bpf_probe_read_user_str_bytes(src as *const _, self.s.as_mut()).map_err(|_| Error::BpfProbeReadFailure)?;
+                self.len = s.len();
+            }
+            Ok(())
         }
-        Ok(())
+
+        /// This function can be used to append reading to the current string. However there is
+        /// a limitation so that the verifier does not complain. It can read only up to half the size
+        /// of the String. This is because we don't have the size of the string prior to reading it.
+        /// Without the string len before bpf_probe_read_kernel_str we cannot upper bound the read limit
+        /// efficiently so bpf_probe_read_kernel_str always think upper bound is the String size.
+        pub unsafe fn append_kernel_str_bytes<T>(&mut self, src: *const T) -> Result<(),Error> {
+            let limit = self.s.len() / 2;
+
+            // do not return error if attempting to read null pointer
+            if !src.is_null() {
+                let k = self.len;
+
+                if k >= limit {
+                    return Err(Error::AppendLimit);
+                }
+
+                let dst = self.s[k..limit].as_mut();
+                let s = bpf_probe_read_kernel_str_bytes(src as *const _, dst).map_err(|_| Error::BpfProbeReadFailure)?;
+                self.len += s.len();
+            }
+            Ok(())
+        }
+
+        #[inline(always)]
+        pub unsafe fn read_kernel_str_bytes<T>(&mut self, src: *const T) -> Result<(),Error> {
+            // do not return error if attempting to read null pointer
+            if !src.is_null() {
+                let s = bpf_probe_read_kernel_str_bytes(src as *const _, self.s.as_mut()).map_err(|_| Error::BpfProbeReadFailure)?;
+                self.len = s.len();
+            }
+            Ok(())
+        }
     }
-}
 }
 
 // Specific code to all other arch than BPF
 not_bpf_target_code! {
 
-use std::borrow::Cow;
-use std::fmt::Display;
+    use std::borrow::Cow;
+    use std::fmt::Display;
+    use thiserror::Error;
 
-impl<const N: usize> From<String<N>> for std::string::String {
-    fn from(value: String<N>) -> Self {
-        value.to_string_lossy().into()
+    #[derive(Error, Debug)]
+    pub enum Error {
+        #[error("source string is too big")]
+        SourceTooBig,
     }
-}
 
-impl<const N: usize> Display for String<N> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.to_string_lossy())
-    }
-}
+    impl<const N: usize> TryFrom<std::string::String> for String<N> {
+        type Error = Error;
 
-impl<const N: usize> String<N>
-{
-    pub fn to_string_lossy(&self) -> Cow<str>{
-        Cow::from(self.as_str())
+        fn try_from(value: std::string::String) -> Result<Self, Error> {
+            let b = value.as_bytes();
+
+            if b.len() > N{
+                return Err(Error::SourceTooBig);
+            }
+
+            let size = core::cmp::min(b.len(), N);
+            let mut out = Self{
+                len: b.len(),
+                ..Default::default()
+            };
+            out.s[..size].copy_from_slice(&b[..size]);
+
+            Ok(out)
+        }
     }
-}
+
+    impl<const N: usize> From<String<N>> for std::string::String {
+        fn from(value: String<N>) -> Self {
+            value.to_string_lossy().into()
+        }
+    }
+
+    impl<const N: usize> Display for String<N> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{}", self.to_string_lossy())
+        }
+    }
+
+    impl<const N: usize> String<N>
+    {
+        pub fn to_string_lossy(&self) -> Cow<str>{
+            Cow::from(self.as_str())
+        }
+    }
 }
 
 #[cfg(test)]

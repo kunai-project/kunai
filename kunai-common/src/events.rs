@@ -44,6 +44,12 @@ pub use schedule::*;
 mod mount;
 pub use mount::*;
 
+// prevent using correlation event in bpf code
+not_bpf_target_code! {
+    mod correlation;
+    pub use correlation::*;
+}
+
 // used to pipe events to userland
 mod perfs;
 pub use perfs::*;
@@ -95,6 +101,12 @@ pub enum Type {
     WriteConfig,
     #[str("file_rename")]
     FileRename,
+
+    // specific events
+    #[str("correlation")]
+    Correlation = 1000,
+    #[str("cache_hash")]
+    CacheHash,
 }
 
 impl Default for Type {
@@ -297,6 +309,12 @@ impl<T> Event<T> {
             core::mem::size_of::<Event<T>>(),
         )
     }
+
+    pub fn switch_type(mut self, new: Type) -> Self {
+        // we record original event type
+        self.info.etype = new;
+        self
+    }
 }
 
 bpf_target_code! {
@@ -327,10 +345,15 @@ not_bpf_target_code! {
     }
 
     impl EncodedEvent {
-        pub fn from_bytes(bytes: &[u8]) -> Result<Self, DecoderError> {
-            Ok(EncodedEvent {
+        pub fn from_bytes(bytes: &[u8]) -> Self {
+            Self {
                 event: Vec::from(bytes),
-            })
+                }
+
+        }
+
+        pub fn from_event<T>(event: Event<T>) -> Self {
+            Self::from_bytes(event.encode())
         }
 
         /// # Safety
@@ -346,7 +369,7 @@ not_bpf_target_code! {
 
         /// # Safety
         /// * the bytes decoded must be a valid Event<T>
-        pub unsafe fn info_mut(&self) -> Result<&mut EventInfo, DecoderError> {
+        pub unsafe fn info_mut(&mut self) -> Result<&mut EventInfo, DecoderError> {
             // event content must be at least the size of EventInfo
             if self.event.len() < core::mem::size_of::<EventInfo>() {
                 return Err(DecoderError::NotEnoughBytes);
@@ -381,8 +404,9 @@ not_bpf_target_code! {
 
     #[macro_export]
     macro_rules! mut_event {
+        ($enc: expr) => {unsafe { $enc.as_mut_event_with_data() }};
         ($enc:expr, $event:ty) => {{
-            let event: Result<&mut $event, ::kunai_common::events::DecoderError> =
+            let event: Result<&mut $event, $crate::events::DecoderError> =
             unsafe { $enc.as_mut_event_with_data() };
             event
         }};
@@ -392,8 +416,9 @@ not_bpf_target_code! {
 
     #[macro_export]
     macro_rules! event {
+        ($enc: expr) => {unsafe { $enc.as_event_with_data() }};
         ($enc:expr, $event:ty) => {{
-            let event: Result<&$event, ::kunai_common::events::DecoderError> =
+            let event: Result<&$event, $crate::events::DecoderError> =
             unsafe { $enc.as_event_with_data() };
             event
         }};
@@ -426,7 +451,7 @@ not_bpf_target_code! {
             let b = execve.encode();
             println!("b.len()={}", b.len());
 
-            let mut d = EncodedEvent::from_bytes(b).unwrap();
+            let mut d = EncodedEvent::from_bytes(b);
             let info = unsafe { d.info() }.unwrap();
             assert!(matches!(info.etype, Type::Execve));
 

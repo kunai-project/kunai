@@ -1,6 +1,8 @@
 use crate::{bpf_target_code, not_bpf_target_code};
 
 use super::bpf_utils::bound_value_for_verifier;
+use super::time::Time;
+
 use kunai_macros::BpfError;
 
 #[allow(unused_imports)]
@@ -68,6 +70,14 @@ pub enum Error {
     PathSbInoFailure,
     #[error("failed to read dentry.d_inode")]
     DentryDinode,
+    #[error("failed to read dentry atime")]
+    DentryAtime,
+    #[error("failed to read dentry ctime")]
+    DentryCtime,
+    #[error("failed to read dentry mtime")]
+    DentryMtime,
+    #[error("failed to read inode.i_size")]
+    InodeIsize,
 }
 
 #[repr(C)]
@@ -78,16 +88,26 @@ pub enum Mode {
 }
 
 #[repr(C)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Metadata {
+    // inode number of the file
+    pub ino: u64,
+    // inode number of superblock
+    pub sb_ino: u64,
+    pub size: i64,
+    pub atime: Time,
+    pub mtime: Time,
+    pub ctime: Time,
+}
+
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Path {
     buffer: [u8; MAX_PATH_LEN],
     len: u32,
     depth: u16,
     real: bool, // flag if path is a realpath
-    // inode number of the file
-    pub ino: Option<u64>,
-    // inode number of superblock
-    pub sb_ino: Option<u64>,
+    pub metadata: Option<Metadata>,
     pub mode: Mode,
     pub error: Option<Error>,
 }
@@ -99,8 +119,7 @@ impl Default for Path {
             len: 0,
             depth: 0,
             real: false,
-            ino: None,
-            sb_ino: None,
+            metadata: None,
             mode: Mode::Append,
             error: None,
         }
@@ -317,14 +336,33 @@ not_bpf_target_code! {
 // BPF related implementations
 bpf_target_code! {
 
-    use super::{bpf_utils::*};
-    use aya_bpf::helpers::gen;
-    use aya_bpf::helpers::bpf_probe_read_buf;
-    use crate::co_re::{self, core_read_kernel};
+use aya_bpf::helpers::gen;
+use crate::co_re::{self, core_read_kernel};
 
-    type Result<T> = core::result::Result<T, Error>;
+type Result<T> = core::result::Result<T, Error>;
 
-    impl Path {
+
+impl Path {
+
+    #[inline(always)]
+    unsafe fn init_from_inode(&mut self, i: &co_re::inode) -> Result<()> {
+        let atime = core_read_kernel!(i, i_atime).ok_or(Error::DentryAtime)?;
+        let ctime = core_read_kernel!(i, i_ctime).ok_or(Error::DentryCtime)?;
+        let mtime = core_read_kernel!(i, i_mtime).ok_or(Error::DentryMtime)?;
+
+        self.metadata = Some(
+            Metadata {
+                ino: core_read_kernel!(i, i_ino).ok_or(Error::PathInoFailure)?,
+                sb_ino: core_read_kernel!(i, i_sb ,s_root, d_inode, i_ino).ok_or(Error::PathSbInoFailure)?,
+                size: core_read_kernel!(i,i_size).ok_or(Error::InodeIsize)?,
+                atime: atime.into(),
+                ctime: ctime.into(),
+                mtime: mtime.into(),}
+            );
+
+            Ok(())
+        }
+
         #[inline(always)]
         pub unsafe fn core_resolve_file(&mut self, f: &co_re::file, max_depth: u16) -> Result<()> {
             if !f.is_null(){
@@ -347,8 +385,8 @@ bpf_target_code! {
 
             // initialization
             self.mode = Mode::Prepend;
-            self.ino = Some(core_read_kernel!(d_inode, i_ino).ok_or(Error::PathInoFailure)?);
-            self.sb_ino = Some(core_read_kernel!(d_inode, i_sb ,s_root, d_inode, i_ino).ok_or(Error::PathSbInoFailure)?);
+            self.init_from_inode(&d_inode)?;
+
 
             let mnt = p.mnt().ok_or(Error::RFPathMnt)?;
             let mut mount = mnt.mount();
@@ -412,7 +450,7 @@ bpf_target_code! {
         }
 
 
-        pub fn prepend_qstr_name(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
+        /*pub fn prepend_qstr_name(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
             // needed so that the verifier knows self.len is bounded
             let len = cap_size(self.len, MAX_PATH_LEN as u32);
 
@@ -457,11 +495,18 @@ bpf_target_code! {
             }
 
             Ok(())
+        }*/
+
+        #[inline(always)]
+        fn space_left(&self) -> usize{
+            self.buffer.len() - self.len()
         }
 
-        pub fn prepend_qstr_name_new(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
+        pub unsafe fn prepend_qstr_name(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
             // needed so that the verifier knows self.len is bounded
-            let len = cap_size(self.len, MAX_PATH_LEN as u32);
+            let left = self.space_left() as u32;
+            // a way to restrict the length to read for the verifier
+            let size = (qstr_len as u8) as u32;
 
             // we need this check otherwise verifier fails with invalid numeric error
             if qstr_len > MAX_NAME as u32 {
@@ -469,39 +514,28 @@ bpf_target_code! {
                 return Err(Error::FileNameTooLong(name as u64, qstr_len));
             }
 
-            // we check if we can append the qstr to the path
-            if len + qstr_len > MAX_PATH_LEN as u32 {
-                self.error = Some(Error::FilePathTooLong);
+            if left < qstr_len {
                 return Err(Error::FilePathTooLong);
             }
 
-            // we reached max path depth
-            if self.depth == MAX_PATH_DEPTH {
-                self.error = Some(Error::ReachedMaxPathDepth);
-                return Err(Error::ReachedMaxPathDepth);
-            }
+            let i = left - size;
 
-            // we compute where we should put the qstr
-            let i = self.buffer.len() as isize - len as isize - qstr_len as isize;
-            let j = i+qstr_len as isize;
-
-            if i < 0 {
-                self.error = Some(Error::FileNameTooLong(name as u64, qstr_len));
-                return Err(Error::FileNameTooLong(name as u64, qstr_len));
-            }
-
-            // to make verifier happy
-            if j>i || j > self.buffer.len() as isize{
+            if i > self.buffer.len() as u32{
                 return Err(Error::ShouldNotHappen);
             }
 
+            let dst = &mut self.buffer[i as usize..];
 
-            let dst = &mut self.buffer[i as usize..j as usize];
-
-            if unsafe{bpf_probe_read_buf(name, dst)}.is_ok(){
-                self.len += qstr_len;
+             if gen::bpf_probe_read(
+                    dst.as_mut_ptr() as *mut _,
+                    size,
+                    name as *const _,
+                )
+            >= 0
+            {
+                self.len += size;
                 self.depth += 1;
-            }else {
+            } else {
                 self.error = Some(Error::RFPathSegment);
                 return Err(Error::RFPathSegment);
             }

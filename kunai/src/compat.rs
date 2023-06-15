@@ -1,16 +1,16 @@
 use aya::{
     programs::{self, CgroupSkbAttachType, ProgramError},
-    Btf,
+    Bpf, Btf,
 };
 use aya_obj::generated::bpf_prog_type;
 use libc::{uname, utsname};
-use std::cmp::PartialEq;
 use std::convert::TryFrom;
 use std::ffi::CString;
 use std::fmt::Display;
 use std::mem;
 use std::num::ParseIntError;
 use std::str::FromStr;
+use std::{cmp::PartialEq, collections::HashMap};
 use thiserror::Error;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,21 @@ impl From<ParseIntError> for KernelVersionError {
     }
 }
 
+#[macro_export]
+macro_rules! kernel {
+    ($major:literal) => {
+        $crate::KernelVersion::new($major, 0, 0)
+    };
+    ($major:literal, $minor:literal) => {
+        $crate::KernelVersion::new($major, $minor, 0)
+    };
+    ($major:literal,$minor:literal,$patch:literal) => {
+        $crate::KernelVersion::new($major, $minor, $patch)
+    };
+}
+
+pub use kernel;
+
 impl KernelVersion {
     const MAX_VERSION: KernelVersion = KernelVersion {
         major: u16::MAX,
@@ -52,6 +67,14 @@ impl KernelVersion {
         minor: u16::MIN,
         patch: u16::MIN,
     };
+
+    pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+        }
+    }
 
     pub fn from_sys() -> Result<Self, KernelVersionError> {
         let mut utsname_struct: utsname = unsafe { mem::zeroed() };
@@ -73,18 +96,6 @@ impl KernelVersion {
         }
 
         Self::from_str(version[0])
-    }
-
-    pub fn older_than<T: AsRef<str>>(&self, v: T) -> bool {
-        self < &Self::from_str(v.as_ref()).expect("invalid version")
-    }
-
-    pub fn is_min(&self) -> bool {
-        self == &Self::MIN_VERSION
-    }
-
-    pub fn is_max(&self) -> bool {
-        self == &Self::MIN_VERSION
     }
 }
 
@@ -155,6 +166,39 @@ impl Compatibility {
     }
 }
 
+pub struct Programs<'a> {
+    m: HashMap<String, Program<'a>>,
+}
+
+impl<'a> Programs<'a> {
+    pub fn from_bpf(bpf: &'a mut Bpf) -> Self {
+        let m = bpf
+            .programs_mut()
+            .map(|(name, p)| {
+                let mut prog = Program::from_program(name.to_string(), p);
+                // disable debug probes by default
+                if name.starts_with("debug.") {
+                    prog.disable();
+                }
+
+                (name.to_string(), prog)
+            })
+            .collect();
+
+        Self { m }
+    }
+
+    pub fn expect_mut<S: AsRef<str>>(&mut self, name: S) -> &mut Program<'a> {
+        self.m.get_mut(name.as_ref()).expect("missing probe")
+    }
+
+    pub fn into_vec_sorted_by_prio(self) -> Vec<(String, Program<'a>)> {
+        let mut sorted: Vec<(String, Program)> = self.m.into_iter().collect();
+        sorted.sort_unstable_by_key(|(_, p)| p.prio_by_prog());
+        sorted
+    }
+}
+
 pub struct Program<'a> {
     pub prio: u8,
     pub name: String,
@@ -191,8 +235,14 @@ impl<'a> Program<'a> {
         }
     }
 
-    pub fn set_compat(&mut self, min: Option<KernelVersion>, max: Option<KernelVersion>) {
-        self.compat = Compatibility { min, max };
+    pub fn min_kernel(&mut self, min: KernelVersion) -> &mut Self {
+        self.compat.min = Some(min);
+        self
+    }
+
+    pub fn max_kernel(&mut self, max: KernelVersion) -> &mut Self {
+        self.compat.max = Some(max);
+        self
     }
 
     pub fn prog_type(&self) -> bpf_prog_type {
@@ -276,6 +326,16 @@ impl<'a> Program<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_kernel_macro() {
+        assert_eq!(kernel!(5), KernelVersion::new(5, 0, 0));
+        assert_eq!(kernel!(5, 4), KernelVersion::new(5, 4, 0));
+        assert_eq!(kernel!(5, 4, 42), KernelVersion::new(5, 4, 42));
+        assert!(kernel!(6) > kernel!(5, 9));
+        assert!(kernel!(4, 0, 3) < kernel!(5, 9));
+    }
+
     #[test]
     fn test_parse_kernel_version() {
         let v5 = KernelVersion::from_str("5.1.0").unwrap();

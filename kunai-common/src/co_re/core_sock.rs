@@ -2,14 +2,14 @@ use aya_bpf::cty::c_void;
 use aya_bpf::helpers::{bpf_probe_read_kernel_buf, bpf_probe_read_user_buf};
 
 use super::gen::{self, *};
-use super::{iov_iter, iovec, rust_shim_impl, rust_shim_user_impl, CoRe};
+use super::{iov_iter, iovec, rust_shim_kernel_impl, rust_shim_user_impl, CoRe};
 
 #[allow(non_camel_case_types)]
 pub type in6_addr = CoRe<gen::in6_addr>;
 
 impl in6_addr {
     // todo: rm public for debugging
-    rust_shim_impl!(pub, in6_addr, u6_addr8, *mut u8);
+    rust_shim_kernel_impl!(pub, in6_addr, u6_addr8, *mut u8);
     // todo: rm public for debugging
     rust_shim_user_impl!(pub, in6_addr, u6_addr8, *mut u8);
 
@@ -50,16 +50,16 @@ impl in6_addr {
 pub type socket = CoRe<gen::socket>;
 
 impl socket {
-    rust_shim_impl!(pub, socket, sk, sock);
+    rust_shim_kernel_impl!(pub, socket, sk, sock);
 }
 
 #[allow(non_camel_case_types)]
 pub type sock = CoRe<gen::sock>;
 
 impl sock {
-    rust_shim_impl!(pub, sk_common, sock, __sk_common, sock_common);
-    rust_shim_impl!(pub, sock, sk_type, u16);
-    rust_shim_impl!(pub, sock, sk_receive_queue, sk_buff_head);
+    rust_shim_kernel_impl!(pub, sk_common, sock, __sk_common, sock_common);
+    rust_shim_kernel_impl!(pub, sock, sk_type, u16);
+    rust_shim_kernel_impl!(pub, sock, sk_receive_queue, sk_buff_head);
 }
 
 #[allow(non_camel_case_types)]
@@ -78,8 +78,8 @@ struct skc_portpair {
 }
 
 impl sock_common {
-    rust_shim_impl!(pub, sock_common, skc_family, u16);
-    rust_shim_impl!(pub, sock_common, skc_addrpair, u64);
+    rust_shim_kernel_impl!(pub, sock_common, skc_family, u16);
+    rust_shim_kernel_impl!(pub, sock_common, skc_addrpair, u64);
 
     pub unsafe fn skc_daddr(&self) -> Option<u32> {
         let addrpair: skc_addrpair = core::mem::transmute(self.skc_addrpair()?);
@@ -91,7 +91,7 @@ impl sock_common {
         Some(addrpair.skc_rcv_saddr)
     }
 
-    rust_shim_impl!(pub, sock_common, skc_portpair, u32);
+    rust_shim_kernel_impl!(pub, sock_common, skc_portpair, u32);
 
     pub unsafe fn skc_dport(&self) -> Option<u16> {
         let portpair: skc_portpair = core::mem::transmute(self.skc_portpair()?);
@@ -103,40 +103,40 @@ impl sock_common {
         Some(portpair.skc_num)
     }
 
-    rust_shim_impl!(pub, sock_common, skc_v6_daddr, in6_addr);
-    rust_shim_impl!(pub, sock_common, skc_v6_rcv_saddr, in6_addr);
+    rust_shim_kernel_impl!(pub, sock_common, skc_v6_daddr, in6_addr);
+    rust_shim_kernel_impl!(pub, sock_common, skc_v6_rcv_saddr, in6_addr);
 }
 
 #[allow(non_camel_case_types)]
 pub type msghdr = CoRe<gen::msghdr>;
 
 impl msghdr {
-    rust_shim_impl!(pub, msghdr, msg_iter, iov_iter);
+    rust_shim_kernel_impl!(pub, msghdr, msg_iter, iov_iter);
 }
 
 #[allow(non_camel_case_types)]
 pub type sk_buff = CoRe<gen::sk_buff>;
 
 impl sk_buff {
-    rust_shim_impl!(pub, sk_buff, len, u32);
-    rust_shim_impl!(pub, sk_buff, data, *mut u8);
+    rust_shim_kernel_impl!(pub, sk_buff, len, u32);
+    rust_shim_kernel_impl!(pub, sk_buff, data, *mut u8);
 }
 
 #[allow(non_camel_case_types)]
 pub type sk_buff_list = CoRe<gen::sk_buff_list>;
 
 impl sk_buff_list {
-    rust_shim_impl!(pub, sk_buff_list, next, sk_buff);
-    rust_shim_impl!(pub, sk_buff_list, prev, sk_buff);
+    rust_shim_kernel_impl!(pub, sk_buff_list, next, sk_buff);
+    rust_shim_kernel_impl!(pub, sk_buff_list, prev, sk_buff);
 }
 
 #[allow(non_camel_case_types)]
 pub type sk_buff_head = CoRe<gen::sk_buff_head>;
 
 impl sk_buff_head {
-    rust_shim_impl!(pub(self), _next, sk_buff_head, next, sk_buff);
-    rust_shim_impl!(pub(self), _prev, sk_buff_head, prev, sk_buff);
-    rust_shim_impl!(pub(self), _list, sk_buff_head, list, sk_buff_list);
+    rust_shim_kernel_impl!(pub(self), _next, sk_buff_head, next, sk_buff);
+    rust_shim_kernel_impl!(pub(self), _prev, sk_buff_head, prev, sk_buff);
+    rust_shim_kernel_impl!(pub(self), _list, sk_buff_head, list, sk_buff_list);
 
     // depending on the kernel version next might be wrapped inside a list struct
     // we handle that case here.
@@ -164,7 +164,7 @@ impl user_msghdr {
 pub type sockaddr = CoRe<gen::sockaddr>;
 
 impl sockaddr {
-    rust_shim_impl!(pub, sockaddr, sa_family, u32);
+    rust_shim_kernel_impl!(pub, sockaddr, sa_family, u32);
     rust_shim_user_impl!(pub, sockaddr, sa_family, u32);
 }
 
@@ -178,13 +178,13 @@ impl From<sockaddr> for sockaddr_in {
 }
 
 impl sockaddr_in {
-    rust_shim_impl!(pub, sockaddr_in, sin_family, u32);
+    rust_shim_kernel_impl!(pub, sockaddr_in, sin_family, u32);
     rust_shim_user_impl!(pub, sockaddr_in, sin_family, u32);
 
-    rust_shim_impl!(pub, sockaddr_in, sin_port, u16);
+    rust_shim_kernel_impl!(pub, sockaddr_in, sin_port, u16);
     rust_shim_user_impl!(pub, sockaddr_in, sin_port, u16);
 
-    rust_shim_impl!(pub, sockaddr_in, s_addr, u32);
+    rust_shim_kernel_impl!(pub, sockaddr_in, s_addr, u32);
     rust_shim_user_impl!(pub, sockaddr_in, s_addr, u32);
 }
 
@@ -198,12 +198,12 @@ impl From<sockaddr> for sockaddr_in6 {
 }
 
 impl sockaddr_in6 {
-    rust_shim_impl!(pub, sockaddr_in6, sin6_family, u32);
+    rust_shim_kernel_impl!(pub, sockaddr_in6, sin6_family, u32);
     rust_shim_user_impl!(pub, sockaddr_in6, sin6_family, u32);
 
-    rust_shim_impl!(pub, sockaddr_in6, sin6_port, u16);
+    rust_shim_kernel_impl!(pub, sockaddr_in6, sin6_port, u16);
     rust_shim_user_impl!(pub, sockaddr_in6, sin6_port, u16);
 
-    rust_shim_impl!(pub, sockaddr_in6, sin6_addr, in6_addr);
+    rust_shim_kernel_impl!(pub, sockaddr_in6, sin6_addr, in6_addr);
     rust_shim_user_impl!(pub, sockaddr_in6, sin6_addr, in6_addr);
 }

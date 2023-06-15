@@ -190,18 +190,36 @@ struct path
 SHIM(path, mnt);
 SHIM(path, dentry);
 
+typedef __s64 time64_t;
+
+struct timespec64
+{
+	time64_t tv_sec;
+	long int tv_nsec;
+};
+
 typedef short unsigned int umode_t;
+typedef long long int __kernel_loff_t;
+typedef __kernel_loff_t loff_t;
 
 struct inode
 {
 	umode_t i_mode;
 	unsigned long i_ino;
 	struct super_block *i_sb;
+	loff_t i_size;
+	struct timespec64 i_atime;
+	struct timespec64 i_mtime;
+	struct timespec64 i_ctime;
 } __attribute__((preserve_access_index));
 
 SHIM(inode, i_ino);
 SHIM(inode, i_mode);
 SHIM(inode, i_sb);
+SHIM(inode, i_size);
+SHIM(inode, i_atime);
+SHIM(inode, i_mtime);
+SHIM(inode, i_ctime);
 
 struct file
 {
@@ -263,6 +281,37 @@ struct nsproxy
 
 SHIM(nsproxy, mnt_ns);
 
+struct kernfs_node
+{
+	struct kernfs_node *parent;
+	const char *name;
+} __attribute__((preserve_access_index));
+
+SHIM(kernfs_node, parent);
+SHIM(kernfs_node, name);
+
+struct cgroup
+{
+	struct kernfs_node *kn; /* cgroup kernfs entry */
+} __attribute__((preserve_access_index));
+
+SHIM(cgroup, kn);
+
+struct cgroup_subsys_state
+{
+	struct cgroup *cgroup;
+} __attribute__((preserve_access_index));
+
+SHIM(cgroup_subsys_state, cgroup);
+
+// Task group related information
+struct task_group
+{
+	struct cgroup_subsys_state css;
+} __attribute__((preserve_access_index));
+
+SHIM_REF(task_group, css);
+
 struct task_struct
 {
 	pid_t pid;
@@ -279,6 +328,7 @@ struct task_struct
 	struct task_struct *group_leader;
 	struct mm_struct *mm;
 	struct nsproxy *nsproxy;
+	struct task_group *sched_task_group;
 } __attribute__((preserve_access_index));
 
 SHIM(task_struct, start_time);
@@ -292,6 +342,7 @@ SHIM(task_struct, group_leader);
 SHIM(task_struct, real_parent);
 SHIM(task_struct, mm);
 SHIM(task_struct, nsproxy);
+SHIM(task_struct, sched_task_group);
 
 #define KSYM_NAME_LEN 512
 

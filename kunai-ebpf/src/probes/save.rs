@@ -1,8 +1,7 @@
 use super::*;
 use aya_bpf::{
-    helpers::{self, bpf_ktime_get_ns},
+    helpers::{bpf_ktime_get_ns},
     programs::ProbeContext,
-    BpfContext,
 };
 
 #[kprobe(name = "kprobe.enter.vfs_read")]

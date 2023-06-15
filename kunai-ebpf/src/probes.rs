@@ -27,6 +27,7 @@ mod fd_install;
 mod fs;
 mod init_module;
 mod mmap;
+mod mount;
 mod mprotect;
 mod save;
 mod schedule;

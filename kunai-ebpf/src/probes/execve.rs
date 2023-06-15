@@ -106,6 +106,7 @@ unsafe fn execve_event<C: BpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
     let arg_start = core_read_kernel!(ts, mm, arg_start)?;
     let arg_len = core_read_kernel!(ts, mm, arg_len)?;
 
+    // parsing argv
     if event
         .data
         .argv
@@ -113,6 +114,12 @@ unsafe fn execve_event<C: BpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
         .is_err()
     {
         error!(ctx, "failed to read argv")
+    }
+
+    // cgroup parsing
+    let cgroup = core_read_kernel!(ts, sched_task_group, css, cgroup)?;
+    if let Err(e) = event.data.cgroup.resolve(cgroup) {
+        error!(ctx, "failed to resolve cgroup: {}", e.description());
     }
 
     pipe_event(ctx, event);

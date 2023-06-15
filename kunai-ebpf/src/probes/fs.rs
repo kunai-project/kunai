@@ -1,6 +1,5 @@
 use super::*;
 
-use aya_bpf::cty::c_int;
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::ProbeContext;
 use kunai_common::inspect_err;
@@ -183,65 +182,6 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
     );
 
     pipe_event(ctx, event);
-
-    Ok(())
-}
-
-//#[kprobe(name = "debug.do_mount")] // older kernels
-// path_mount is available only since 5.9 before that do_mount must be hooked
-#[kretprobe(name = "fs.exit.path_mount")]
-pub fn exit_path_mount(ctx: ProbeContext) -> u32 {
-    match unsafe {
-        restore_entry_ctx(ProbeFn::security_sb_mount)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
-            .and_then(|ent_ctx| try_exit_path_mount(ent_ctx, &ctx))
-    } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
-        Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
-        }
-    }
-}
-
-#[inline(always)]
-unsafe fn try_exit_path_mount(
-    entry_ctx: &mut KProbeEntryContext,
-    exit_ctx: &ProbeContext,
-) -> ProbeResult<()> {
-    // we restore entry context
-    let entry_ctx = entry_ctx.restore();
-
-    let dev_name: *const u8 = kprobe_arg!(entry_ctx, 0)?;
-    let path = co_re::path::from_ptr(kprobe_arg!(entry_ctx, 1)?);
-    let typ: *const u8 = kprobe_arg!(entry_ctx, 2)?;
-    let rc: c_int = exit_ctx.ret().unwrap_or_default();
-
-    alloc::init()?;
-    let event = alloc::alloc_zero::<MountEvent>()?;
-
-    // failing at retrieving path make the probe failing
-    event.data.path.core_resolve(&path, MAX_PATH_DEPTH)?;
-
-    // todo handle those two errors properly
-    event.data.dev_name.read_kernel_str_bytes(dev_name);
-    event.data.ty.read_kernel_str_bytes(typ);
-
-    event.data.rc = rc;
-
-    event.init_from_btf_task(Type::Mount)?;
-
-    pipe_event(exit_ctx, event);
-
-    /*warn!(
-        exit_ctx,
-        "dev_name={} (path={} i_ino={}) type={} rc={}",
-        event.data.dev_name.as_str(),
-        event.data.path.to_aya_debug_str(),
-        event.data.path.ino.unwrap_or_default(),
-        event.data.ty.as_str(),
-        rc
-    );*/
 
     Ok(())
 }

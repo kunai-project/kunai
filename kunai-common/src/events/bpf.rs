@@ -9,6 +9,15 @@ pub const BPF_TAG_SIZE: usize = 8;
 pub type BpfProgLoadEvent = Event<BpfProgData>;
 
 #[repr(C)]
+pub struct ProgHashes {
+    pub md5: String<32>,
+    pub sha1: String<40>,
+    pub sha256: String<64>,
+    pub sha512: String<128>,
+    pub size: usize,
+}
+
+#[repr(C)]
 pub struct BpfProgData {
     pub id: u32,
     pub tag: [u8; BPF_TAG_SIZE],
@@ -17,8 +26,7 @@ pub struct BpfProgData {
     pub attached_func_name: String<512>,
     pub prog_type: u32,
     pub attach_type: u32,
-    //pub insns_tid: u64, // put here a transfer id
-    //pub insns_len: u32,
+    pub hashes: Option<ProgHashes>,
     pub verified_insns: Option<u32>,
     pub loaded: bool,
 }

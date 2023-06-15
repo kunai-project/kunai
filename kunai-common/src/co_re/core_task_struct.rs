@@ -3,8 +3,10 @@ use aya_bpf::helpers::{
     bpf_probe_read_kernel_buf,
 };
 
+use crate::string::String;
+
 use super::gen::{self, *};
-use super::{cred, mm_struct, nsproxy, rust_shim_impl, CoRe};
+use super::{cred, mm_struct, nsproxy, rust_shim_kernel_impl, task_group, CoRe};
 
 #[allow(non_camel_case_types)]
 pub type task_struct = CoRe<gen::task_struct>;
@@ -22,10 +24,10 @@ impl task_struct {
         unsafe { core::mem::transmute([bpf_get_current_pid_tgid(), self.as_ptr() as u64]) }
     }
 
-    rust_shim_impl!(pub, task_struct, start_time, u64);
+    rust_shim_kernel_impl!(pub, task_struct, start_time, u64);
 
-    rust_shim_impl!(pub(self), _start_boot_time, task_struct, start_boottime, u64);
-    rust_shim_impl!(pub(self),_real_start_time, task_struct, real_start_time, u64);
+    rust_shim_kernel_impl!(pub(self), _start_boot_time, task_struct, start_boottime, u64);
+    rust_shim_kernel_impl!(pub(self),_real_start_time, task_struct, real_start_time, u64);
 
     pub unsafe fn start_boottime(&self) -> Option<u64> {
         if let Some(sbt) = self._start_boot_time() {
@@ -43,7 +45,7 @@ impl task_struct {
         self.start_boottime()
     }
 
-    rust_shim_impl!(pub, task_struct, comm, *mut u8);
+    rust_shim_kernel_impl!(pub, task_struct, comm, *mut u8);
 
     pub unsafe fn comm_array(&self) -> Option<[u8; 16]> {
         let mut comm = [0u8; 16];
@@ -51,13 +53,21 @@ impl task_struct {
         Some(comm)
     }
 
-    rust_shim_impl!(pub, task_struct, tgid, pid_t);
-    rust_shim_impl!(pub, task_struct, pid, pid_t);
-    rust_shim_impl!(pub, task_struct, cred, cred);
-    rust_shim_impl!(pub, task_struct, mm, mm_struct);
+    pub unsafe fn comm_str(&self) -> Option<String<16>> {
+        let mut comm = String::<16>::new();
+        comm.read_kernel_str_bytes(self.comm()?).ok()?;
+        Some(comm)
+    }
 
-    rust_shim_impl!(pub, task_struct, group_leader, Self);
-    rust_shim_impl!(pub, task_struct, real_parent, Self);
+    rust_shim_kernel_impl!(pub, task_struct, tgid, pid_t);
+    rust_shim_kernel_impl!(pub, task_struct, pid, pid_t);
+    rust_shim_kernel_impl!(pub, task_struct, cred, cred);
+    rust_shim_kernel_impl!(pub, task_struct, mm, mm_struct);
 
-    rust_shim_impl!(pub, task_struct, nsproxy, nsproxy);
+    rust_shim_kernel_impl!(pub, task_struct, group_leader, Self);
+    rust_shim_kernel_impl!(pub, task_struct, real_parent, Self);
+
+    rust_shim_kernel_impl!(pub, task_struct, nsproxy, nsproxy);
+
+    rust_shim_kernel_impl!(task_struct, sched_task_group, task_group);
 }
