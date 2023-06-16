@@ -20,6 +20,7 @@ both resources taken by the program and log output volume. Doing a proper event 
 * Configure and detect canary files access/modification
 * Add Yara scanning capabilities for (BPF programs, executables/scripts, some memory sections)
 * Keep researching and implementing eBPF probes to produce relevant events for security monitoring
+* Protect the process from being tampered with
 
 # Probes to implement
 

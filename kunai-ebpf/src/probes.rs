@@ -7,7 +7,7 @@ use aya_log_ebpf::*;
 
 use kunai_common::{
     bpf_utils::*,
-    co_re,
+    co_re, config,
     consts::*,
     events::{self, *},
     inspect_err,
@@ -71,7 +71,6 @@ macro_rules! core_read_kernel {
 
 use core_read_kernel;
 
-#[macro_export]
 macro_rules! core_read_user {
     ($struc:expr, $field:ident) => {
         paste::item!{
@@ -94,3 +93,11 @@ macro_rules! core_read_user {
 }
 
 use core_read_user;
+
+macro_rules! get_cfg {
+    () => {
+        kunai_common::config::config().ok_or(ProbeError::Config)
+    };
+}
+
+use get_cfg;

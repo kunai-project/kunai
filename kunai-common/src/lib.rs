@@ -26,3 +26,5 @@ pub mod uuid;
 
 pub mod cgroup;
 pub mod time;
+
+pub mod config;

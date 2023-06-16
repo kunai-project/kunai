@@ -6,6 +6,7 @@ mod util;
 use info::{AdditionalFields, StdEventInfo};
 use json::{object, JsonValue};
 use kunai_common::cgroup::Cgroup;
+use kunai_common::config::{self, BpfConfig, Config};
 
 use std::collections::{HashMap, VecDeque};
 
@@ -1195,6 +1196,8 @@ async fn main() -> Result<(), anyhow::Error> {
         // This can happen if you remove all log statements from your eBPF program.
         warn!("failed to initialize eBPF logger: {}", e);
     }
+
+    BpfConfig::init_config_in_bpf(&mut bpf, Config {}.into());
 
     let btf = Btf::from_sys_fs()?;
 
