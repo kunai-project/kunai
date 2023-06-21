@@ -37,7 +37,7 @@ unsafe fn try_sys_enter_mprotect(ctx: &TracePointContext) -> ProbeResult<()> {
     let args = SysEnterArgs::<MprotectArgs>::from_context(ctx)?.args;
     if args.prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
         alloc::init()?;
-        let event = alloc::alloc_zero::<Event<MprotectData>>()?;
+        let event = alloc::alloc_zero::<MprotectEvent>()?;
 
         event.init_from_current_task(events::Type::MprotectExec)?;
 

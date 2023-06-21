@@ -377,7 +377,6 @@ impl EventProcessor {
 
     #[inline]
     fn json_mmap_exec(&mut self, info: StdEventInfo, event: &mut MmapExecEvent) -> JsonValue {
-        // todo : handle this better
         let filename = event.data.filename;
         let mnt_ns = event.info.process.namespaces.mnt;
         let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename);
@@ -1130,10 +1129,8 @@ struct Cli {
     verbose: u8,
 }
 
-// todo: make single-threaded / multi-threaded features
+// todo: make single-threaded / multi-threaded available in configuration
 #[tokio::main(flavor = "current_thread")]
-//#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-//#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
     let mut conf = Config {

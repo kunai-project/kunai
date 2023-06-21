@@ -8,10 +8,8 @@ use super::{iov_iter, iovec, rust_shim_kernel_impl, rust_shim_user_impl, CoRe};
 pub type in6_addr = CoRe<gen::in6_addr>;
 
 impl in6_addr {
-    // todo: rm public for debugging
-    rust_shim_kernel_impl!(pub, in6_addr, u6_addr8, *mut u8);
-    // todo: rm public for debugging
-    rust_shim_user_impl!(pub, in6_addr, u6_addr8, *mut u8);
+    rust_shim_kernel_impl!(pub(self), in6_addr, u6_addr8, *mut u8);
+    rust_shim_user_impl!(pub(self), in6_addr, u6_addr8, *mut u8);
 
     pub unsafe fn addr8(&self) -> Option<[u8; 16]> {
         let mut addr = [0u8; 16];
