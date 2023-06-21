@@ -2,7 +2,7 @@ use crate::alloc;
 use crate::error::{self, *};
 use crate::util::*;
 
-use aya_bpf::macros::*;
+use aya_bpf::{macros::*, BpfContext};
 use aya_log_ebpf::*;
 
 use kunai_common::{

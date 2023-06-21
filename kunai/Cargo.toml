@@ -46,6 +46,9 @@ tokio = { version = "1.24", features = [
     "time",
     "sync",
 ] }
+toml = "0.7.4"
+serde = { version = "1.0.164", features = ["derive"] }
+clap = { version = "4.3.4", features = ["derive"] }
 
 [[bin]]
 name = "kunai"

@@ -312,7 +312,7 @@ impl SockHelper {
             }
         }
 
-        event.init_from_btf_task(events::Type::DnsQuery)?;
+        event.init_from_current_task(events::Type::DnsQuery)?;
         pipe_event(ctx, event);
 
         Ok(())

@@ -5,7 +5,7 @@ use aya_bpf::programs::ProbeContext;
 use kunai_common::inspect_err;
 
 #[map]
-static mut FILE_TRACKING: LruHashMap<u128, bool> = LruHashMap::with_max_entries(4096, 0);
+static mut FILE_TRACKING: LruHashMap<u128, bool> = LruHashMap::with_max_entries(0x1ffff, 0);
 
 #[inline(always)]
 unsafe fn track(file: &co_re::file) -> ProbeResult<()> {
@@ -50,6 +50,7 @@ pub fn vfs_readv(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
+    let config = get_cfg!()?;
     let file = co_re::file::from_ptr(ctx.arg(0).ok_or(ProbeError::KProbeArgFailure)?);
 
     if !file.is_file().unwrap_or(false) {
@@ -71,7 +72,14 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     );
 
     if event.data.path.starts_with("/etc/") {
-        event.init_from_btf_task(Type::ReadConfig)?;
+        event.init_from_current_task(Type::ReadConfig)?;
+        pipe_event(ctx, event);
+    } else if config.is_event_enabled(Type::Read)
+        && !(event.data.path.starts_with("/proc/")
+            || event.data.path.starts_with("/sys/")
+            || event.data.path.starts_with("/usr/lib/"))
+    {
+        event.init_from_current_task(Type::Read)?;
         pipe_event(ctx, event);
     }
 
@@ -103,6 +111,7 @@ pub fn vfs_writev(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
+    let config = get_cfg!()?;
     let file = co_re::file::from_ptr(ctx.arg(0).ok_or(ProbeError::KProbeArgFailure)?);
 
     if !core_read_kernel!(file, is_file)? {
@@ -119,7 +128,10 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
     );
 
     if event.data.path.starts_with("/etc/") {
-        event.init_from_btf_task(Type::WriteConfig)?;
+        event.init_from_current_task(Type::WriteConfig)?;
+        pipe_event(ctx, event);
+    } else if config.is_event_enabled(Type::Write) {
+        event.init_from_current_task(Type::Write)?;
         pipe_event(ctx, event);
     }
 
@@ -151,7 +163,7 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
     alloc::init()?;
     let event = alloc::alloc_zero::<FileRenameEvent>()?;
 
-    event.init_from_btf_task(Type::FileRename)?;
+    event.init_from_current_task(Type::FileRename)?;
 
     let name = core_read_kernel!(old_dentry, d_name, name)?;
     let len = core_read_kernel!(old_dentry, d_name, len)?;

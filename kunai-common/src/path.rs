@@ -10,7 +10,14 @@ use core::{cmp::min, ffi::c_long};
 
 // for path resolution
 pub const MAX_PATH_DEPTH: u16 = 128;
-pub const MAX_PATH_LEN: usize = 4096;
+// in theory MAX_PATH_LEN is 4096, however (considering the
+// TM where someones wants to fool path resolution) path resolution can
+// be exhausted by making a path depth > 128 so it is not so
+// relevant to use 4096 as MAX_PATH_LEN (as it does not prevent
+// anything to be bypassed). However, making a smaller PATH_LEN makes
+// the program less memory consuming. Maybe a path exhaustion event should
+// be raised when limits are reached.
+pub const MAX_PATH_LEN: usize = 1024;
 pub const MAX_NAME: usize = u8::MAX as usize;
 
 #[repr(C)]
@@ -78,6 +85,8 @@ pub enum Error {
     DentryMtime,
     #[error("failed to read inode.i_size")]
     InodeIsize,
+    #[error("out of bound")]
+    OutOfBound,
 }
 
 #[repr(C)]
@@ -185,16 +194,18 @@ impl Path {
     }
 
     #[inline(always)]
-    pub fn get_byte(&self, i: usize) -> u8 {
+    pub fn get_byte(&self, i: usize) -> core::result::Result<u8, Error> {
         match self.mode {
-            Mode::Append => self.buffer[i],
+            Mode::Append => Ok(self.buffer[i]),
             Mode::Prepend => {
-                let i = bound_value_for_verifier(
-                    (self.buffer.len() - self.len() + i) as isize,
-                    0,
-                    (self.buffer.len() - 1) as isize,
-                );
-                self.buffer[i as usize]
+                let len = self.len;
+                if len <= self.buffer.len() as u32 {
+                    let i = self.buffer.len() - len as usize + i;
+                    if i < self.buffer.len() {
+                        return Ok(self.buffer[i]);
+                    }
+                }
+                Err(Error::OutOfBound)
             }
         }
     }
@@ -213,7 +224,11 @@ impl Path {
                 break;
             }
 
-            if self.get_byte(i) != start[i] {
+            let Ok(b) = self.get_byte(i) else {
+                return false;
+            };
+
+            if b != start[i] {
                 return false;
             }
         }

@@ -19,7 +19,6 @@ pub mod path;
 pub mod consts;
 
 pub mod buffer;
-pub mod perf;
 //pub mod transfer;
 
 pub mod uuid;

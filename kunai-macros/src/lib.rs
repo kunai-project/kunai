@@ -44,7 +44,7 @@ pub fn error_derive(item: TokenStream) -> TokenStream {
         let wrap_attr = v.attrs.iter().find(|&attr| attr.path().is_ident("wrap"));
 
         /*if (err_attr.is_none() && wrap_attr.is_none())
-            || (err_attr.is_some() && wrap_attr.is_some())
+        || (err_attr.is_some() && wrap_attr.is_some())
         {
             panic!("variant must contain either an error or wrap attribute");
         }*/
@@ -123,6 +123,8 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
     };
 
     let mut as_str_arms = vec![];
+    let mut from_str_arms = vec![];
+    let mut variants = vec![];
 
     // we iterate over the enum variants
     for v in data_enum.variants.iter() {
@@ -139,15 +141,39 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
             // we generate a match arm delivering the good error name
             if v.fields.is_empty() {
                 as_str_arms.push(quote!(Self::#name => #args,));
+                from_str_arms.push(quote!(#args => Ok(Self::#name),));
+                variants.push(quote!(Self::#name,));
             } else {
-                let v = vec![quote!(_); v.fields.len()];
-                as_str_arms.push(quote!(Self::#name(#(#v),*) => #args,));
+                //let v = vec![quote!(_); v.fields.len()];
+                //as_str_arms.push(quote!(Self::#name(#(#v),*) => #args,));
+                panic!("enum variant cannot hold values")
             }
         }
     }
 
+    let variants_len = variants.len();
+
     quote!(
+        use core::str::FromStr;
+
+        impl FromStr for #enum_name {
+            type Err = &'static str;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    #(#from_str_arms)*
+                    _ =>  Err("unknown source string"),
+                }
+            }
+        }
+
         impl #enum_name {
+            pub const fn variants() -> [Self;#variants_len]{
+                [
+                    #(#variants)*
+                ]
+            }
+
             #[inline(always)]
             pub const fn as_str(&self) -> &'static str{
                 match self {

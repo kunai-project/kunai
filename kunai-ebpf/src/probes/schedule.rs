@@ -2,7 +2,7 @@ use super::*;
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::ProbeContext;
 use co_re::task_struct;
-use kunai_common::{inspect_err};
+use kunai_common::inspect_err;
 
 #[map]
 static mut MARKED: LruHashMap<u128, bool> = LruHashMap::with_max_entries(0x8000, 0);
@@ -82,7 +82,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
 
     event.data.cgroup.resolve(cgroup)?;
 
-    event.init_from_btf_task(Type::TaskSched)?;
+    event.init_from_current_task(Type::TaskSched)?;
 
     // we do not really care if that is failing
     inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {

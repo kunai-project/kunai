@@ -3,7 +3,7 @@ use aya_bpf::{
     maps::{PerCpuArray, PerCpuHashMap},
 };
 use core::{mem, result};
-use kunai_common::events;
+use kunai_common::{buffer::Buffer, events};
 use kunai_macros::BpfError;
 
 const fn max(a: usize, b: usize) -> usize {
@@ -21,22 +21,10 @@ macro_rules! max {
 const MAX_ALLOCS: u32 = 8;
 
 // Optimized HEAP_MAX_ALLOC_SIZE, allocation can never be larger than the largest of the events
-// This const needs to be updated when new events are defined
 const HEAP_MAX_ALLOC_SIZE: usize = max!(
-    mem::size_of::<events::ExecveEvent>(),
-    mem::size_of::<events::BpfProgLoadEvent>(),
-    mem::size_of::<events::ConnectEvent>(),
-    mem::size_of::<events::DnsQueryEvent>(),
-    mem::size_of::<events::ExitEvent>(),
-    mem::size_of::<events::MmapExecEvent>(),
-    mem::size_of::<events::SendEntropyEvent>(),
-    mem::size_of::<events::InitModuleEvent>(),
-    mem::size_of::<events::ConfigEvent>(),
-    mem::size_of::<events::SendEntropyEvent>(),
-    mem::size_of::<events::FileRenameEvent>(),
-    mem::size_of::<events::MprotectEvent>(),
-    mem::size_of::<events::MountEvent>()
-);
+    events::MAX_EVENT_SIZE,
+    mem::size_of::<Buffer<{ events::ENCRYPT_DATA_MAX_BUFFER_SIZE }>>()
+) * 2;
 
 const ZEROS: [u8; HEAP_MAX_ALLOC_SIZE] = [0; HEAP_MAX_ALLOC_SIZE];
 

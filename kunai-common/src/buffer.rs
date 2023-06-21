@@ -1,7 +1,4 @@
-use crate::{
-    bpf_target_code,
-    not_bpf_target_code,
-};
+use crate::{bpf_target_code, not_bpf_target_code};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -127,6 +124,10 @@ bpf_target_code! {
         IovLenMissing,
         #[error("iovec.iov_base member is missing")]
         IovBaseMissing,
+        #[error("should not happen")]
+        ShouldNotHappen,
+        #[error("buffer full")]
+        BufferFull
     }
 
     impl<const N: usize> Buffer<N> {
@@ -159,37 +160,32 @@ bpf_target_code! {
             let iov_len = iov.iov_len().ok_or(Error::IovLenMissing)?;
             let iov_base = iov.iov_base().ok_or(Error::IovBaseMissing)?;
 
-            let mut size = min(iov_len as usize, self.space_left());
+            let len = cap_size(self.len, N);
+
+            let mut size = iov_len as u32;
 
             if let Some(count) = count {
-                size = min(count, size);
+                size = min(count as u32, size);
             }
 
-            if size == 0 || size > self.space_left(){
-                return Ok(());
+            let left = cap_size((N-len) as u32, N as u32);
+            if size > left {
+                return Err(Error::BufferFull);
             }
-
-            if iov_base.is_null(){
-                return Err(Error::NullIovBase);
-            }
-
-            let ostart = bound_value_for_verifier(self.len as isize, 0, N as isize);
 
             if gen::bpf_probe_read_user(
-                self.buf[ostart as usize..].as_mut_ptr() as *mut _,
-                // needed so that the verifier does not complain
-                min(size as u32, N as u32),
+                self.buf[len as usize..].as_mut_ptr() as *mut _,
+                min(size, N as u32),
                 iov_base as *const _,
             ) < 0
             {
                 return Err(Error::FailedToReadIovBase);
             }
-            self.len += size ;
 
+            self.len += size as usize ;
 
             Ok(())
         }
-
 
         #[inline(always)]
         pub unsafe fn read_kernel_str<P>(&mut self, src:*const P) -> Result<(), Error>{

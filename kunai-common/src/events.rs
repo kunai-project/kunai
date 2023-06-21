@@ -55,7 +55,7 @@ mod perfs;
 pub use perfs::*;
 
 #[repr(u32)]
-#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Type {
     #[str("unknown")]
     Unknown = 0,
@@ -95,23 +95,40 @@ pub enum Type {
     // filesystem events
     #[str("mount")]
     Mount = 80,
+    #[str("read")]
+    Read,
     #[str("read_config")]
     ReadConfig,
+    #[str("write")]
+    Write,
     #[str("write_config")]
     WriteConfig,
     #[str("file_rename")]
     FileRename,
 
+    #[str("end_event")]
+    EndEvents = 1000,
+
     // specific events
     #[str("correlation")]
-    Correlation = 1000,
+    Correlation,
     #[str("cache_hash")]
     CacheHash,
+
+    // !!! all new event types must be put befor max
+    #[str("max")]
+    Max,
 }
 
 impl Default for Type {
     fn default() -> Self {
         Self::Unknown
+    }
+}
+
+impl Type {
+    pub fn is_configurable(&self) -> bool {
+        *self > Self::Unknown && *self < Self::EndEvents
     }
 }
 
@@ -123,6 +140,9 @@ impl Type {
 
 not_bpf_target_code! {
     use std::fmt::Display;
+    use aya::Pod;
+
+    unsafe impl Pod for Type {}
 
     impl Display for Type {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -320,7 +340,7 @@ impl<T> Event<T> {
 bpf_target_code! {
     impl<T> Event<T> {
         #[inline(always)]
-        pub unsafe fn init_from_btf_task(&mut self, ty: Type) -> Result<(), Error> {
+        pub unsafe fn init_from_current_task(&mut self, ty: Type) -> Result<(), Error> {
             let t = bpf_get_current_task() as *const c_void;
             self.info.init(ty, t)?;
             Ok(())
@@ -348,7 +368,7 @@ not_bpf_target_code! {
         pub fn from_bytes(bytes: &[u8]) -> Self {
             Self {
                 event: Vec::from(bytes),
-                }
+            }
 
         }
 
@@ -427,6 +447,34 @@ not_bpf_target_code! {
     pub use event;
 
 }
+
+const fn max(a: usize, b: usize) -> usize {
+    if a < b {
+        return b;
+    }
+    a
+}
+
+macro_rules! max {
+    ($a:expr) => ($a);
+    ($a:expr, $($rest:expr),*) => {{max($a, max!($($rest),*))}};
+}
+
+pub const MAX_EVENT_SIZE: usize = max!(
+    core::mem::size_of::<ExecveEvent>(),
+    core::mem::size_of::<BpfProgLoadEvent>(),
+    core::mem::size_of::<ConnectEvent>(),
+    core::mem::size_of::<DnsQueryEvent>(),
+    core::mem::size_of::<ExitEvent>(),
+    core::mem::size_of::<MmapExecEvent>(),
+    core::mem::size_of::<SendEntropyEvent>(),
+    core::mem::size_of::<InitModuleEvent>(),
+    core::mem::size_of::<ConfigEvent>(),
+    core::mem::size_of::<SendEntropyEvent>(),
+    core::mem::size_of::<FileRenameEvent>(),
+    core::mem::size_of::<MprotectEvent>(),
+    core::mem::size_of::<MountEvent>()
+);
 
 not_bpf_target_code! {
 

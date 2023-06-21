@@ -50,7 +50,7 @@ unsafe fn try_exit_security_sb_mount(
 
     event.data.rc = rc;
 
-    event.init_from_btf_task(Type::Mount)?;
+    event.init_from_current_task(Type::Mount)?;
 
     ignore_result!(MOUNT_EVENTS.insert(&key, event, 0));
 

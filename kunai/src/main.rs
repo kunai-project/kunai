@@ -1,12 +1,18 @@
 mod cache;
 mod compat;
+mod config;
 mod info;
 mod util;
 
+use aya::maps::MapData;
+use bytes::BytesMut;
+use clap::Parser;
+use env_logger::Builder;
 use info::{AdditionalFields, StdEventInfo};
 use json::{object, JsonValue};
 use kunai_common::cgroup::Cgroup;
-use kunai_common::config::{self, BpfConfig, Config};
+use kunai_common::config::{BpfConfig, Filter};
+use log::LevelFilter;
 
 use std::collections::{HashMap, VecDeque};
 
@@ -22,6 +28,7 @@ use util::*;
 use aya::{
     include_bytes_aligned,
     maps::perf::{AsyncPerfEventArray, Events, PerfBufferError},
+    maps::HashMap as AyaHashMap,
     util::online_cpus,
     Bpf, Btf,
 };
@@ -30,7 +37,7 @@ use aya::{BpfLoader, VerifierLogLevel};
 use aya_log::BpfLogger;
 use kunai_common::{
     events::{self, EncodedEvent, Event, *},
-    inspect_err, perf,
+    inspect_err,
     uuid::TaskUuid,
 };
 
@@ -43,11 +50,10 @@ use tokio::{signal, task, time};
 use cache::*;
 
 use crate::compat::{KernelVersion, Programs};
+use crate::config::Config;
 use crate::util::namespaces::unshare;
 
 const PAGE_SIZE: usize = 4096;
-const MAX_EVENT_SIZE: usize = core::mem::size_of::<Event<ExecveData>>();
-const MAX_EVENT_COUNT: usize = 256;
 
 macro_rules! format_ptr {
     ($value:expr) => {
@@ -130,6 +136,12 @@ struct CorrelationData {
     resolved: HashMap<IpAddr, String>,
     container: Option<String>,
     info: CorrInfo,
+}
+
+impl CorrelationData {
+    fn free_memory(&mut self) {
+        self.resolved = HashMap::new();
+    }
 }
 
 struct EventProcessor {
@@ -281,10 +293,7 @@ impl EventProcessor {
         while let Some(cor) = self.correlations.get(&ck) {
             last_pid = cor.info.pid();
 
-            ancestors.insert(
-                0,
-                format!("{}[{}]", cor.image.to_string_lossy(), cor.info.pid(),),
-            );
+            ancestors.insert(0, cor.image.to_string_lossy().to_string());
             ck = match cor.info.parent_correlation_key() {
                 Some(v) => v,
                 None => break,
@@ -613,7 +622,9 @@ impl EventProcessor {
             // find a more elaborated way to save space
             // we need to keep some minimal correlations
             // maybe through cached ancestors and parent_image
-            //self.correlations.remove(&info.correlation_key());
+            self.correlations
+                .entry(info.correlation_key())
+                .and_modify(|c| c.free_memory());
         }
 
         Self::json_event(info, data)
@@ -630,7 +641,14 @@ impl EventProcessor {
 
         let cgroup = event.data.cgroup;
 
-        let container_type = Self::container_type_from_cgroup(&cgroup);
+        let mut container_type = Self::container_type_from_cgroup(&cgroup);
+
+        if container_type.is_none() {
+            let ancestors = self.get_ancestors(&info);
+            if ancestors.iter().any(|s| s == "/usr/bin/firejail") {
+                container_type = Some("firejail".into());
+            }
+        }
 
         // we insert only if not existing
         self.correlations.entry(ck).or_insert(CorrelationData {
@@ -724,12 +742,13 @@ impl EventProcessor {
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::WriteConfig | events::Type::ReadConfig => {
-                match unsafe { enc_event.as_event_with_data() } {
-                    Ok(e) => std::println!("{}", self.json_config_event(std_info, e)),
-                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-                }
-            }
+            events::Type::WriteConfig
+            | events::Type::Write
+            | events::Type::ReadConfig
+            | events::Type::Read => match unsafe { enc_event.as_event_with_data() } {
+                Ok(e) => std::println!("{}", self.json_config_event(std_info, e)),
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
 
             events::Type::Mount => match unsafe { enc_event.as_event_with_data() } {
                 Ok(e) => std::println!("{}", self.json_mount_event(std_info, e)),
@@ -778,18 +797,38 @@ struct EventReader {
     batch: usize,
     pipe: VecDeque<EncodedEvent>,
     sender: Sender<EncodedEvent>,
+    config: Config,
+    filter: Filter,
+    stats: AyaHashMap<MapData, events::Type, u64>,
+}
+
+#[inline(always)]
+fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) -> usize {
+    let c = (max_event_size * n_events) / page_size;
+    2usize.pow(c.ilog2() + 1)
 }
 
 impl EventReader {
-    pub fn init(bpf: &mut Bpf, sender: Sender<EncodedEvent>) -> anyhow::Result<Arc<Mutex<Self>>> {
+    pub fn init(
+        bpf: &mut Bpf,
+        config: Config,
+        sender: Sender<EncodedEvent>,
+    ) -> anyhow::Result<Arc<Mutex<Self>>> {
+        let filter = (&config).try_into()?;
+        let stats_map: AyaHashMap<_, events::Type, u64> =
+            AyaHashMap::try_from(bpf.take_map(events::KUNAI_STATS_MAP).unwrap()).unwrap();
+
         let ep = EventReader {
             pipe: VecDeque::new(),
             batch: 0,
             sender,
+            config: config.clone(),
+            filter,
+            stats: stats_map,
         };
 
         let safe = Arc::new(Mutex::new(ep));
-        Self::read_events(&safe, bpf);
+        Self::read_events(&safe, bpf, &config);
         Ok(safe)
     }
 
@@ -861,75 +900,6 @@ impl EventReader {
         }
     }
 
-    // The aim of this function is to be run as soon as the event gets available in userland.
-    // So any processing on events that requires realtime properties must be done here. A direct
-    // consequence of this is that anything that do not require realtime property should not
-    // be done here as it may slow down the event processing.
-    /*async fn pre_process_events(
-        &mut self,
-        enc_event: &mut EncodedEvent,
-    ) -> Result<(), anyhow::Error> {
-        let i = unsafe { enc_event.info_mut() }?;
-        let etype = i.etype;
-
-        match etype {
-            Type::Execve => {
-                let event = mut_event!(enc_event, ExecveEvent)?;
-                let p = event.data.executable.to_path_buf();
-
-                if let Some(hash) = self
-                    .hcache
-                    .get_or_cache_with_ns(event.info.process.namespaces.mnt, p)
-                    .await
-                {
-                    info!("got hash from namespace: exe={:#?}", hash)
-                }
-
-                if event.data.executable != event.data.interpreter {
-                    self.make_realpath_and_cache_hash(&mut event.data.interpreter)
-                        .await;
-                }
-                self.make_realpath_and_cache_hash(&mut event.data.executable)
-                    .await;
-            }
-
-            Type::MmapExec => {
-                let event = mut_event!(enc_event, MmapExecEvent)?;
-
-                self.make_realpath_and_cache_hash(&mut event.data.filename)
-                    .await;
-            }
-
-            Type::Mount => {
-                let event = mut_event!(enc_event, MountEvent)?;
-                // we hook into those events in order to get superblock inode information
-                self.mounts.insert(
-                    event
-                        .data
-                        .path
-                        .ino
-                        .expect("path ino should never be missing"),
-                    event.data.path.to_path_buf(),
-                );
-            }
-
-            Type::ReadConfig | Type::WriteConfig => {
-                let event = mut_event!(enc_event, ConfigEvent)?;
-                self.make_realpath(&mut event.data.path);
-            }
-
-            Type::FileRename => {
-                let event = mut_event!(enc_event, FileRenameEvent)?;
-                self.make_realpath(&mut event.data.new_name);
-                self.make_realpath(&mut event.data.old_name);
-            }
-
-            _ => {}
-        }
-
-        Ok(())
-    }*/
-
     #[inline]
     fn send_event<T>(&self, event: Event<T>) -> Result<(), SendError<EncodedEvent>> {
         self.sender.send(EncodedEvent::from_event(event))
@@ -998,10 +968,11 @@ impl EventReader {
         }
     }
 
-    fn read_events(ep: &Arc<Mutex<Self>>, bpf: &mut Bpf) {
+    fn read_events(er: &Arc<Mutex<Self>>, bpf: &mut Bpf, config: &Config) {
         // try to convert the PERF_ARRAY map to an AsyncPerfEventArray
         let mut perf_array =
-            AsyncPerfEventArray::try_from(bpf.take_map(events::EVENTS_MAP_NAME).unwrap()).unwrap();
+            AsyncPerfEventArray::try_from(bpf.take_map(events::KUNAI_EVENTS_MAP).unwrap()).unwrap();
+
         let online_cpus = online_cpus().expect("failed to get online cpus");
         let barrier = Arc::new(Barrier::new(online_cpus.len()));
         // we choose what task will handle the reduce process (handle piped events)
@@ -1012,16 +983,17 @@ impl EventReader {
             let mut buf = perf_array
                 .open(
                     cpu_id,
-                    Some(perf::optimal_page_count(
+                    Some(optimal_page_count(
                         PAGE_SIZE,
                         MAX_EVENT_SIZE,
-                        MAX_EVENT_COUNT,
+                        config.max_buffered_events as usize,
                     )),
                 )
                 .unwrap();
 
-            let event_proc = ep.clone();
+            let event_reader = er.clone();
             let bar = barrier.clone();
+            let conf = config.clone();
 
             // process each perf buffer in a separate task
             task::spawn(async move {
@@ -1030,7 +1002,9 @@ impl EventReader {
 
                 // the number of buffers we want to use gives us the number of events we can read
                 // in one go in userland
-                let mut buffers = perf::event_buffers(MAX_EVENT_SIZE, 64, MAX_EVENT_COUNT);
+                let mut buffers = (0..conf.max_buffered_events)
+                    .map(|_| BytesMut::with_capacity(MAX_EVENT_SIZE))
+                    .collect::<Vec<_>>();
 
                 // we need to be sure that the fast timeout is bigger than the slowest of
                 // our probes to guarantee that we can correctly re-order events
@@ -1059,38 +1033,36 @@ impl EventReader {
                     // checking out lost events
                     if events.lost > 0 {
                         error!(
-                            "some events have been lost in the way from kernel read={} lost={}",
+                            "some events have been lost in the way from kernel read={} lost={}: consider filtering out some events or increase the number of buffered events in configuration",
                             events.read, events.lost
-                        )
+                        );
+
+                        {
+                            let er = event_reader.lock().await;
+                            for ty in events::Type::variants() {
+                                if ty.is_configurable() {
+                                    error!(
+                                        "stats {}: {}",
+                                        ty,
+                                        er.stats.get(&ty, 0).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            // drop er
+                        }
                     }
 
                     // events.read contains the number of events that have been read,
                     // and is always <= buffers.len()
                     for buf in buffers.iter().take(events.read) {
                         let mut dec = EncodedEvent::from_bytes(buf);
-                        let mut ep = event_proc.lock().await;
+                        let mut er = event_reader.lock().await;
 
                         // we make sure here that only events for which we can grab info for
                         // are pushed to the pipe. It is simplifying the error handling process
                         // in sorting the pipe afterwards
                         if let Ok(info) = unsafe { dec.info_mut() } {
-                            info.batch = ep.batch;
-
-                            /*let opt_evt = match CorrelationEvent::from_encoded(&dec) {
-                                Ok(opt_evt) => opt_evt,
-                                Err(e) => {
-                                    error!("failed to transform event: {e}");
-                                    None
-                                }
-                            };
-
-                            if let Some(corr_event) = opt_evt {
-                                if let Ok(enc) = EncodedEvent::from_event(corr_event) {
-                                    ep.sender.send(enc);
-                                } else {
-                                    error!("failed to encode correlation event");
-                                }
-                            }*/
+                            info.batch = er.batch;
                         } else {
                             error!("failed to decode info");
                             continue;
@@ -1100,15 +1072,20 @@ impl EventReader {
                             .expect("info should not fail here")
                             .etype;
 
-                        ep.pre_process_events(&mut dec);
+                        //filtering out unwanted events
+                        if !er.filter.is_enabled(etype) {
+                            continue;
+                        }
 
-                        ep.pass_through_events(&dec);
+                        er.pre_process_events(&mut dec);
+
+                        er.pass_through_events(&dec);
 
                         if matches!(etype, Type::TaskSched) {
                             continue;
                         }
 
-                        ep.pipe.push_back(dec);
+                        er.pipe.push_back(dec);
                     }
 
                     // all threads wait here after some events have been collected
@@ -1116,7 +1093,7 @@ impl EventReader {
 
                     // only one task needs to reduce
                     if cpu_id == reducer_cpu_id {
-                        let mut ep = event_proc.lock().await;
+                        let mut ep = event_reader.lock().await;
                         if ep.has_pending_events() {
                             ep.process_piped_events().await;
                             ep.batch += 1;
@@ -1126,15 +1103,6 @@ impl EventReader {
                     // all threads wait that piped events are processed so that the reducer does not
                     // handle events being piped in the same time by others
                     bar.wait().await;
-
-                    if events.read == buffers.len() {
-                        // increasing the size of the buffer used to read event
-                        let new_size = buffers.len() * 2;
-                        if new_size < MAX_EVENT_COUNT {
-                            buffers =
-                                perf::event_buffers(MAX_EVENT_SIZE, new_size, MAX_EVENT_COUNT);
-                        }
-                    }
                 }
 
                 #[allow(unreachable_code)]
@@ -1144,11 +1112,56 @@ impl EventReader {
     }
 }
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
+    #[arg(
+        short,
+        long,
+        default_value_t = false,
+        help = "Prints a default configuration to stdout"
+    )]
+    dump_config: bool,
+
+    #[arg(short, long, action = clap::ArgAction::Count, help="Set verbosity level, repeat option for more verbosity.")]
+    verbose: u8,
+}
+
 // todo: make single-threaded / multi-threaded features
 #[tokio::main(flavor = "current_thread")]
 //#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+//#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
+    let cli = Cli::parse();
+    let mut conf = Config {
+        ..Default::default()
+    };
+
+    // Handling any CLI argument not needing to run eBPF
+    // setting log level according to the verbosity level
+    let mut log_level = LevelFilter::Error;
+    match cli.verbose {
+        1 => log_level = LevelFilter::Info,
+        2 => log_level = LevelFilter::Debug,
+        3..=u8::MAX => log_level = LevelFilter::Trace,
+        _ => {}
+    }
+
+    Builder::new().filter_level(log_level).init();
+    if cli.dump_config {
+        let conf = Config {
+            ..Default::default()
+        };
+        println!("{}", conf.to_toml()?);
+        return Ok(());
+    }
+
+    if let Some(conf_file) = cli.config {
+        conf = Config::from_toml(std::fs::read_to_string(conf_file)?)?;
+    }
 
     // checking that we are running as root
     if get_current_uid() != 0 {
@@ -1197,7 +1210,16 @@ async fn main() -> Result<(), anyhow::Error> {
         warn!("failed to initialize eBPF logger: {}", e);
     }
 
-    BpfConfig::init_config_in_bpf(&mut bpf, Config {}.into());
+    BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
+        .expect("failed to initialize bpf configuration");
+    info!("finished initializing config");
+
+    // we start event reader and event processor before loading the programs
+    // if we load the programs first we might have some event lost errors
+    let (sender, receiver) = channel::<EncodedEvent>();
+
+    EventReader::init(&mut bpf, conf, sender)?;
+    EventProcessor::init(receiver);
 
     let btf = Btf::from_sys_fs()?;
 
@@ -1287,10 +1309,12 @@ async fn main() -> Result<(), anyhow::Error> {
         p.attach(&btf)?;
     }
 
+    /*
     let (sender, receiver) = channel::<EncodedEvent>();
 
     EventReader::init(&mut bpf, sender)?;
     EventProcessor::init(receiver);
+    */
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
