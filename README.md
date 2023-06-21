@@ -10,6 +10,12 @@ I imagine what you are thinking now: Hey man ! You just re-invented the wheel,
 Sysmon for Linux is already there ! Yes, that is true, but I was not really 
 happy with what Sysmon for Linux offered so I decided to work on this. Maybe you too could try to launch a Kunai at your workstation.
 
+## What makes Kunai so special ?
+
+* events arrive sorted in chronological order
+* benefits from on-host correlation and events enrichment
+* works well with Linux namespaces and container technologies (you can trace all the activity of your containers)
+
 # How it works
 
 All the kernel components of this project are running as eBPF programs (also
