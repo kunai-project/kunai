@@ -20,7 +20,18 @@ macro_rules! max {
 
 const MAX_ALLOCS: u32 = 8;
 
-// Optimized HEAP_MAX_ALLOC_SIZE, allocation can never be larger than the largest of the events
+// Optimized HEAP_MAX_ALLOC_SIZE
+// we need to double the actual maximum size we need to hack the verifier.
+// It is sometimes impossible for the verifier to evaluate the correct bound
+// check. This is the case for self modifying structure (appending/prepending
+// operations). The verifier always need a constant value to bound a probe_read
+// operation, however when appending the size we actually can write is variable
+// and this causes a lot of troubles to the verifier. It is not always possible
+// to fix an acceptable bound for size in probe_read, so a hack is to double
+// the size of the map value used to allocate such a structure. In this way,
+// the verifier always think there is enough room to write data. Special care
+// to the bound checks must be taken because it may overrun the structures without
+// triping up the verifier.
 const HEAP_MAX_ALLOC_SIZE: usize = max!(
     events::MAX_EVENT_SIZE,
     mem::size_of::<Buffer<{ events::ENCRYPT_DATA_MAX_BUFFER_SIZE }>>()

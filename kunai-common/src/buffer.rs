@@ -174,7 +174,7 @@ bpf_target_code! {
             }
 
             if gen::bpf_probe_read_user(
-                self.buf[len as usize..].as_mut_ptr() as *mut _,
+                self.buf[len as usize..N].as_mut_ptr() as *mut _,
                 min(size, N as u32),
                 iov_base as *const _,
             ) < 0
