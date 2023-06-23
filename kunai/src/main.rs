@@ -368,7 +368,7 @@ impl EventProcessor {
         if event.data.executable != event.data.interpreter {
             info.info.etype = Type::ExecveScript;
             data["interpreter"] = self
-                .get_hashes_with_ns(mnt_ns, &event.data.executable)
+                .get_hashes_with_ns(mnt_ns, &event.data.interpreter)
                 .into();
         }
 
@@ -1305,13 +1305,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
         p.attach(&btf)?;
     }
-
-    /*
-    let (sender, receiver) = channel::<EncodedEvent>();
-
-    EventReader::init(&mut bpf, sender)?;
-    EventProcessor::init(receiver);
-    */
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
