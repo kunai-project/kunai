@@ -16,12 +16,14 @@ use log::LevelFilter;
 
 use std::collections::{HashMap, VecDeque};
 
+use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::Arc;
-use std::thread;
+use std::sync::Mutex as StdMutex;
+use std::{fs, thread};
 use users::get_current_uid;
 use util::*;
 
@@ -149,6 +151,7 @@ struct EventProcessor {
     hcache: cache::Cache,
     receiver: Receiver<EncodedEvent>,
     correlations: HashMap<u128, CorrelationData>,
+    output: std::fs::File,
 }
 
 impl EventProcessor {
@@ -172,6 +175,22 @@ impl EventProcessor {
     }
 
     #[inline]
+    fn container_type_from_ancestors(ancestors: Vec<String>) -> Option<String> {
+        for a in ancestors {
+            match a.as_str() {
+                "/usr/bin/firejail" => return Some("firejail".into()),
+                "/usr/bin/containerd-shim-runc-v2" => return Some("docker".into()),
+                _ => {}
+            };
+
+            if a.starts_with("/snap/lxd/") && a.ends_with("/bin/lxd/") {
+                return Some("lxc".into());
+            }
+        }
+        None
+    }
+
+    #[inline]
     fn json_event(info: StdEventInfo, data: JsonValue) -> JsonValue {
         object! {data: data, info: info,}
     }
@@ -181,12 +200,22 @@ impl EventProcessor {
         object! {data: data, info: info}
     }
 
-    pub fn init(receiver: Receiver<EncodedEvent>) {
+    pub fn init(config: Config, receiver: Receiver<EncodedEvent>) -> anyhow::Result<()> {
+        let output = match config.output.as_str() {
+            "stdout" => "/dev/stdout",
+            "stderr" => "/dev/stderr",
+            v => v,
+        };
+
         let mut ep = Self {
             random: util::getrandom::<u32>().unwrap(),
             hcache: Cache::with_max_entries(10000),
             correlations: HashMap::new(),
             receiver,
+            output: std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(output)?,
         };
 
         // should not raise any error, we just print it
@@ -204,7 +233,7 @@ impl EventProcessor {
             }
         });
 
-        //ep
+        Ok(())
     }
 
     fn init_correlations_from_procfs(&mut self) -> anyhow::Result<()> {
@@ -349,7 +378,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn json_execve(&mut self, mut info: StdEventInfo, event: &mut ExecveEvent) -> JsonValue {
+    fn json_execve(&mut self, mut info: StdEventInfo, event: &ExecveEvent) -> JsonValue {
         let ancestors = self.get_ancestors(&info);
 
         //let executable = event.data.executable.to_path_buf();
@@ -366,7 +395,6 @@ impl EventProcessor {
 
         // we check wether a script is being interpreted
         if event.data.executable != event.data.interpreter {
-            info.info.etype = Type::ExecveScript;
             data["interpreter"] = self
                 .get_hashes_with_ns(mnt_ns, &event.data.interpreter)
                 .into();
@@ -376,7 +404,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn json_mmap_exec(&mut self, info: StdEventInfo, event: &mut MmapExecEvent) -> JsonValue {
+    fn json_mmap_exec(&mut self, info: StdEventInfo, event: &MmapExecEvent) -> JsonValue {
         let filename = event.data.filename;
         let mnt_ns = event.info.process.namespaces.mnt;
         let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename);
@@ -448,7 +476,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn json_config_event(&mut self, info: StdEventInfo, event: &ConfigEvent) -> JsonValue {
+    fn json_rw_event(&mut self, info: StdEventInfo, event: &ConfigEvent) -> JsonValue {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
 
         Self::json_event(
@@ -644,9 +672,7 @@ impl EventProcessor {
 
         if container_type.is_none() {
             let ancestors = self.get_ancestors(&info);
-            if ancestors.iter().any(|s| s == "/usr/bin/firejail") {
-                container_type = Some("firejail".into());
-            }
+            container_type = Self::container_type_from_ancestors(ancestors);
         }
 
         // we insert only if not existing
@@ -680,6 +706,11 @@ impl EventProcessor {
         std_info.with_additional_fields(additional)
     }
 
+    #[inline(always)]
+    fn handle_json_event(&mut self, j: JsonValue) {
+        writeln!(self.output, "{j}");
+    }
+
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
         let i = unsafe { enc_event.info() }.unwrap();
 
@@ -702,74 +733,107 @@ impl EventProcessor {
         let etype = std_info.info.etype;
 
         match etype {
-            events::Type::Execve => match unsafe { enc_event.as_mut_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_execve(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
+            events::Type::Execve | events::Type::ExecveScript => {
+                match event!(enc_event, ExecveEvent) {
+                    Ok(e) => {
+                        let e = self.json_execve(std_info, e);
+                        self.handle_json_event(e);
+                    }
+                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+                }
+            }
 
-            events::Type::MmapExec => match unsafe { enc_event.as_mut_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_mmap_exec(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::MprotectExec => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_mprotect(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::Connect => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_connect(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::DnsQuery => match unsafe { enc_event.as_event_with_data() } {
+            events::Type::MmapExec => match event!(enc_event, MmapExecEvent) {
                 Ok(e) => {
-                    for json in self.json_dns_queries(std_info, e) {
-                        std::println!("{json}");
+                    let e = self.json_mmap_exec(std_info, e);
+                    self.handle_json_event(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::MprotectExec => match event!(enc_event, MprotectEvent) {
+                Ok(e) => {
+                    let e = self.json_mprotect(std_info, e);
+                    self.handle_json_event(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::Connect => match event!(enc_event, ConnectEvent) {
+                Ok(e) => {
+                    let e = self.json_connect(std_info, e);
+                    self.handle_json_event(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::DnsQuery => match event!(enc_event, DnsQueryEvent) {
+                Ok(e) => {
+                    for e in self.json_dns_queries(std_info, e) {
+                        self.handle_json_event(e);
                     }
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::SendData => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_send_data(std_info, e)),
+            events::Type::SendData => match event!(enc_event, SendEntropyEvent) {
+                Ok(e) => {
+                    let e = self.json_send_data(std_info, e);
+                    self.handle_json_event(e);
+                }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::InitModule => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_init_module(std_info, e)),
+            events::Type::InitModule => match event!(enc_event, InitModuleEvent) {
+                Ok(e) => {
+                    let e = self.json_init_module(std_info, e);
+                    self.handle_json_event(e);
+                }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
             events::Type::WriteConfig
             | events::Type::Write
             | events::Type::ReadConfig
-            | events::Type::Read => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_config_event(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::Mount => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_mount_event(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::FileRename => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_file_rename(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::BpfProgLoad => match unsafe { enc_event.as_event_with_data() } {
-                Ok(e) => std::println!("{}", self.json_bpf_prog_load(std_info, e)),
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::Exit | events::Type::ExitGroup => {
-                match unsafe { enc_event.as_event_with_data() } {
-                    Ok(e) => std::println!("{}", self.json_exit(std_info, e)),
-                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            | events::Type::Read => match event!(enc_event, ConfigEvent) {
+                Ok(e) => {
+                    let e = self.json_rw_event(std_info, e);
+                    self.handle_json_event(e);
                 }
-            }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::Mount => match event!(enc_event, MountEvent) {
+                Ok(e) => {
+                    let e = self.json_mount_event(std_info, e);
+                    self.handle_json_event(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::FileRename => match event!(enc_event, FileRenameEvent) {
+                Ok(e) => {
+                    let e = self.json_file_rename(std_info, e);
+                    self.handle_json_event(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::BpfProgLoad => match event!(enc_event, BpfProgLoadEvent) {
+                Ok(e) => {
+                    let e = self.json_bpf_prog_load(std_info, e);
+                    self.handle_json_event(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::Exit | events::Type::ExitGroup => match event!(enc_event, ExitEvent) {
+                Ok(e) => {
+                    let e = self.json_exit(std_info, e);
+                    self.handle_json_event(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
 
             events::Type::Correlation => match event!(enc_event) {
                 Ok(e) => {
@@ -912,6 +976,12 @@ impl EventReader {
 
         #[allow(clippy::single_match)]
         match i.etype {
+            Type::Execve => {
+                let mut event = mut_event!(e, ExecveEvent).unwrap();
+                if event.data.interpreter != event.data.executable {
+                    event.info.etype = Type::ExecveScript
+                }
+            }
             Type::BpfProgLoad => {
                 let mut event = mut_event!(e, BpfProgLoadEvent).unwrap();
 
@@ -943,7 +1013,7 @@ impl EventReader {
         let i = unsafe { e.info() }.unwrap();
 
         match i.etype {
-            Type::Execve => {
+            Type::Execve | Type::ExecveScript => {
                 let execve = event!(e, ExecveEvent).unwrap();
                 let c: CorrelationEvent = execve.into();
                 self.send_event(c).unwrap();
@@ -1067,6 +1137,15 @@ impl EventReader {
                             continue;
                         }
 
+                        // pre-processing events
+                        // we eventually change event type in this function
+                        // example: Excve -> ExcveScript if necessary
+                        er.pre_process_events(&mut dec);
+                        // passing through some events used for correlation
+                        er.pass_through_events(&dec);
+
+                        // we must get the event type here because we eventually
+                        // changed it
                         let etype = unsafe { dec.info() }
                             .expect("info should not fail here")
                             .etype;
@@ -1075,10 +1154,6 @@ impl EventReader {
                         if !er.filter.is_enabled(etype) {
                             continue;
                         }
-
-                        er.pre_process_events(&mut dec);
-
-                        er.pass_through_events(&dec);
 
                         if matches!(etype, Type::TaskSched) {
                             continue;
@@ -1117,13 +1192,17 @@ struct Cli {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    #[arg(
-        short,
-        long,
-        default_value_t = false,
-        help = "Prints a default configuration to stdout"
-    )]
+    #[arg(long, help = "Prints a default configuration to stdout")]
     dump_config: bool,
+
+    #[arg(long, help = "Include events by name (comma separated)")]
+    include: Option<String>,
+
+    #[arg(long, help = "Exclude events by name (comma separated)")]
+    exclude: Option<String>,
+
+    #[arg(long, help = "Increase the maximum number of events eBPF can handle")]
+    max_buffered_events: Option<u16>,
 
     #[arg(short, long, action = clap::ArgAction::Count, help="Set verbosity level, repeat option for more verbosity.")]
     verbose: u8,
@@ -1158,6 +1237,41 @@ async fn main() -> Result<(), anyhow::Error> {
 
     if let Some(conf_file) = cli.config {
         conf = Config::from_toml(std::fs::read_to_string(conf_file)?)?;
+    }
+
+    // command line superseeds configuration
+
+    // we want to increase max_buffered_events
+    if cli.max_buffered_events.is_some() {
+        conf.max_buffered_events = cli.max_buffered_events.unwrap();
+    }
+
+    // we exclude events
+    if let Some(exclude) = cli.exclude {
+        let exclude: Vec<&str> = exclude.split(',').collect();
+        if exclude.iter().any(|&s| s == "all") {
+            conf.disable_all()
+        } else {
+            for exc in exclude {
+                if let Some(e) = conf.events.iter_mut().find(|e| e.name() == exc) {
+                    e.disable()
+                }
+            }
+        }
+    }
+
+    // we include events
+    if let Some(include) = cli.include {
+        let include: Vec<&str> = include.split(',').collect();
+        if include.iter().any(|&s| s == "all") {
+            conf.enable_all()
+        } else {
+            for inc in include {
+                if let Some(e) = conf.events.iter_mut().find(|e| e.name() == inc) {
+                    e.enable()
+                }
+            }
+        }
     }
 
     // checking that we are running as root
@@ -1215,8 +1329,8 @@ async fn main() -> Result<(), anyhow::Error> {
     // if we load the programs first we might have some event lost errors
     let (sender, receiver) = channel::<EncodedEvent>();
 
-    EventReader::init(&mut bpf, conf, sender)?;
-    EventProcessor::init(receiver);
+    EventReader::init(&mut bpf, conf.clone(), sender)?;
+    EventProcessor::init(conf, receiver)?;
 
     let btf = Btf::from_sys_fs()?;
 

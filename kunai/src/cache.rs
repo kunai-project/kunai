@@ -23,8 +23,8 @@ pub enum Error {
     Namespace(#[from] namespaces::Error),
     #[error("{0}")]
     IoError(#[from] io::Error),
-    #[error("file changed since kernel event")]
-    FileModSinceKernelEvent,
+    #[error("file changed since kernel event: {0}")]
+    FileModSinceKernelEvent(&'static str),
     #[error("metadata is needed for ebpf path")]
     MetadataRequired,
     #[error("hash not found")]
@@ -139,22 +139,19 @@ impl Key {
         let ebpf_meta = path.metadata.ok_or(Error::MetadataRequired)?;
         k.size = ebpf_meta.size as u64;
         k.modified = ebpf_meta.mtime.into_system_time();
-        //k.created = meta.created().unwrap_or(SystemTime::UNIX_EPOCH);
         k.accessed = ebpf_meta.atime.into_system_time();
 
-        if k.size != meta.size() || ebpf_meta.ino != meta.ino() {
-            return Err(Error::FileModSinceKernelEvent);
+        if k.size != meta.size() {
+            return Err(Error::FileModSinceKernelEvent("inode changed"));
         }
 
-        if let Ok(atime) = meta.accessed() {
-            if atime != k.accessed {
-                return Err(Error::FileModSinceKernelEvent);
-            }
+        if ebpf_meta.ino != meta.ino() {
+            return Err(Error::FileModSinceKernelEvent("sized changed"));
         }
 
         if let Ok(mtime) = meta.modified() {
             if mtime != k.modified {
-                return Err(Error::FileModSinceKernelEvent);
+                return Err(Error::FileModSinceKernelEvent("mtime changed"));
             }
         }
 

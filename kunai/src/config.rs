@@ -14,6 +14,26 @@ pub enum Error {
     InvalidEvent(String),
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Event {
+    name: String,
+    enable: bool,
+}
+
+impl Event {
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn disable(&mut self) {
+        self.enable = false
+    }
+
+    pub(crate) fn enable(&mut self) {
+        self.enable = true
+    }
+}
+
 /// Kunai configuration structure to be used in userland
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -39,18 +59,22 @@ impl Default for Config {
 
         Self {
             output: "/dev/stdout".into(),
-            max_buffered_events: 256,
+            max_buffered_events: 1024,
             events,
         }
     }
 }
 
 impl Config {
-    pub fn validate(&self) -> Result<(), Error> {
-        if self.output != "/dev/stdout" {
-            return Err(Error::InvalidOutput(self.output.clone()));
-        }
+    pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
+        toml::to_string(self)
+    }
 
+    pub fn from_toml<S: AsRef<str>>(toml: S) -> Result<Self, toml::de::Error> {
+        toml::from_str(toml.as_ref())
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
         for e in self.events.iter() {
             let Ok(ty) = events::Type::from_str(&e.name) else {
                 return Err(Error::InvalidEvent(e.name.clone()));
@@ -62,21 +86,13 @@ impl Config {
         }
         Ok(())
     }
-}
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Event {
-    name: String,
-    enable: bool,
-}
-
-impl Config {
-    pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
-        toml::to_string(self)
+    pub(crate) fn enable_all(&mut self) {
+        self.events.iter_mut().for_each(|e| e.enable())
     }
 
-    pub fn from_toml<S: AsRef<str>>(toml: S) -> Result<Self, toml::de::Error> {
-        toml::from_str(toml.as_ref())
+    pub(crate) fn disable_all(&mut self) {
+        self.events.iter_mut().for_each(|e| e.disable())
     }
 }
 
