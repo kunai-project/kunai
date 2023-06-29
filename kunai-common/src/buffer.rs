@@ -162,7 +162,7 @@ bpf_target_code! {
 
             let len = cap_size(self.len, N);
 
-            let mut size = iov_len as u32;
+            let mut size = min(iov_len as u32, N as u32);
 
             if let Some(count) = count {
                 size = min(count as u32, size);
@@ -175,7 +175,7 @@ bpf_target_code! {
 
             if gen::bpf_probe_read_user(
                 self.buf[len as usize..N].as_mut_ptr() as *mut _,
-                min(size, N as u32),
+                size,
                 iov_base as *const _,
             ) < 0
             {
