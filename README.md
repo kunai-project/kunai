@@ -28,13 +28,9 @@ Kunai has been developped with [BPF CO-RE](https://nakryiko.com/posts/bpf-core-
 
 A simple expemple could be: `struct foo` has been renamed to `struct bar` between two versions, so even if the underlying probe's code handling the structure does not change, the probe needs to be aware the structure `bar` has the same layout as `foo`. 
 
-Making the eBPF probes working on yet unsupported kernels is often more compicated than this, but I hope you got the idea. All this to say that if Kunai does not work on your system, **don't freak out !** Simply **open an issue**, give your OS/kernel version and we will try to make that work for you.
+Making the eBPF probes working on yet unsupported kernels is often more compicated than this, but I hope you got the idea. All this to say that if Kunai does not work on your system, **don't freak out !**. Simply **open an issue**, give your **OS/kernel** version and we will try to make that work for you.
 
 So far, Kunai has been tested on the following **OS/kernels** with success. Feel free to make a PR with this table modified if you tested it sucessfully on other systems.
-
-## Minimum Kernel Version
-
-* Tested until: 5.4
 
 ## Prerequisites
 
