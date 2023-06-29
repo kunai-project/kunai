@@ -31,30 +31,6 @@ impl From<MapError> for ProbeError {
 }
 
 #[repr(C)]
-pub struct LocError {
-    pub line: u32,
-    pub err: ProbeError,
-}
-
-macro_rules! log_loc_err {
-    ($ctx:expr, $err:expr) => {
-        aya_log_ebpf::error!($ctx, "{}:{}", $err.err.name(), $err.line);
-    };
-}
-
-macro_rules! loc_error {
-    ($e: expr) => {
-        $crate::error::LocError::new(line!(), $e)
-    };
-}
-
-impl LocError {
-    pub fn new(line: u32, err: ProbeError) -> Self {
-        LocError { line, err }
-    }
-}
-
-#[repr(C)]
 #[derive(BpfError)]
 pub enum ProbeError {
     #[error("failed to get configuration")]

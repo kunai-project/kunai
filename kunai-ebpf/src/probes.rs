@@ -2,12 +2,12 @@ use crate::alloc;
 use crate::error::{self, *};
 use crate::util::*;
 
-use aya_bpf::{macros::*, BpfContext};
+use aya_bpf::macros::*;
 use aya_log_ebpf::*;
 
 use kunai_common::{
     bpf_utils::*,
-    co_re, config,
+    co_re,
     consts::*,
     events::{self, *},
     inspect_err,

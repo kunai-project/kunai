@@ -22,8 +22,8 @@ use std::path::PathBuf;
 
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
-use std::{fs, thread};
+
+use std::thread;
 use users::get_current_uid;
 use util::*;
 
@@ -225,8 +225,7 @@ impl EventProcessor {
         };
 
         thread::spawn(move || {
-            // the thread must drop CLONE_FS in order to be able to navigate
-            // in namespaces
+            // the thread must drop CLONE_FS in order to be able to navigate in namespaces
             unshare(libc::CLONE_FS).unwrap();
             while let Ok(mut enc) = ep.receiver.recv() {
                 ep.handle_event(&mut enc);
@@ -378,7 +377,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn json_execve(&mut self, mut info: StdEventInfo, event: &ExecveEvent) -> JsonValue {
+    fn json_execve(&mut self, info: StdEventInfo, event: &ExecveEvent) -> JsonValue {
         let ancestors = self.get_ancestors(&info);
 
         //let executable = event.data.executable.to_path_buf();
@@ -707,8 +706,8 @@ impl EventProcessor {
     }
 
     #[inline(always)]
-    fn handle_json_event(&mut self, j: JsonValue) {
-        writeln!(self.output, "{j}");
+    fn output_json(&mut self, j: JsonValue) {
+        writeln!(self.output, "{j}").expect("failed to write json event");
     }
 
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
@@ -717,15 +716,12 @@ impl EventProcessor {
         // we don't handle our own events
         if i.process.tgid as u32 == std::process::id() {
             debug!("skipping our event");
-            return;
         }
 
         let pid = i.process.tgid;
         let ns = i.process.namespaces.mnt;
         if let Err(e) = self.hcache.cache_ns(pid, ns) {
             debug!("failed to cache namespace pid={pid} ns={ns}: {e}");
-        } else {
-            debug!("successfully cached namespace pid={pid} ns={ns}");
         }
 
         let std_info = self.build_std_event_info(*i);
@@ -737,7 +733,7 @@ impl EventProcessor {
                 match event!(enc_event, ExecveEvent) {
                     Ok(e) => {
                         let e = self.json_execve(std_info, e);
-                        self.handle_json_event(e);
+                        self.output_json(e);
                     }
                     Err(e) => error!("failed to decode {} event: {:?}", etype, e),
                 }
@@ -746,7 +742,7 @@ impl EventProcessor {
             events::Type::MmapExec => match event!(enc_event, MmapExecEvent) {
                 Ok(e) => {
                     let e = self.json_mmap_exec(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -754,7 +750,7 @@ impl EventProcessor {
             events::Type::MprotectExec => match event!(enc_event, MprotectEvent) {
                 Ok(e) => {
                     let e = self.json_mprotect(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -762,7 +758,7 @@ impl EventProcessor {
             events::Type::Connect => match event!(enc_event, ConnectEvent) {
                 Ok(e) => {
                     let e = self.json_connect(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -770,7 +766,7 @@ impl EventProcessor {
             events::Type::DnsQuery => match event!(enc_event, DnsQueryEvent) {
                 Ok(e) => {
                     for e in self.json_dns_queries(std_info, e) {
-                        self.handle_json_event(e);
+                        self.output_json(e);
                     }
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -779,7 +775,7 @@ impl EventProcessor {
             events::Type::SendData => match event!(enc_event, SendEntropyEvent) {
                 Ok(e) => {
                     let e = self.json_send_data(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -787,7 +783,7 @@ impl EventProcessor {
             events::Type::InitModule => match event!(enc_event, InitModuleEvent) {
                 Ok(e) => {
                     let e = self.json_init_module(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -798,7 +794,7 @@ impl EventProcessor {
             | events::Type::Read => match event!(enc_event, ConfigEvent) {
                 Ok(e) => {
                     let e = self.json_rw_event(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -806,7 +802,7 @@ impl EventProcessor {
             events::Type::Mount => match event!(enc_event, MountEvent) {
                 Ok(e) => {
                     let e = self.json_mount_event(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -814,7 +810,7 @@ impl EventProcessor {
             events::Type::FileRename => match event!(enc_event, FileRenameEvent) {
                 Ok(e) => {
                     let e = self.json_file_rename(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -822,7 +818,7 @@ impl EventProcessor {
             events::Type::BpfProgLoad => match event!(enc_event, BpfProgLoadEvent) {
                 Ok(e) => {
                     let e = self.json_bpf_prog_load(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -830,7 +826,7 @@ impl EventProcessor {
             events::Type::Exit | events::Type::ExitGroup => match event!(enc_event, ExitEvent) {
                 Ok(e) => {
                     let e = self.json_exit(std_info, e);
-                    self.handle_json_event(e);
+                    self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -860,7 +856,6 @@ struct EventReader {
     batch: usize,
     pipe: VecDeque<EncodedEvent>,
     sender: Sender<EncodedEvent>,
-    config: Config,
     filter: Filter,
     stats: AyaHashMap<MapData, events::Type, u64>,
 }
@@ -885,7 +880,6 @@ impl EventReader {
             pipe: VecDeque::new(),
             batch: 0,
             sender,
-            config: config.clone(),
             filter,
             stats: stats_map,
         };
@@ -1189,19 +1183,33 @@ impl EventReader {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(long, help = "Enable debugging")]
+    debug: bool,
+
+    #[arg(
+        short,
+        long,
+        value_name = "FILE",
+        help = "Specify a configuration file to use. Command line options superseed the ones specified in the configuration file."
+    )]
     config: Option<PathBuf>,
 
     #[arg(long, help = "Prints a default configuration to stdout")]
     dump_config: bool,
 
-    #[arg(long, help = "Include events by name (comma separated)")]
-    include: Option<String>,
-
     #[arg(long, help = "Exclude events by name (comma separated)")]
     exclude: Option<String>,
 
-    #[arg(long, help = "Increase the maximum number of events eBPF can handle")]
+    #[arg(
+        long,
+        help = "Include events by name (comma separated). Superseeds any exclude filter."
+    )]
+    include: Option<String>,
+
+    #[arg(
+        long,
+        help = "Increase the size of the buffer shared between eBPF probes and userland"
+    )]
     max_buffered_events: Option<u16>,
 
     #[arg(short, long, action = clap::ArgAction::Count, help="Set verbosity level, repeat option for more verbosity.")]
@@ -1226,7 +1234,26 @@ async fn main() -> Result<(), anyhow::Error> {
         _ => {}
     }
 
+    let mut verifier_level = match std::env::var("VERIFIER_LOG_LEVEL") {
+        Ok(s) => match s.as_str() {
+            "debug" => VerifierLogLevel::DEBUG,
+            "verbose" => VerifierLogLevel::VERBOSE,
+            "disable" => VerifierLogLevel::DISABLE,
+            _ => VerifierLogLevel::STATS,
+        },
+        _ => VerifierLogLevel::STATS,
+    };
+
+    // handling debugging flag
+    if cli.debug {
+        log_level = LevelFilter::Debug;
+        verifier_level = VerifierLogLevel::DEBUG;
+    }
+
+    // building the logger
     Builder::new().filter_level(log_level).init();
+
+    // dumping configuration
     if cli.dump_config {
         let conf = Config {
             ..Default::default()
@@ -1281,25 +1308,6 @@ async fn main() -> Result<(), anyhow::Error> {
         ));
     }
 
-    // This will include your eBPF object file as raw bytes at compile-time and load it at
-    // runtime. This approach is recommended for most real-world use cases. If you would
-    // like to specify the eBPF program at runtime rather than at compile-time, you can
-    // reach for `Bpf::load_file` instead.
-    /*#[cfg(debug_assertions)]
-    let mut bpf = Bpf::load(include_bytes_aligned!(
-        "../../target/bpfel-unknown-none/debug/aya-sysmon"
-    ))?;*/
-    //#[cfg(debug_assertions)]
-    let verifier_level = match std::env::var("VERIFIER_LOG_LEVEL") {
-        Ok(s) => match s.as_str() {
-            "debug" => VerifierLogLevel::DEBUG,
-            "verbose" => VerifierLogLevel::VERBOSE,
-            "disable" => VerifierLogLevel::DISABLE,
-            _ => VerifierLogLevel::STATS,
-        },
-        _ => VerifierLogLevel::STATS,
-    };
-
     #[cfg(debug_assertions)]
     let mut bpf =
         BpfLoader::new()
@@ -1323,7 +1331,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
     BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
         .expect("failed to initialize bpf configuration");
-    info!("finished initializing config");
 
     // we start event reader and event processor before loading the programs
     // if we load the programs first we might have some event lost errors

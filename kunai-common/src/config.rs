@@ -1,5 +1,8 @@
 use crate::{bpf_target_code, events, not_bpf_target_code};
 
+// analyzer does not see both target so we can allow dead code
+// to prevent warnings to happen
+#[allow(dead_code)]
 const CONFIG_MAP_NAME: &str = "KUNAI_CONFIG_ARRAY";
 
 #[repr(C)]
@@ -11,6 +14,8 @@ pub struct Loader {
 not_bpf_target_code! {
     impl Loader {
         pub fn from_own_pid() -> Self {
+            // std::process::id returns the process ID which
+            // turns to be the equivalent of the tgid
             Loader{
                 tgid: std::process::id(),
             }
@@ -84,7 +89,6 @@ bpf_target_code! {
         pub fn is_event_enabled(&self, ty: events::Type) -> bool {
             self.filter.is_enabled(ty)
         }
-
     }
 }
 
