@@ -74,11 +74,9 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     if event.data.path.starts_with("/etc/") {
         event.init_from_current_task(Type::ReadConfig)?;
         pipe_event(ctx, event);
-    } else if config.is_event_enabled(Type::Read)
-        && !(event.data.path.starts_with("/proc/")
-            || event.data.path.starts_with("/sys/")
-            || event.data.path.starts_with("/usr/lib/"))
-    {
+    } else if config.is_event_enabled(Type::Read) && !event.data.path.starts_with("/proc/") {
+        // we filter out procfs because it generates too much events
+        // maybe let the choice through a configuration option
         event.init_from_current_task(Type::Read)?;
         pipe_event(ctx, event);
     }

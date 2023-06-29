@@ -225,8 +225,8 @@ impl Path {
             }
 
             let Ok(b) = self.get_byte(i) else {
-                return false;
-            };
+                        return false;
+                    };
 
             if b != start[i] {
                 return false;
@@ -351,7 +351,7 @@ not_bpf_target_code! {
 // BPF related implementations
 bpf_target_code! {
 
-use aya_bpf::helpers::gen;
+use aya_bpf::helpers::{gen};
 use crate::co_re::{self, core_read_kernel};
 
 type Result<T> = core::result::Result<T, Error>;
@@ -464,54 +464,6 @@ impl Path {
             Ok(())
         }
 
-
-        /*pub fn prepend_qstr_name(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
-            // needed so that the verifier knows self.len is bounded
-            let len = cap_size(self.len, MAX_PATH_LEN as u32);
-
-            // we need this check otherwise verifier fails with invalid numeric error
-            if qstr_len > MAX_NAME as u32 {
-                self.error = Some(Error::FileNameTooLong(name as u64, qstr_len));
-                return Err(Error::FileNameTooLong(name as u64, qstr_len));
-            }
-
-            // we check if we can append the qstr to the path
-            if len + qstr_len > MAX_PATH_LEN as u32 {
-                self.error = Some(Error::FilePathTooLong);
-                return Err(Error::FilePathTooLong);
-            }
-
-            // we reached max path depth
-            if self.depth == MAX_PATH_DEPTH {
-                self.error = Some(Error::ReachedMaxPathDepth);
-                return Err(Error::ReachedMaxPathDepth);
-            }
-
-            // we compute where we should put the qstr
-            let start = (self.buffer.len() - len as usize - qstr_len as usize) as isize;
-
-            // verifier massage
-            let k =
-            bound_value_for_verifier(start, 0, (self.buffer.len() as isize) - qstr_len as isize);
-
-            if unsafe {
-                gen::bpf_probe_read(
-                    self.buffer[(k as usize)..].as_mut_ptr() as *mut _,
-                    cap_size(qstr_len, MAX_NAME as u32),
-                    name as *const _,
-                )
-            } >= 0
-            {
-                self.len += qstr_len;
-                self.depth += 1;
-            } else {
-                self.error = Some(Error::RFPathSegment);
-                return Err(Error::RFPathSegment);
-            }
-
-            Ok(())
-        }*/
-
         #[inline(always)]
         fn space_left(&self) -> usize{
             self.buffer.len() - self.len()
@@ -541,11 +493,13 @@ impl Path {
 
             let dst = &mut self.buffer[i as usize..];
 
-             if gen::bpf_probe_read(
-                    dst.as_mut_ptr() as *mut _,
-                    size,
-                    name as *const _,
-                )
+            if gen::bpf_probe_read(
+                dst.as_mut_ptr() as *mut _,
+                // some probes were taking size out of stack discarding
+                // any previous checks so we force new value checking
+                min(qstr_len, MAX_NAME as u32),
+                name as *const _,
+            )
             >= 0
             {
                 self.len += size;
@@ -554,7 +508,6 @@ impl Path {
                 self.error = Some(Error::RFPathSegment);
                 return Err(Error::RFPathSegment);
             }
-
 
             Ok(())
         }

@@ -17,8 +17,7 @@ happy with what Sysmon for Linux offered so I decided to work on this. Maybe you
 
 # How it works
 
-All the kernel components of this project are running as eBPF programs (also
-called probes), so it could/should not harm your system. Kunai embeds numbers of probes to monitor relevant information for security monitoring. When the job is done on eBPF side, information is passed on to a userland program which is responsible for various things, such as re-ordering, enriching and correlating events.
+All the kernel components of this project are running as eBPF programs (also called probes). Kunai embeds numbers of probes to monitor relevant information for security monitoring. When the job is done on eBPF side, information is passed on to a userland program which is responsible for various things, such as re-ordering, enriching and correlating events.
 
 On the implementation side, Kunai is written for **99%** in Rust, leveraging the **awesome** [Aya library](https://github.com/aya-rs/aya) so everything you'll need to run is a standalone binary embedding both all the eBPF probes and the userland program.
 
