@@ -1,5 +1,2 @@
-[patch.'https://github.com/aya-rs/aya']
-#aya-obj = { git = "https://github.com/0xrawsec/aya-dev", branch = "fix-reloc-marysaka" }
-
 [workspace]
 members = ["kunai", "kunai-common", "xtask", "kunai-macros"]
