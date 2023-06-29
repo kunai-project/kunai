@@ -27,7 +27,7 @@ All the kernel components of this project are running as eBPF programs (also ca
 
 On the implementation side, Kunai is written for **99%** in Rust, leveraging the **awesome** [Aya library](https://github.com/aya-rs/aya) so everything you'll need to run is a standalone binary embedding both all the eBPF probes and the userland program.
 
-# What kind of events can I get
+# What kind of events can I get ?
 
 Please take a read to [events documentation](https://why.kunai.rocks/docs/category/kunai---events)
 
@@ -35,7 +35,7 @@ Please take a read to [events documentation](https://why.kunai.rocks/docs/catego
 
 Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
 
-# How to build the project
+# How to build the project ?
 
 Huuum ! Not that easy, all that work has been done with custom branches of [bpf-linker](https://github.com/aya-rs/bpf-linker).
 So until those branches gets merged into the mainstream branch I wouldn't recommend you trying to build this project.
