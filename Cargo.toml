@@ -1,2 +1,2 @@
 [workspace]
-members = ["kunai", "kunai-common", "xtask", "kunai-macros"]
+members = ["kunai", "kunai-common", "xtask"]

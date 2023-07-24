@@ -37,7 +37,7 @@ tokio = { version = "1.24", features = [
     "time",
 ], optional = true }
 thiserror = { version = "1.0", optional = true }
-kunai-macros = { path = "../kunai-macros" }
+kunai-macros = { path = "src/kunai-macros" }
 # part of tokio framework
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
