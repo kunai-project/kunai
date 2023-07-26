@@ -1,12 +1,14 @@
-![Kunai](assets/logo.svg)
+<div align="center"><img src="assets/logo.svg" width="500"/></div>
 
 [![Documentation][docs-badge]][docs-link]
 [![Downloads](https://img.shields.io/github/downloads/0xrawsec/kunai/total.svg?style=for-the-badge)]()
+[![GitHub tag (with filter)](https://img.shields.io/github/v/tag/0xrawsec/kunai?style=for-the-badge&label=version&color=green)](https://github.com/0xrawsec/kunai/releases/latest)
+[![Discord](https://img.shields.io/badge/Discord-chat-5865F2?style=for-the-badge&logo=discord)](https://discord.com/invite/AUMaBvHvNU)
 
 [docs-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=for-the-badge&logo=docsdotrs
 [docs-link]: https://why.kunai.rocks
 
-# Leitmotiv: being a weapon every ninja wants in its arsenal
+# Leitmotiv
 
 The goal behind this project is to bring relevant events to achieve 
 various monitoring tasks ranging from security monitoring to Threat Hunting on 
@@ -14,7 +16,7 @@ Linux based systems. If you are familiar with Sysmon on Windows, you can think o
 
 I imagine what you are thinking now: Hey man ! You've just re-invented the wheel, 
 Sysmon for Linux is already there ! Yes, that is true, but I was not really 
-happy with what Sysmon for Linux offered so I decided to work on this.
+happy with what Sysmon for Linux offered so I decided to bring this project up.
 
 ## What makes Kunai special ?
 
