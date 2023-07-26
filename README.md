@@ -1,6 +1,7 @@
 ![Kunai](assets/logo.svg)
 
-[![Documentaiton][docs-badge]][docs-link]
+[![Documentation][docs-badge]][docs-link]
+[![Downloads](https://img.shields.io/github/downloads/0xrawsec/whids/total.svg?style=for-the-badge)]()
 
 [docs-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=for-the-badge&logo=docsdotrs
 [docs-link]: https://why.kunai.rocks
