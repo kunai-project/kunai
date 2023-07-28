@@ -53,3 +53,8 @@ clap = { version = "4.3.4", features = ["derive"] }
 [[bin]]
 name = "kunai"
 path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
