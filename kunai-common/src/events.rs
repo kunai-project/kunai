@@ -503,7 +503,7 @@ not_bpf_target_code! {
             let info = unsafe { d.info() }.unwrap();
             assert!(matches!(info.etype, Type::Execve));
 
-            let mut dec_execve = unsafe { d.as_mut_event_with_data::<ExecveData>() }.unwrap();
+            let dec_execve = unsafe { d.as_mut_event_with_data::<ExecveData>() }.unwrap();
 
             assert_eq!(dec_execve.data.foo, 42);
             assert_eq!(dec_execve.data.bar, 4242);
