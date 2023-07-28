@@ -32,7 +32,9 @@ pub(crate) fn get_boot_time() -> DateTime<Utc> {
     if ret != 0 {
         panic!("failed to retrieve sysinfo");
     }
+
     // we have to work with seconds as sysinfo returns time since boot in seconds
+    #[allow(clippy::unnecessary_cast)]
     let boot_time_sec = Utc::now()
         .timestamp()
         .checked_sub(info.uptime as i64)
