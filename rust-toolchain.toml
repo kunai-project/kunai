@@ -1,0 +1,4 @@
+[toolchain]
+# does not work (yet) for 1.71
+channel = "1.70"
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]

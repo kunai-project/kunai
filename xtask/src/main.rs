@@ -1,7 +1,5 @@
-mod build_ebpf;
-mod run;
-
-use std::process::exit;
+mod ebpf;
+mod user;
 
 use clap::Parser;
 
@@ -13,21 +11,27 @@ pub struct Options {
 
 #[derive(Debug, Parser)]
 enum Command {
-    BuildEbpf(build_ebpf::Options),
-    Run(run::Options),
+    BuildEbpf(ebpf::BuildOptions),
+    Build(user::BuildOptions),
+    Run(user::RunOptions),
+    Check(user::BuildOptions),
 }
 
-fn main() {
+static EBPF_DIR: &str = "kunai-ebpf";
+
+fn main() -> Result<(), anyhow::Error> {
     let opts = Options::parse();
 
     use Command::*;
-    let ret = match opts.command {
-        BuildEbpf(opts) => build_ebpf::build_ebpf(opts),
-        Run(opts) => run::run(opts),
-    };
-
-    if let Err(e) = ret {
-        eprintln!("{e:#}");
-        exit(1);
+    match opts.command {
+        BuildEbpf(opts) => ebpf::build(EBPF_DIR, &opts)?,
+        Build(opts) => user::build_all(EBPF_DIR, &opts)?,
+        Run(opts) => user::run(EBPF_DIR, &opts)?,
+        Check(opts) => {
+            user::check(&opts)?;
+            ebpf::check(EBPF_DIR, &opts.into())?;
+        }
     }
+
+    Ok(())
 }
