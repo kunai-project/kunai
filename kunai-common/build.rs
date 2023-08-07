@@ -1,30 +1,25 @@
+use bindgen::builder;
 use std::{path::Path, process::Command};
 
 fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q) {
     let out_file = out_dir.as_ref().join("gen.rs");
 
+    let bindings = builder()
+        .header(file.as_ref().to_string_lossy())
+        .layout_tests(false) // --no-layout-tests
+        .use_core() // --use-core
+        .allowlist_function("shim_.*")
+        .size_t_is_usize(false) // --no-size_t-is-usize
+        .clang_arg("-target")
+        .clang_arg("bpf")
+        .generate()
+        .expect("failed at generating bindings");
+
     std::fs::create_dir_all(out_dir).expect("failed to create Rust shim output directory");
 
-    let s = Command::new("bindgen")
-        .arg("--no-layout-tests")
-        .arg("--use-core")
-        .arg("--allowlist-function")
-        .arg("shim_.*")
-        .arg("--no-size_t-is-usize")
-        .arg("-o")
-        .arg(&out_file)
-        .arg(file.as_ref())
-        .arg("--")
-        .arg("-target")
-        .arg("bpf")
-        .status()
-        .expect("failed to execute bindgen");
-
-    if !s.success() {
-        panic!("bindgen command failed");
-    }
-
-    //println!("cargo:rerun-if-changed={}", out_file.to_string_lossy());
+    bindings
+        .write_to_file(out_file)
+        .expect("failed at writing generated bindings");
 }
 
 fn main() {

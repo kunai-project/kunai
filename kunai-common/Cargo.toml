@@ -17,6 +17,9 @@ user = [
     "thiserror",
 ]
 
+[build-dependencies]
+bindgen = "0.66"
+
 [dependencies]
 # Non Aya deps
 lru-st = { git = "https://github.com/0xrawsec/lru-st/", branch = "master", features = [
