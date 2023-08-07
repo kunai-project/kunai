@@ -155,7 +155,7 @@ pub type user_msghdr = CoRe<gen::user_msghdr>;
 impl user_msghdr {
     rust_shim_user_impl!(pub, user_msghdr, msg_name, *mut c_void);
     rust_shim_user_impl!(pub, user_msghdr, msg_iov, iovec);
-    rust_shim_user_impl!(pub, user_msghdr, msg_iovlen, u32);
+    rust_shim_user_impl!(pub, user_msghdr, msg_iovlen, u64);
 }
 
 #[allow(non_camel_case_types)]
