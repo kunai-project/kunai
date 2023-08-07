@@ -15,12 +15,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Restore cached build tools
+      uses: actions/cache@v3
+      with:
+        path: build-tools # path where build-tools are installed
+        key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
+            
     - name: Install system tools
       run: |
         sudo apt update
         sudo apt install -y cmake ninja-build clang lld git libbpf-dev
+        
     - name: Build-Tools (LLVM and bpf-linker)
       run: cargo xtask build-tools
+
+    - name: Save cached build tools
+      uses: actions/cache@v3
+      with:
+        path: build-tools # path where build-tools are installed
+        key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
+      
     - name: Build (eBPF and userland)
       run: cargo xtask build
