@@ -1,8 +1,8 @@
 name: CI
 
-on:
+on: 
   push:
-    branches: [ "main" ]
+    branches: [ "disable" ]
   pull_request:
     branches: [ "main" ]
 
