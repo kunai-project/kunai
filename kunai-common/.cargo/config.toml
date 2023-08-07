@@ -1,0 +1,4 @@
+[build]
+target-dir = "../target"
+# needed so that code analysis works on that folder
+target = ["x86_64-unknown-linux-gnu", "bpfel-unknown-none"]

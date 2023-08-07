@@ -1,0 +1,11 @@
+[build]
+target = ["x86_64-unknown-linux-gnu"]
+
+[alias]
+xtask = "run --package xtask --"
+check-ws = "xtask check"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

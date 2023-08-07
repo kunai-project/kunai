@@ -2,6 +2,8 @@ use std::{path::PathBuf, process::Command, vec};
 
 use clap::Parser;
 
+use crate::utils;
+
 #[derive(Debug, Copy, Clone)]
 pub enum BpfTarget {
     BpfEl,
@@ -70,6 +72,10 @@ fn cargo(
 
     if let Some(linker) = &opts.linker {
         rustflags.push(format!("-C linker={linker}"));
+    } else if let Ok(linker) =
+        utils::find_first_in("./build-tools", "bpf-linker").and_then(|p| p.canonicalize())
+    {
+        rustflags.push(format!("-C linker={}", linker.to_string_lossy()));
     }
 
     // Command::new creates a child process which inherits all env variables. This means env
