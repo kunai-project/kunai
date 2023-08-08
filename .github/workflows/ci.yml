@@ -18,12 +18,26 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    - name: Restore cached build tools
+    - name: Cache build tools
       uses: actions/cache@v3
       with:
         path: build-tools # path where build-tools are installed
         key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
-            
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo
+          target
+        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install Rust and target platforms
+      run: rustup toolchain install stable
+      env:
+        CARGO_HOME: ${{ runner.workspace }}/.cargo
+        RUSTUP_HOME: ${{ runner.workspace }}/.rustup
+          
     - name: Install system tools
       run: |
         sudo apt update
@@ -32,11 +46,11 @@ jobs:
     - name: Build-Tools (LLVM and bpf-linker)
       run: cargo xtask build-tools
 
-    - name: Save cached build tools
-      uses: actions/cache@v3
-      with:
-        path: build-tools # path where build-tools are installed
-        key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
+    #- name: Save cached build tools
+    #  uses: actions/cache@v3
+    #  with:
+    #    path: build-tools # path where build-tools are installed
+    #    key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
       
     - name: Build (eBPF and userland)
       run: cargo xtask build
