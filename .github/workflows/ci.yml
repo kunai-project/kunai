@@ -29,14 +29,9 @@ jobs:
       with:
         path: |
           ~/.cargo
+          ~/.rustup
           target
         key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Install Rust and target platforms
-      run: rustup toolchain install stable
-      env:
-        CARGO_HOME: ${{ runner.workspace }}/.cargo
-        RUSTUP_HOME: ${{ runner.workspace }}/.rustup
           
     - name: Install system tools
       run: |
