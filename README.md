@@ -42,15 +42,15 @@ Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
 
 # How to build the project ?
 
-The project is a little bit tricky to build because it uses cutting edge Aya and [bpf-linker](https://github.com/aya-rs/bpf-linker) features.
-In order to provide a unique binary you can run on any kernel kunai uses BPF CO-RE, which requires `bpf-linker` to support Debugging Information to generate proper BTF information. To compile `bpf-linker` you will need also to compile a custom version of LLVM, that includes some specific patches. Do not run away, because we have
-made this process very easy.
+Before going further, I have to remind you that there is a distribution agnostic (built with **musl**) pre-compiled version of kunai available [in release page](https://github.com/0xrawsec/kunai/releases/latest). So if you just want to give a try to kunai, you probably don't need to build the project yourself.
+The project is a little bit tricky to build as it uses cutting edge Aya and [bpf-linker](https://github.com/aya-rs/bpf-linker) features.
+In order to provide a unique binary you can run on any kernel kunai uses **BPF CO-RE**, which requires `bpf-linker` to support Debugging Information to generate proper **BTF** information. To compile `bpf-linker` you will need also to compile a custom version of LLVM, which includes some specific patches. Please do not run away now, because we have made this process very easy.
 
 ## Requirements
 
 Before being able to build everything, you need to install a couple of tools.
 
-* to build any Rust project, you need [`rustup`](https://www.rust-lang.org/tools/install)
+* to build many Rust projects (this one included), you need [`rustup`](https://www.rust-lang.org/tools/install)
 * to build bpf-linker/LLVM need: `cmake`, `ninja`, `git`, `clang`, `lld`
 * to build kunai you need: `clang`, `libbpf-dev`
 
