@@ -1,6 +1,6 @@
 <div align="center"><img src="assets/logo.svg" width="500"/></div>
 
-![CI](https://img.shields.io/github/actions/workflow/status/0xrawsec/kunai/ci.yml?style=for-the-badge)
+[![CI](https://img.shields.io/github/actions/workflow/status/0xrawsec/kunai/ci.yml?style=for-the-badge)](https://github.com/0xrawsec/kunai/actions/workflows/ci.yml)
 [![Documentation][docs-badge]][docs-link]
 [![Downloads](https://img.shields.io/github/downloads/0xrawsec/kunai/total.svg?style=for-the-badge)]()
 [![GitHub tag (with filter)](https://img.shields.io/github/v/tag/0xrawsec/kunai?style=for-the-badge&label=version&color=green)](https://github.com/0xrawsec/kunai/releases/latest)
