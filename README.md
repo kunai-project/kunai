@@ -46,7 +46,7 @@ The project is a little bit tricky to build because it uses cutting edge Aya and
 In order to provide a unique binary you can run on any kernel kunai uses BPF CO-RE, which requires `bpf-linker` to support Debugging Information to generate proper BTF information. To compile `bpf-linker` you will need also to compile a custom version of LLVM, that includes some specific patches. Do not run away, because we have
 made this process very easy.
 
-## Requirements
+## Requirements
 
 Before being able to build everything, you need to install a couple of tools.
 
