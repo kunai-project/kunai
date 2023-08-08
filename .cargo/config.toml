@@ -2,7 +2,7 @@
 target = ["x86_64-unknown-linux-gnu"]
 
 [alias]
-xtask = "run --package xtask --"
+xtask = "run --package xtask --release --"
 check-ws = "xtask check"
 
 [profile.release]
