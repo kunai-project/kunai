@@ -18,11 +18,14 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
+    - id: cache-key
+      run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
+
     - name: Cache build tools
       uses: actions/cache@v3
       with:
         path: build-tools # path where build-tools are installed
-        key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
+        key: ${{ steps.cache-key.outputs.cache-key }}
 
     - name: Cache Rust dependencies
       uses: actions/cache@v3
