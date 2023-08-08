@@ -1,10 +1,10 @@
 <div align="center"><img src="assets/logo.svg" width="500"/></div>
 
+![CI](https://img.shields.io/github/actions/workflow/status/0xrawsec/kunai/ci.yml?style=for-the-badge)
 [![Documentation][docs-badge]][docs-link]
 [![Downloads](https://img.shields.io/github/downloads/0xrawsec/kunai/total.svg?style=for-the-badge)]()
 [![GitHub tag (with filter)](https://img.shields.io/github/v/tag/0xrawsec/kunai?style=for-the-badge&label=version&color=green)](https://github.com/0xrawsec/kunai/releases/latest)
 [![Discord](https://img.shields.io/badge/Discord-chat-5865F2?style=for-the-badge&logo=discord)](https://discord.com/invite/AUMaBvHvNU)
-![CI](https://img.shields.io/github/actions/workflow/status/0xrawsec/kunai/ci.yml?style=for-the-badge)
 
 
 [docs-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=for-the-badge&logo=docsdotrs
@@ -42,7 +42,51 @@ Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
 
 # How to build the project ?
 
-Empty
+The project is a little bit tricky to build because it uses cutting edge Aya and [bpf-linker](https://github.com/aya-rs/bpf-linker) features.
+In order to provide a unique binary you can run on any kernel kunai uses BPF CO-RE, which requires `bpf-linker` to support Debugging Information to generate proper BTF information. To compile `bpf-linker` you will need also to compile a custom version of LLVM, that includes some specific patches. Do not run away, because we have
+made this process very easy.
+
+## Requirements
+
+Before being able to build everything, you need to install a couple of tools.
+
+* to build any Rust project, you need [`rustup`](https://www.rust-lang.org/tools/install)
+* to build bpf-linker/LLVM need: `cmake`, `ninja`, `git`, `clang`, `lld`
+* to build kunai you need: `clang`, `libbpf-dev`
+
+Example of commands to install requirements on Ubuntu/Debian:
+```
+sudo apt update
+sudo apt install -y cmake ninja-build clang lld git libbpf-dev
+```
+
+## Building build-tools
+
+Now the only thing you need is to run a command and brew a coffee because the first LLVM compilation takes time.
+
+```
+cargo xtask build-tools
+```
+
+After a little while, you get the custom `bpf-linker` installed in `build-tools` directory in kunai's root directory.
+Please note that this step absolutely does not affect any prior `bpf-linker` installation made with `cargo`.
+
+NB: do not delete the `build-tools` directory, unless you want to compile bpf-linker/LLVM again from scratch.
+
+## Building kunai
+
+Building debug version
+```
+cargo xtask build
+# find your executable in: ./target/x86_64-unknown-linux-musl/debug/kunai
+```
+
+Building release version (harder, better, faster, stronger)
+```
+cargo xtask build --release
+# find your executable in: ./target/x86_64-unknown-linux-musl/release/kunai
+```
+
 
 # Acknowledgements
 
