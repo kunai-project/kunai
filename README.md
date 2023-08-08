@@ -43,8 +43,8 @@ Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
 # How to build the project ?
 
 Before going further, I have to remind you that there is a distribution agnostic (built with **musl**) pre-compiled version of kunai available [in release page](https://github.com/0xrawsec/kunai/releases/latest). So if you just want to give a try to kunai, you probably don't need to build the project yourself.
-The project is a little bit tricky to build as it uses cutting edge Aya and [bpf-linker](https://github.com/aya-rs/bpf-linker) features.
-In order to provide a unique binary you can run on any kernel kunai uses **BPF CO-RE**, which requires `bpf-linker` to support Debugging Information to generate proper **BTF** information. To compile `bpf-linker` you will need also to compile a custom version of LLVM, which includes some specific patches. Please do not run away now, because we have made this process very easy.
+
+The project is a little bit tricky to build as it uses cutting edge Aya and [bpf-linker](https://github.com/aya-rs/bpf-linker) features. In order to provide a unique binary you can run on any kernel kunai uses **BPF CO-RE**, which requires `bpf-linker` to support Debugging Information to generate proper **BTF** information. To compile `bpf-linker` you will need also to compile a custom version of LLVM, which includes some specific patches. Please do not run away now, because we have made this process very easy.
 
 ## Requirements
 
@@ -74,6 +74,8 @@ Please note that this step absolutely does not affect any prior `bpf-linker` ins
 **NB**: do not delete the `build-tools` directory, unless you want to compile bpf-linker/LLVM again from scratch.
 
 ## Building kunai
+
+Once you have the **build-tools** ready, you don't need to build them again. You can now build the project with **xtask**, a cargo command (specific to this project) to make your life easier.
 
 Building debug version
 ```
