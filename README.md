@@ -68,10 +68,10 @@ Now the only thing you need is to run a command and brew a coffee because the fi
 cargo xtask build-tools
 ```
 
-After a little while, you get the custom `bpf-linker` installed in `build-tools` directory in kunai's root directory.
+After a little while, you get the custom `bpf-linker` installed in `build-tools` directory within **kunai's root directory**.
 Please note that this step absolutely does not affect any prior `bpf-linker` installation made with `cargo`.
 
-NB: do not delete the `build-tools` directory, unless you want to compile bpf-linker/LLVM again from scratch.
+**NB**: do not delete the `build-tools` directory, unless you want to compile bpf-linker/LLVM again from scratch.
 
 ## Building kunai
 
