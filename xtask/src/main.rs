@@ -1,5 +1,6 @@
 mod ebpf;
-mod linker;
+mod git;
+mod tools;
 mod user;
 mod utils;
 
@@ -19,7 +20,7 @@ enum Command {
     Build(user::BuildOptions),
     Run(user::RunOptions),
     Check(user::BuildOptions),
-    BuildTools,
+    BuildTools(tools::Options),
 }
 
 static EBPF_DIR: &str = "kunai-ebpf";
@@ -37,32 +38,47 @@ fn main() -> Result<(), anyhow::Error> {
             user::check(&opts)?;
             ebpf::check(EBPF_DIR, &opts.into())?;
         }
-        BuildTools => {
+        BuildTools(opts) => {
+            // checking we have the tools we need
+            utils::check_tools(vec!["git"])?;
+
             let pwd = std::env::current_dir().unwrap();
             let bt_root = PathBuf::from(BUILD_TOOLS);
 
-            let llvm_dir = bt_root.join("llvm-project");
             // specific branch we need to build linker
             // this is Aya's rustc LLVM fork, it is used to integrate very
             // specific LLVM patches faster than LLVM project
-            linker::sync_repo(
-                "rustc/16.0-2023-06-05",
-                "https://github.com/aya-rs/llvm-project",
-                &llvm_dir,
-            )?;
+            let llvm_repo = "https://github.com/aya-rs/llvm-project";
+            let llvm_branch = "rustc/16.0-2023-06-05";
+            let llvm_dir = bt_root.join("llvm-project");
 
-            linker::build_llvm(&llvm_dir)?;
+            if opts.action_cache_key {
+                print!(
+                    "build-tools-{}",
+                    git::last_commit_id(llvm_repo, llvm_branch)?
+                );
+                return Ok(());
+            }
+
+            println!("Synchronizing repo:{llvm_repo} branch:{llvm_branch}");
+            git::sync(llvm_branch, llvm_repo, &llvm_dir)?;
+
+            println!("Building LLVM");
+            tools::build_llvm(&llvm_dir)?;
 
             let linker_dir = bt_root.join("bpf-linker");
+            let linker_repo = "https://github.com/0xrawsec/bpf-linker-davibe.git";
+            let linker_branch = "fix-di";
+
+            // we hacked Cargo.toml so we don't want this to block our git command
+            git::reset(linker_repo, &linker_dir)?;
+
+            println!("Synchronizing repo:{linker_repo} branch:{linker_branch}");
             // linker branch supporting Debug Information (DI)
-            linker::sync_repo(
-                "fix-di",
-                "https://github.com/0xrawsec/bpf-linker-davibe.git",
-                &linker_dir,
-            )?;
+            git::sync(linker_branch, linker_repo, &linker_dir)?;
 
             let llvm_build_dir = pwd.join(&llvm_dir).join("build");
-            linker::build_linker(llvm_build_dir, linker_dir)?;
+            tools::build_linker(llvm_build_dir, linker_dir)?;
         }
     }
 

@@ -31,3 +31,11 @@ pub fn find_first_in<T: AsRef<Path>>(path: T, _match: &str) -> std::io::Result<P
 
     Err(std::io::ErrorKind::NotFound.into())
 }
+
+pub fn check_tools(tools: Vec<&str>) -> Result<(), anyhow::Error> {
+    for t in tools.iter() {
+        which::which(t)
+            .map_err(|e| anyhow::Error::msg(format!("could not retrieve path to {}: {}", t, e)))?;
+    }
+    Ok(())
+}

@@ -1,78 +1,11 @@
+use crate::utils;
+use clap::Parser;
 use std::path::Path;
 
-use anyhow::anyhow;
-
-fn git_reset<P: AsRef<Path>>(repo: &str, outdir: P) -> Result<(), anyhow::Error> {
-    let status = std::process::Command::new("git")
-        .current_dir(outdir)
-        .arg("reset")
-        .arg("--hard")
-        .arg("HEAD")
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("failed to reset repository {repo}"));
-    }
-
-    Ok(())
-}
-
-fn git_pull<P: AsRef<Path>>(repo: &str, outdir: P) -> Result<(), anyhow::Error> {
-    let status = std::process::Command::new("git")
-        .current_dir(outdir)
-        .arg("pull")
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("failed to pull repository {repo}"));
-    }
-
-    Ok(())
-}
-
-fn git_clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
-    let outdir = outdir.as_ref();
-
-    let status = std::process::Command::new("git")
-        .arg("clone")
-        .arg("--depth")
-        .arg("1")
-        .arg("--single-branch")
-        .arg("--branch")
-        .arg(branch)
-        .arg(repo)
-        .arg(outdir.to_string_lossy().to_string())
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("failed to clone repository {repo}"));
-    }
-
-    Ok(())
-}
-
-pub fn sync_repo<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
-    check_tools(vec!["git"])?;
-
-    let outdir = outdir.as_ref();
-
-    if outdir.exists() {
-        // remove any kind of local change
-        git_reset(repo, outdir)?;
-
-        // we attempt to git pull the last changes
-        return git_pull(repo, outdir);
-    }
-
-    git_clone(branch, repo, outdir)
-}
-
-fn check_tools(tools: Vec<&str>) -> Result<(), anyhow::Error> {
-    for t in tools.iter() {
-        which::which(t)
-            .map_err(|e| anyhow::Error::msg(format!("could not retrieve path to {}: {}", t, e)))?;
-    }
-    Ok(())
+#[derive(Debug, Parser)]
+pub struct Options {
+    #[clap(long)]
+    pub action_cache_key: bool,
 }
 
 pub fn build_llvm<P: AsRef<Path>>(llvm_proj_dir: P) -> Result<(), anyhow::Error> {
@@ -81,7 +14,7 @@ pub fn build_llvm<P: AsRef<Path>>(llvm_proj_dir: P) -> Result<(), anyhow::Error>
     let src_dir = outdir.join("llvm");
     let build_dir = outdir.join("build");
 
-    check_tools(vec!["cmake", "ninja", "clang", "clang++"])?;
+    utils::check_tools(vec!["cmake", "ninja", "clang", "clang++"])?;
 
     let status = std::process::Command::new("cmake")
         .arg("-S")
