@@ -18,15 +18,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    - id: cache-key
-      run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
-
-    - name: Cache build tools
-      uses: actions/cache@v3
-      with:
-        path: build-tools # path where build-tools are installed
-        key: ${{ steps.cache-key.outputs.cache-key }}
-
+    # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
       uses: actions/cache@v3
       with:
@@ -35,6 +27,15 @@ jobs:
           ~/.rustup
           target
         key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+
+    - id: cache-key
+      run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache build tools
+      uses: actions/cache@v3
+      with:
+        path: build-tools # path where build-tools are installed
+        key: ${{ steps.cache-key.outputs.cache-key }}
           
     - name: Install system tools
       run: |
