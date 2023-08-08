@@ -40,8 +40,7 @@ Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
 
 # How to build the project ?
 
-Huuum ! Not that easy, all that work has been done with custom branches of [bpf-linker](https://github.com/aya-rs/bpf-linker).
-So until those branches gets merged into the mainstream branch I wouldn't recommend you trying to build this project.
+Empty
 
 # Acknowledgements
 
