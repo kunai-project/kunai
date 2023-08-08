@@ -89,7 +89,7 @@ pub fn build_llvm<P: AsRef<Path>>(llvm_proj_dir: P) -> Result<(), anyhow::Error>
         .arg("-B")
         .arg(&build_dir)
         .arg("-GNinja")
-        .arg("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
+        .arg("-DCMAKE_BUILD_TYPE=Release")
         .arg("-DCMAKE_C_COMPILER=clang")
         .arg("-DCMAKE_CXX_COMPILER=clang++")
         .arg("-DLLVM_ENABLE_ASSERTIONS=ON")
