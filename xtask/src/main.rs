@@ -45,7 +45,7 @@ fn main() -> Result<(), anyhow::Error> {
             // specific branch we need to build linker
             // this is Aya's rustc LLVM fork, it is used to integrate very
             // specific LLVM patches faster than LLVM project
-            linker::git_clone(
+            linker::sync_repo(
                 "rustc/16.0-2023-06-05",
                 "https://github.com/aya-rs/llvm-project",
                 &llvm_dir,
@@ -55,7 +55,7 @@ fn main() -> Result<(), anyhow::Error> {
 
             let linker_dir = bt_root.join("bpf-linker");
             // linker branch supporting Debug Information (DI)
-            linker::git_clone(
+            linker::sync_repo(
                 "fix-di",
                 "https://github.com/0xrawsec/bpf-linker-davibe.git",
                 &linker_dir,

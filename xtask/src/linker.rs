@@ -1,13 +1,37 @@
 use std::path::Path;
 
-pub fn git_clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
-    let outdir = outdir.as_ref();
+use anyhow::anyhow;
 
-    if outdir.exists() {
-        return Ok(());
+fn git_reset<P: AsRef<Path>>(repo: &str, outdir: P) -> Result<(), anyhow::Error> {
+    let status = std::process::Command::new("git")
+        .current_dir(outdir)
+        .arg("reset")
+        .arg("--hard")
+        .arg("HEAD")
+        .status()?;
+
+    if !status.success() {
+        return Err(anyhow!("failed to reset repository {repo}"));
     }
 
-    check_tools(vec!["git"])?;
+    Ok(())
+}
+
+fn git_pull<P: AsRef<Path>>(repo: &str, outdir: P) -> Result<(), anyhow::Error> {
+    let status = std::process::Command::new("git")
+        .current_dir(outdir)
+        .arg("pull")
+        .status()?;
+
+    if !status.success() {
+        return Err(anyhow!("failed to pull repository {repo}"));
+    }
+
+    Ok(())
+}
+
+fn git_clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
+    let outdir = outdir.as_ref();
 
     let status = std::process::Command::new("git")
         .arg("clone")
@@ -21,12 +45,26 @@ pub fn git_clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<
         .status()?;
 
     if !status.success() {
-        return Err(anyhow::Error::msg(format!(
-            "failed to clone repository {repo}"
-        )));
+        return Err(anyhow!("failed to clone repository {repo}"));
     }
 
     Ok(())
+}
+
+pub fn sync_repo<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
+    check_tools(vec!["git"])?;
+
+    let outdir = outdir.as_ref();
+
+    if outdir.exists() {
+        // remove any kind of local change
+        git_reset(repo, outdir)?;
+
+        // we attempt to git pull the last changes
+        return git_pull(repo, outdir);
+    }
+
+    git_clone(branch, repo, outdir)
 }
 
 fn check_tools(tools: Vec<&str>) -> Result<(), anyhow::Error> {
@@ -51,7 +89,7 @@ pub fn build_llvm<P: AsRef<Path>>(llvm_proj_dir: P) -> Result<(), anyhow::Error>
         .arg("-B")
         .arg(&build_dir)
         .arg("-GNinja")
-        .arg("-DCMAKE_BUILD_TYPE=Release")
+        .arg("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
         .arg("-DCMAKE_C_COMPILER=clang")
         .arg("-DCMAKE_CXX_COMPILER=clang++")
         .arg("-DLLVM_ENABLE_ASSERTIONS=ON")
