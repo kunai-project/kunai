@@ -36,7 +36,7 @@ impl LLVMBuilder {
                 "-DCMAKE_INSTALL_PREFIX={}",
                 self.install_dir.to_string_lossy()
             ))
-            .arg("-DCMAKE_BUILD_TYPE=Release")
+            .arg("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
             .arg("-DCMAKE_C_COMPILER=clang")
             .arg("-DCMAKE_CXX_COMPILER=clang++")
             .arg("-DLLVM_ENABLE_ASSERTIONS=ON")
