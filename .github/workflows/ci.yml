@@ -35,8 +35,8 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          build-tools/llvm-install # path where LLVM is installed (we don't keep source/build)
-          build-tools/bpf-linker # where linker code/target are
+          build-tools/llvm-install
+          build-tools/bpf-linker
         key: ${{ steps.cache-key.outputs.cache-key }}
           
     - name: Install system tools
