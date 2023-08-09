@@ -59,19 +59,26 @@ fn main() -> Result<(), anyhow::Error> {
                 return Ok(());
             }
 
-            println!("Synchronizing repo:{llvm_repo} branch:{llvm_branch}");
-            git::sync(llvm_branch, llvm_repo, &llvm_dir)?;
+            // used to test LLVM installation
+            let llvm_config = llvm_install.join("bin").join("llvm-config");
+            if !llvm_config.is_file() || opts.force_llvm_build {
+                println!("Synchronizing repo:{llvm_repo} branch:{llvm_branch}");
+                git::sync(llvm_branch, llvm_repo, &llvm_dir)?;
 
-            println!("Building LLVM");
-            let llvm_builder = tools::LLVMBuilder::new(&llvm_dir, &llvm_install);
-            llvm_builder.build()?;
+                println!("Building LLVM");
+                let llvm_builder = tools::LLVMBuilder::new(&llvm_dir, &llvm_install);
+                llvm_builder.build()?;
+            }
 
             let linker_dir = bt_root.join("bpf-linker");
             let linker_repo = "https://github.com/0xrawsec/bpf-linker-davibe.git";
             let linker_branch = "fix-di";
 
-            // we hacked Cargo.toml so we don't want this to block our git command
-            git::reset(linker_repo, &linker_dir)?;
+            if linker_dir.is_dir() {
+                println!("Resetting linker directory");
+                // we hacked Cargo.toml so we don't want this to block our git command
+                git::reset(linker_repo, &linker_dir)?;
+            }
 
             println!("Synchronizing repo:{linker_repo} branch:{linker_branch}");
             // linker branch supporting Debug Information (DI)

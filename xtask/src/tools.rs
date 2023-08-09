@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 pub struct Options {
     #[clap(long)]
     pub action_cache_key: bool,
+    #[clap(long)]
+    pub force_llvm_build: bool,
 }
 
 pub struct LLVMBuilder {
