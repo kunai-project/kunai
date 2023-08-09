@@ -18,6 +18,11 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
+    - name: Install system tools
+      run: |
+        sudo apt update
+        sudo apt install -y cmake ninja-build clang lld git libbpf-dev
+
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
       uses: actions/cache@v3
@@ -38,12 +43,7 @@ jobs:
           build-tools/llvm-install
           build-tools/bpf-linker
         key: ${{ steps.cache-key.outputs.cache-key }}
-          
-    - name: Install system tools
-      run: |
-        sudo apt update
-        sudo apt install -y cmake ninja-build clang lld git libbpf-dev
-        
+              
     - name: Build-Tools (LLVM and bpf-linker)
       run: cargo xtask build-tools
 
