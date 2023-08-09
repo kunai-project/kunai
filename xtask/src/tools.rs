@@ -1,6 +1,5 @@
-use crate::utils;
 use clap::Parser;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 pub struct Options {
@@ -8,51 +7,70 @@ pub struct Options {
     pub action_cache_key: bool,
 }
 
-pub fn build_llvm<P: AsRef<Path>>(llvm_proj_dir: P) -> Result<(), anyhow::Error> {
-    let outdir = llvm_proj_dir.as_ref();
-
-    let src_dir = outdir.join("llvm");
-    let build_dir = outdir.join("build");
-
-    utils::check_tools(vec!["cmake", "ninja", "clang", "clang++"])?;
-
-    let status = std::process::Command::new("cmake")
-        .arg("-S")
-        .arg(src_dir)
-        .arg("-B")
-        .arg(&build_dir)
-        .arg("-GNinja")
-        .arg("-DCMAKE_BUILD_TYPE=Release")
-        .arg("-DCMAKE_C_COMPILER=clang")
-        .arg("-DCMAKE_CXX_COMPILER=clang++")
-        .arg("-DLLVM_ENABLE_ASSERTIONS=ON")
-        .arg("-DLLVM_TARGETS_TO_BUILD=BPF")
-        .arg("-DLLVM_USE_LINKER=lld")
-        .arg("-DLLVM_INSTALL_UTILS=ON")
-        .arg("-DLLVM_BUILD_LLVM_DYLIB=ON")
-        .arg("-DLLVM_LINK_LLVM_DYLIB=ON")
-        .arg("-DLLVM_ENABLE_PROJECTS=")
-        .arg("-DLLVM_ENABLE_RUNTIMES=")
-        .arg("-GNinja")
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow::Error::msg("failed at configuring LLVM build"));
-    }
-
-    let status = std::process::Command::new("cmake")
-        .arg("--build")
-        .arg(&build_dir)
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow::Error::msg("failed at building LLVM"));
-    }
-
-    Ok(())
+pub struct LLVMBuilder {
+    pub project_dir: PathBuf,
+    pub install_dir: PathBuf,
 }
 
-pub fn build_linker<P: AsRef<Path>>(llvm_build_dir: P, linker_dir: P) -> Result<(), anyhow::Error> {
+impl LLVMBuilder {
+    pub fn new<T: AsRef<Path>, U: AsRef<Path>>(project_dir: T, install_dir: U) -> Self {
+        Self {
+            project_dir: project_dir.as_ref().to_path_buf(),
+            install_dir: install_dir.as_ref().to_path_buf(),
+        }
+    }
+
+    pub fn build(&self) -> Result<(), anyhow::Error> {
+        let src_dir = self.project_dir.join("llvm");
+        let build_dir = self.project_dir.join("build");
+
+        let status = std::process::Command::new("cmake")
+            .arg("-S")
+            .arg(src_dir)
+            .arg("-B")
+            .arg(&build_dir)
+            .arg("-GNinja")
+            .arg(format!(
+                "-DCMAKE_INSTALL_PREFIX={}",
+                self.install_dir.to_string_lossy()
+            ))
+            .arg("-DCMAKE_BUILD_TYPE=Release")
+            .arg("-DCMAKE_C_COMPILER=clang")
+            .arg("-DCMAKE_CXX_COMPILER=clang++")
+            .arg("-DLLVM_ENABLE_ASSERTIONS=ON")
+            .arg("-DLLVM_TARGETS_TO_BUILD=BPF")
+            .arg("-DLLVM_USE_LINKER=lld")
+            .arg("-DLLVM_INSTALL_UTILS=ON")
+            .arg("-DLLVM_BUILD_LLVM_DYLIB=ON")
+            .arg("-DLLVM_LINK_LLVM_DYLIB=ON")
+            .arg("-DLLVM_ENABLE_PROJECTS=")
+            .arg("-DLLVM_ENABLE_RUNTIMES=")
+            .arg("-GNinja")
+            .status()?;
+
+        if !status.success() {
+            return Err(anyhow::Error::msg("failed at configuring LLVM build"));
+        }
+
+        let status = std::process::Command::new("cmake")
+            .arg("--build")
+            .arg(&build_dir)
+            .arg("--target")
+            .arg("install")
+            .status()?;
+
+        if !status.success() {
+            return Err(anyhow::Error::msg("failed at building LLVM"));
+        }
+
+        Ok(())
+    }
+}
+
+pub fn build_linker<T: AsRef<Path>, U: AsRef<Path>>(
+    llvm_build_dir: T,
+    linker_dir: U,
+) -> Result<(), anyhow::Error> {
     let llvm_build_dir = llvm_build_dir.as_ref();
     let linker_dir = linker_dir.as_ref();
 
