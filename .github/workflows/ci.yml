@@ -2,7 +2,7 @@ name: CI
 
 on: 
   push:
-    branches: [ "disable" ]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
@@ -34,7 +34,9 @@ jobs:
     - name: Cache build tools
       uses: actions/cache@v3
       with:
-        path: build-tools # path where build-tools are installed
+        path: |
+          build-tools/llvm-install # path where LLVM is installed (we don't keep source/build)
+          build-tools/bpf-linker # where linker code/target are
         key: ${{ steps.cache-key.outputs.cache-key }}
           
     - name: Install system tools
