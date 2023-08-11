@@ -69,7 +69,7 @@ cargo xtask build-tools
 ```
 
 After a little while, you get the custom `bpf-linker` installed in `build-tools` directory within **kunai's root directory**.
-Please note that this step absolutely does not affect any prior `bpf-linker` installation made with `cargo`.
+Please note that this step absolutely does not remove any prior `bpf-linker` installation made with `cargo install bpf-linker`.
 
 **NB**: do not delete the `build-tools` directory, unless you want to compile bpf-linker/LLVM again from scratch.
 
