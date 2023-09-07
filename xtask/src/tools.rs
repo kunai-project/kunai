@@ -7,6 +7,10 @@ pub struct Options {
     pub action_cache_key: bool,
     #[clap(long)]
     pub force_llvm_build: bool,
+    #[clap(long)]
+    pub free_space: bool,
+    #[clap(long)]
+    pub update: bool,
 }
 
 pub struct LLVMBuilder {
