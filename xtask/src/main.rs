@@ -48,13 +48,21 @@ fn main() -> Result<(), anyhow::Error> {
             // specific LLVM patches faster than LLVM project
             let llvm_repo = "https://github.com/aya-rs/llvm-project";
             let llvm_branch = "rustc/16.0-2023-06-05";
-            let llvm_dir = bt_root.join("llvm-project");
-            let llvm_install = bt_root.join("llvm-install");
+            let branch_dir = llvm_branch.replace('/', "_");
+            let llvm_dir = bt_root.join("llvm-project").join(&branch_dir);
+            let llvm_install = bt_root.join("llvm-install").join(&branch_dir);
+
+            // bpf-linker related variables
+            let linker_dir = bt_root.join("bpf-linker");
+            // linker branch supporting Debug Information (DI)
+            let linker_repo = "https://github.com/0xrawsec/bpf-linker-davibe.git";
+            let linker_branch = "fix-di";
 
             if opts.action_cache_key {
                 print!(
-                    "build-tools-{}",
-                    git::last_commit_id(llvm_repo, llvm_branch)?
+                    "build-tools-{}-{}",
+                    git::last_commit_id(llvm_repo, llvm_branch)?,
+                    git::last_commit_id(linker_repo, linker_branch)?
                 );
                 return Ok(());
             }
@@ -70,9 +78,15 @@ fn main() -> Result<(), anyhow::Error> {
                 llvm_builder.build()?;
             }
 
-            let linker_dir = bt_root.join("bpf-linker");
-            let linker_repo = "https://github.com/0xrawsec/bpf-linker-davibe.git";
-            let linker_branch = "fix-di";
+            // we free up all LLVM build artifacts
+            if opts.free_space {
+                println!("Removing LLVM build artifacts");
+                std::fs::remove_dir_all(llvm_dir)?;
+            }
+
+            if opts.update {
+                let _ = std::fs::remove_dir_all(&linker_dir);
+            }
 
             if linker_dir.is_dir() {
                 println!("Resetting linker directory");
@@ -81,7 +95,6 @@ fn main() -> Result<(), anyhow::Error> {
             }
 
             println!("Synchronizing repo:{linker_repo} branch:{linker_branch}");
-            // linker branch supporting Debug Information (DI)
             git::sync(linker_branch, linker_repo, &linker_dir)?;
 
             tools::build_linker(&llvm_install, linker_dir)?;
