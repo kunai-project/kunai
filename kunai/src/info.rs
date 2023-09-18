@@ -65,6 +65,8 @@ impl From<&StdEventInfo> for JsonValue {
             },
             // event information
             event: object!{
+                // this field can be used by other tools to identify that event comes from kunai
+                source: "kunai",
                 id: info.etype.id(),
                 name: info.etype.as_str(),
                 uuid: info.uuid.into_uuid().hyphenated().to_string(),
