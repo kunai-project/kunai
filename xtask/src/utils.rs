@@ -23,7 +23,7 @@ pub fn find_first_in<T: AsRef<Path>>(path: T, _match: &str) -> std::io::Result<P
                 .file_name()
                 .map(|f| f.to_string_lossy())
                 .unwrap_or_default()
-                .ends_with(_match)
+                .eq(_match)
         {
             return Ok(entry_path);
         }

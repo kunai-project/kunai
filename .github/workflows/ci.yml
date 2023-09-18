@@ -40,12 +40,11 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          build-tools/llvm-install
-          build-tools/bpf-linker
+          build-tools/
         key: ${{ steps.cache-key.outputs.cache-key }}
               
-    - name: Build-Tools (LLVM and bpf-linker)
-      run: cargo xtask build-tools
+    - name: Build-Tools (LLVM and bpf-linker)
+      run: cargo xtask build-tools --free-space
 
     #- name: Save cached build tools
     #  uses: actions/cache@v3
@@ -53,5 +52,5 @@ jobs:
     #    path: build-tools # path where build-tools are installed
     #    key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
       
-    - name: Build (eBPF and userland)
+    - name: Build (eBPF and userland)
       run: cargo xtask build
