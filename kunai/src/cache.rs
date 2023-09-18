@@ -27,8 +27,8 @@ pub enum Error {
     FileModSinceKernelEvent(&'static str),
     #[error("metadata is needed for ebpf path")]
     MetadataRequired,
-    #[error("hash not found")]
-    HashNotFound,
+    #[error("file not found")]
+    FileNotFound,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -127,6 +127,12 @@ impl Key {
         path: &kunai_common::path::Path,
     ) -> Result<Self, Error> {
         let pb = path.to_path_buf();
+
+        // checking if the file still exists
+        if !pb.exists() {
+            return Err(Error::FileNotFound);
+        }
+
         let meta = pb.metadata()?;
 
         let mut k = Key {
@@ -214,25 +220,23 @@ impl Cache {
             return Err(Error::UnknownNs(ns_inum));
         };
 
-        let mut ret = Err(Error::HashNotFound);
-
+        // we switch to namespace
         entry.ns.enter()?;
         let pb = path.to_path_buf();
 
-        if pb.exists() {
-            let key = Key::from_ebpf_path_ref_with_ns(&entry.ns, path)?;
+        let key = Key::from_ebpf_path_ref_with_ns(&entry.ns, path)?;
 
-            if !self.hcache.contains_key(&key) {
-                let h = Hashes::from_path_ref(pb);
-                self.hcache.insert(key.clone(), h);
-            }
-
-            // we cannot panic here as we are sure the cache contains value
-            ret = Ok(self.hcache.get(&key).unwrap().clone());
+        if !self.hcache.contains_key(&key) {
+            let h = Hashes::from_path_ref(pb);
+            self.hcache.insert(key.clone(), h);
         }
+
+        // we cannot panic here as we are sure the cache contains value
+        let res = Ok(self.hcache.get(&key).unwrap().clone());
 
         // we must be sure that we restore our namespace
         entry.ns.exit().expect("failed to restore namespace");
-        ret
+
+        res
     }
 }
