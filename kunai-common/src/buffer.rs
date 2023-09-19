@@ -1,4 +1,5 @@
 use crate::{bpf_target_code, not_bpf_target_code};
+use core::cmp::min;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -42,7 +43,7 @@ impl<const N: usize> Buffer<N> {
 
     #[inline(always)]
     pub fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.len()]
+        &self.buf[..min(self.len(), N)]
     }
 
     #[inline(always)]
@@ -87,7 +88,6 @@ not_bpf_target_code! {
 
         pub fn to_argv(&self) -> Vec<String> {
             self.as_slice().split(|&b| b == b'\0').map(cstr_to_string).filter(|s| !s.is_empty()).collect()
-
         }
     }
 }
@@ -97,7 +97,6 @@ bpf_target_code! {
     use crate::map_err;
     use super::{bpf_utils::*};
     use aya_bpf::helpers::{gen, *};
-    use core::cmp::min;
     use kunai_macros::BpfError;
     use crate::co_re::{iov_iter, iovec};
 
@@ -198,7 +197,7 @@ bpf_target_code! {
 
         #[inline(always)]
         pub unsafe fn read_user_at<P>(&mut self, from:*const P, size: u32) -> Result<(), Error>{
-            let size = min(size, N as u32);
+            let size = cap_size(size, N as u32);
 
             let buf = &mut self.buf[..size as usize];
             bpf_probe_read_user_buf(from as *const _, buf).map_err(|_| Error::FailedToRead)?;
@@ -209,7 +208,7 @@ bpf_target_code! {
 
         #[inline(always)]
         pub unsafe fn read_kernel_at<P>(&mut self, from:*const P, size: u32) -> Result<(), Error>{
-            let size = min(size, N as u32);
+            let size = cap_size(size, N as u32);
 
             let buf = &mut self.buf[..size as usize];
             bpf_probe_read_kernel_buf(from as *const _, buf).map_err(|_| Error::FailedToRead)?;
