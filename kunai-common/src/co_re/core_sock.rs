@@ -57,6 +57,7 @@ pub type sock = CoRe<gen::sock>;
 impl sock {
     rust_shim_kernel_impl!(pub, sk_common, sock, __sk_common, sock_common);
     rust_shim_kernel_impl!(pub, sock, sk_type, u16);
+    rust_shim_kernel_impl!(pub, sock, sk_protocol, u8);
     rust_shim_kernel_impl!(pub, sock, sk_receive_queue, sk_buff_head);
 }
 
@@ -64,12 +65,14 @@ impl sock {
 pub type sock_common = CoRe<gen::sock_common>;
 
 #[repr(C)]
+#[allow(non_camel_case_types)]
 struct skc_addrpair {
     skc_daddr: u32,
     skc_rcv_saddr: u32,
 }
 
 #[repr(C)]
+#[allow(non_camel_case_types)]
 struct skc_portpair {
     skc_dport: u16,
     skc_num: u16,

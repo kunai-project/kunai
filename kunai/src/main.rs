@@ -12,6 +12,7 @@ use info::{AdditionalFields, StdEventInfo};
 use json::{object, JsonValue};
 use kunai_common::cgroup::Cgroup;
 use kunai_common::config::{BpfConfig, Filter};
+
 use log::LevelFilter;
 
 use std::collections::{HashMap, VecDeque};
@@ -547,6 +548,37 @@ impl EventProcessor {
     }
 
     #[inline]
+    fn json_bpf_socket_filter(
+        &mut self,
+        info: StdEventInfo,
+        event: &BpfSocketFilterEvent,
+    ) -> JsonValue {
+        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+
+        let mut socket = object! {
+            domain: event.data.socket_info.domain_to_string(),
+        };
+        socket["type"] = event.data.socket_info.type_to_string().into();
+
+        let data = object! {
+            command_line: cmd_line,
+            exe: exe.to_string_lossy().to_string(),
+            socket: socket,
+            filter: object!{
+                md5: md5_data(event.data.filter.as_slice()),
+                sha1: sha1_data(event.data.filter.as_slice()),
+                sha256: sha256_data(event.data.filter.as_slice()),
+                sha512: sha512_data(event.data.filter.as_slice()),
+                len: event.data.filter_len, // size in filter sock_filter blocks
+                size: event.data.filter.len(), // size in bytes
+            },
+            attached: event.data.attached,
+        };
+
+        Self::json_event(info, data)
+    }
+
+    #[inline]
     fn json_mprotect(&self, info: StdEventInfo, event: &MprotectEvent) -> JsonValue {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
         let data = object! {
@@ -818,6 +850,14 @@ impl EventProcessor {
             events::Type::BpfProgLoad => match event!(enc_event, BpfProgLoadEvent) {
                 Ok(e) => {
                     let e = self.json_bpf_prog_load(std_info, e);
+                    self.output_json(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::BpfSocketFilter => match event!(enc_event, BpfSocketFilterEvent) {
+                Ok(e) => {
+                    let e = self.json_bpf_socket_filter(std_info, e);
                     self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),

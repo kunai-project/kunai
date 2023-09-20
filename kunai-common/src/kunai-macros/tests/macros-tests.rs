@@ -1,3 +1,4 @@
+use core::str::FromStr;
 use kunai_macros::{BpfError, StrEnum};
 use syn::{Attribute, MetaNameValue};
 

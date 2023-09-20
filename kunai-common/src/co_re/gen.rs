@@ -3,6 +3,7 @@
 pub type __u64 = ::core::ffi::c_ulonglong;
 pub type __u32 = ::core::ffi::c_uint;
 pub type __u16 = ::core::ffi::c_ushort;
+pub type u16_ = __u16;
 pub type __u8 = ::core::ffi::c_uchar;
 pub type __be16 = __u16;
 pub type __be32 = __u32;
@@ -770,6 +771,7 @@ pub struct bpf_prog {
     pub expected_attach_type: bpf_attach_type,
     pub tag: [::core::ffi::c_uchar; 8usize],
     pub aux: *mut bpf_prog_aux,
+    pub orig_prog: *mut sock_fprog_kern,
 }
 extern "C" {
     pub fn shim_bpf_prog_aux(bpf_prog: *mut bpf_prog) -> *mut bpf_prog_aux;
@@ -779,6 +781,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_bpf_prog_aux_exists(bpf_prog: *mut bpf_prog) -> bool;
+}
+extern "C" {
+    pub fn shim_bpf_prog_orig_prog(bpf_prog: *mut bpf_prog) -> *mut sock_fprog_kern;
+}
+extern "C" {
+    pub fn shim_bpf_prog_orig_prog_user(bpf_prog: *mut bpf_prog) -> *mut sock_fprog_kern;
+}
+extern "C" {
+    pub fn shim_bpf_prog_orig_prog_exists(bpf_prog: *mut bpf_prog) -> bool;
 }
 extern "C" {
     pub fn shim_bpf_prog_tag(bpf_prog: *mut bpf_prog) -> *mut ::core::ffi::c_uchar;
@@ -815,6 +826,103 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_bpf_prog_len_exists(bpf_prog: *mut bpf_prog) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sock_filter {
+    pub code: __u16,
+    pub jt: __u8,
+    pub jf: __u8,
+    pub k: __u32,
+}
+extern "C" {
+    pub fn shim_sock_filter_code(sock_filter: *mut sock_filter) -> ::core::ffi::c_ushort;
+}
+extern "C" {
+    pub fn shim_sock_filter_code_user(sock_filter: *mut sock_filter) -> ::core::ffi::c_ushort;
+}
+extern "C" {
+    pub fn shim_sock_filter_code_exists(sock_filter: *mut sock_filter) -> bool;
+}
+extern "C" {
+    pub fn shim_sock_filter_jt(sock_filter: *mut sock_filter) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_sock_filter_jt_user(sock_filter: *mut sock_filter) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_sock_filter_jt_exists(sock_filter: *mut sock_filter) -> bool;
+}
+extern "C" {
+    pub fn shim_sock_filter_jf(sock_filter: *mut sock_filter) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_sock_filter_jf_user(sock_filter: *mut sock_filter) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_sock_filter_jf_exists(sock_filter: *mut sock_filter) -> bool;
+}
+extern "C" {
+    pub fn shim_sock_filter_k(sock_filter: *mut sock_filter) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_sock_filter_k_user(sock_filter: *mut sock_filter) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_sock_filter_k_exists(sock_filter: *mut sock_filter) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sock_fprog {
+    pub len: ::core::ffi::c_ushort,
+    pub filter: *mut sock_filter,
+}
+extern "C" {
+    pub fn shim_sock_fprog_len(sock_fprog: *mut sock_fprog) -> ::core::ffi::c_ushort;
+}
+extern "C" {
+    pub fn shim_sock_fprog_len_user(sock_fprog: *mut sock_fprog) -> ::core::ffi::c_ushort;
+}
+extern "C" {
+    pub fn shim_sock_fprog_len_exists(sock_fprog: *mut sock_fprog) -> bool;
+}
+extern "C" {
+    pub fn shim_sock_fprog_filter(sock_fprog: *mut sock_fprog) -> *mut sock_filter;
+}
+extern "C" {
+    pub fn shim_sock_fprog_filter_user(sock_fprog: *mut sock_fprog) -> *mut sock_filter;
+}
+extern "C" {
+    pub fn shim_sock_fprog_filter_exists(sock_fprog: *mut sock_fprog) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sock_fprog_kern {
+    pub len: u16_,
+    pub filter: *mut sock_filter,
+}
+extern "C" {
+    pub fn shim_sock_fprog_kern_len(sock_fprog_kern: *mut sock_fprog_kern)
+        -> ::core::ffi::c_ushort;
+}
+extern "C" {
+    pub fn shim_sock_fprog_kern_len_user(
+        sock_fprog_kern: *mut sock_fprog_kern,
+    ) -> ::core::ffi::c_ushort;
+}
+extern "C" {
+    pub fn shim_sock_fprog_kern_len_exists(sock_fprog_kern: *mut sock_fprog_kern) -> bool;
+}
+extern "C" {
+    pub fn shim_sock_fprog_kern_filter(sock_fprog_kern: *mut sock_fprog_kern) -> *mut sock_filter;
+}
+extern "C" {
+    pub fn shim_sock_fprog_kern_filter_user(
+        sock_fprog_kern: *mut sock_fprog_kern,
+    ) -> *mut sock_filter;
+}
+extern "C" {
+    pub fn shim_sock_fprog_kern_filter_exists(sock_fprog_kern: *mut sock_fprog_kern) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -1148,6 +1256,7 @@ extern "C" {
 #[derive(Copy, Clone)]
 pub struct sock {
     pub __sk_common: sock_common,
+    pub sk_protocol: __u8,
     pub sk_type: __u16,
     pub sk_receive_queue: sk_buff_head,
 }
@@ -1159,6 +1268,12 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_sock___sk_common_exists(sock: *mut sock) -> bool;
+}
+extern "C" {
+    pub fn shim_sock_sk_protocol(sock: *mut sock) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_sock_sk_protocol_exists(sock: *mut sock) -> bool;
 }
 extern "C" {
     pub fn shim_sock_sk_type(sock: *mut sock) -> ::core::ffi::c_ushort;

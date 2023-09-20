@@ -1,7 +1,7 @@
 use aya_bpf::helpers::bpf_probe_read_kernel_buf;
 
 use super::gen::{self, *};
-use super::{rust_shim_kernel_impl, CoRe};
+use super::{rust_shim_kernel_impl, sock_fprog_kern, CoRe};
 
 #[allow(non_camel_case_types)]
 pub type bpf_ksym = CoRe<gen::bpf_ksym>;
@@ -19,6 +19,7 @@ impl bpf_prog {
     rust_shim_kernel_impl!(pub, ty, bpf_prog, r#type, u32);
     rust_shim_kernel_impl!(pub, bpf_prog, expected_attach_type, u32);
     rust_shim_kernel_impl!(pub, bpf_prog, aux, bpf_prog_aux);
+    rust_shim_kernel_impl!(pub, bpf_prog, orig_prog, sock_fprog_kern);
     rust_shim_kernel_impl!(pub, bpf_prog, tag, *mut u8);
 
     pub unsafe fn tag_array(&self) -> Option<[u8; 8]> {

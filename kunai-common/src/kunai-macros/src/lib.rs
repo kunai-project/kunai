@@ -152,9 +152,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
     let variants_len = variants.len();
 
     quote!(
-        use core::str::FromStr;
-
-        impl FromStr for #enum_name {
+        impl core::str::FromStr for #enum_name {
             type Err = &'static str;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {

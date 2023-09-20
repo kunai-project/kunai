@@ -26,6 +26,8 @@ pub enum ProbeFn {
     __sys_recvmsg,
     __sys_connect,
     security_sb_mount,
+    __sk_attach_prog,
+    reuseport_attach_prog,
 }
 
 impl ProbeFn {

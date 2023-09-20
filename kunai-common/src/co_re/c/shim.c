@@ -391,13 +391,46 @@ struct bpf_prog
 	enum bpf_attach_type expected_attach_type;
 	unsigned char tag[BPF_TAG_SIZE];
 	struct bpf_prog_aux *aux;
+	struct sock_fprog_kern *orig_prog;
 } __attribute__((preserve_access_index));
 
 SHIM(bpf_prog, aux);
+SHIM(bpf_prog, orig_prog);
 ARRAY_SHIM(bpf_prog, tag);
 SHIM(bpf_prog, type);
 SHIM(bpf_prog, expected_attach_type);
 SHIM(bpf_prog, len);
+
+struct sock_filter
+{				/* Filter block */
+	__u16 code; /* Actual filter code */
+	__u8 jt;	/* Jump true */
+	__u8 jf;	/* Jump false */
+	__u32 k;	/* Generic multiuse field */
+} __attribute__((preserve_access_index));
+
+SHIM(sock_filter, code);
+SHIM(sock_filter, jt);
+SHIM(sock_filter, jf);
+SHIM(sock_filter, k);
+
+struct sock_fprog
+{
+	unsigned short len;
+	struct sock_filter *filter;
+} __attribute__((preserve_access_index));
+
+SHIM(sock_fprog, len);
+SHIM(sock_fprog, filter);
+
+struct sock_fprog_kern
+{
+	u16 len;
+	struct sock_filter *filter;
+} __attribute__((preserve_access_index));
+
+SHIM(sock_fprog_kern, len);
+SHIM(sock_fprog_kern, filter);
 
 struct linux_binprm
 {
@@ -534,11 +567,13 @@ SHIM(sk_buff_head, qlen);
 struct sock
 {
 	struct sock_common __sk_common;
+	__u8 sk_protocol;
 	__u16 sk_type;
 	struct sk_buff_head sk_receive_queue;
 } __attribute__((preserve_access_index));
 
 SHIM_REF(sock, __sk_common);
+SHIM_BITFIELD(sock, sk_protocol);
 SHIM_BITFIELD(sock, sk_type);
 SHIM_REF(sock, sk_receive_queue)
 

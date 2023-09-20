@@ -23,6 +23,9 @@ pub use core_exec::*;
 mod core_bpf;
 pub use core_bpf::*;
 
+mod core_socket_filters;
+pub use core_socket_filters::*;
+
 mod core_lkm;
 pub use core_lkm::*;
 

@@ -77,6 +77,10 @@ pub enum Type {
     InitModule = 20,
     #[str("bpf_prog_load")]
     BpfProgLoad,
+    #[str("bpf_socket_filter")]
+    BpfSocketFilter,
+    //#[str("bpf_socket_prog")]
+    //BpfSocketProg,
 
     // memory stuffs
     #[str("mprotect_exec")]
@@ -106,6 +110,7 @@ pub enum Type {
     #[str("file_rename")]
     FileRename,
 
+    // Materialize end of possible events
     #[str("end_event")]
     EndEvents = 1000,
 
@@ -115,7 +120,7 @@ pub enum Type {
     #[str("cache_hash")]
     CacheHash,
 
-    // !!! all new event types must be put befor max
+    // !!! all new event types must be put before max
     #[str("max")]
     Max,
 }
@@ -463,6 +468,7 @@ macro_rules! max {
 pub const MAX_EVENT_SIZE: usize = max!(
     core::mem::size_of::<ExecveEvent>(),
     core::mem::size_of::<BpfProgLoadEvent>(),
+    core::mem::size_of::<BpfSocketFilterEvent>(),
     core::mem::size_of::<ConnectEvent>(),
     core::mem::size_of::<DnsQueryEvent>(),
     core::mem::size_of::<ExitEvent>(),
