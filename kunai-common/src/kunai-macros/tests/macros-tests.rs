@@ -75,10 +75,14 @@ fn test_named_enum() {
         Variant100 = 100,
         #[str("variant101")]
         Variant101,
+        Variant102,
     }
 
     assert_eq!(MyError::Variant1.as_str(), "variant1");
     assert_eq!(MyError::Variant100.as_str(), "variant100");
     assert_eq!(MyError::Variant101.as_str(), "variant101");
     assert_eq!(MyError::Variant101 as u32, 101);
+    assert_eq!(MyError::Variant102.as_str(), "Variant102");
+
+    assert_eq!(MyError::from_str("Variant102"), Ok(MyError::Variant102));
 }

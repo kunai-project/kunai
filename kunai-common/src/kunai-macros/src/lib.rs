@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse_macro_input, DeriveInput, LitStr};
 
 fn split_on_capital_letters(s: &str) -> Vec<String> {
     let mut words = Vec::new();
@@ -42,12 +42,6 @@ pub fn error_derive(item: TokenStream) -> TokenStream {
             .iter()
             .find(|&attr| attr.path().is_ident("generate"));
         let wrap_attr = v.attrs.iter().find(|&attr| attr.path().is_ident("wrap"));
-
-        /*if (err_attr.is_none() && wrap_attr.is_none())
-        || (err_attr.is_some() && wrap_attr.is_some())
-        {
-            panic!("variant must contain either an error or wrap attribute");
-        }*/
 
         if matches!(v.fields, syn::Fields::Unit) {
             name_arms.push(quote!(Self::#name => #name_str,));
@@ -134,20 +128,24 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
         // we find error attributes associated to the variant
         let str_attr = v.attrs.iter().find(|&attr| attr.path().is_ident("str"));
 
-        if let Some(str_attr) = str_attr {
-            // we expect a literal string
-            let args: syn::LitStr = str_attr.parse_args().expect("failed to parse args");
-
-            // we generate a match arm delivering the good error name
-            if v.fields.is_empty() {
-                as_str_arms.push(quote!(Self::#name => #args,));
-                from_str_arms.push(quote!(#args => Ok(Self::#name),));
-                variants.push(quote!(Self::#name,));
-            } else {
-                //let v = vec![quote!(_); v.fields.len()];
-                //as_str_arms.push(quote!(Self::#name(#(#v),*) => #args,));
-                panic!("enum variant cannot hold values")
+        let args = match str_attr {
+            // if there is a #[str()] attribute
+            Some(s) => {
+                // we expect a literal string
+                let args: LitStr = s.parse_args().expect("failed to parse args");
+                args.value()
             }
+            // by default we take the name of the enum
+            None => name.to_string(),
+        };
+
+        // we generate a match arm delivering the good error name
+        if v.fields.is_empty() {
+            as_str_arms.push(quote!(Self::#name => #args,));
+            from_str_arms.push(quote!(#args => Ok(Self::#name),));
+            variants.push(quote!(Self::#name,));
+        } else {
+            panic!("enum variant cannot hold values")
         }
     }
 
