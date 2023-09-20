@@ -4,6 +4,8 @@ mod tools;
 mod user;
 mod utils;
 
+use std::io::ErrorKind;
+
 use clap::Parser;
 
 #[derive(Debug, Parser)]
@@ -81,11 +83,19 @@ fn main() -> Result<(), anyhow::Error> {
             // we free up all LLVM build artifacts
             if opts.free_space {
                 println!("Removing LLVM build artifacts");
-                std::fs::remove_dir_all(llvm_dir)?;
+                let res = std::fs::remove_dir_all(llvm_dir);
+                // if error is different from NotFound we return an error
+                if res.as_ref().is_err_and(|e| e.kind() != ErrorKind::NotFound) {
+                    return Err(res.err().unwrap().into());
+                }
             }
 
             if opts.update {
-                let _ = std::fs::remove_dir_all(&linker_dir);
+                let res = std::fs::remove_dir_all(&linker_dir);
+                // if error is different from NotFound we return an error
+                if res.as_ref().is_err_and(|e| e.kind() != ErrorKind::NotFound) {
+                    return Err(res.err().unwrap().into());
+                }
             }
 
             if linker_dir.is_dir() {
