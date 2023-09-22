@@ -39,9 +39,6 @@ pub struct BuildOptions {
     /// Build the release target
     #[clap(long)]
     pub release: bool,
-    /// When building happens from an IDE
-    #[clap(long)]
-    pub ide: bool,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub target: BpfTarget,
@@ -63,6 +60,10 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
         "-Z".into(),
         "build-std=core".into(),
     ];
+
+    if opts.release {
+        args.push("--release".into())
+    }
 
     opts.build_args
         .iter()
@@ -90,7 +91,11 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
     cmd
 }
 
-pub fn build(dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
+pub fn build(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
+    if !opts.release {
+        opts.build_args.push("--features=debug".into())
+    }
+
     let status = cargo("build", dir, opts)
         .status()
         .expect("failed to build bpf program");

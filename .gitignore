@@ -6,4 +6,3 @@ private
 **/*.rs.bk
 target/
 .vim
-.vscode

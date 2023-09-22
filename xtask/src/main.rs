@@ -31,7 +31,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     use Command::*;
     match opts.command {
-        BuildEbpf(opts) => ebpf::build(EBPF_DIR, &opts)?,
+        BuildEbpf(mut opts) => ebpf::build(EBPF_DIR, &mut opts)?,
         Build(opts) => user::build_all(EBPF_DIR, &opts)?,
         Run(opts) => user::run(EBPF_DIR, &opts)?,
         Check(mut opts) => {

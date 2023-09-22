@@ -29,4 +29,5 @@
   // if set to workspace it tries to run cargo xtask inside
   // kunai-ebpf which is problematic as xtask doesnt exists in there 
   "rust-analyzer.cargo.buildScripts.invocationLocation": "root",
+  "rust-analyzer.cargo.features": "all"
 }

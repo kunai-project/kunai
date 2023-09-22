@@ -60,7 +60,6 @@ impl From<RunOptions> for BuildOptions {
 impl From<&RunOptions> for BuildOptions {
     fn from(value: &RunOptions) -> Self {
         Self {
-            ide: false,
             target: value.target,
             bpf_target: value.bpf_target,
             bpf_linker: value.bpf_linker.clone(),
@@ -75,9 +74,6 @@ pub struct BuildOptions {
     /// Build and run the release target
     #[clap(long)]
     pub release: bool,
-    /// When building happens from an IDE, a different target-dir is set (to speed up build process)
-    #[clap(long)]
-    pub ide: bool,
     /// Set the endianness of the BPF target
     #[clap(default_value = "x86_64-unknown-linux-musl", long)]
     pub target: Target,
@@ -101,7 +97,6 @@ impl From<BuildOptions> for ebpf::BuildOptions {
 impl From<&BuildOptions> for ebpf::BuildOptions {
     fn from(value: &BuildOptions) -> Self {
         Self {
-            ide: value.ide,
             target: value.bpf_target,
             release: value.release,
             linker: value.bpf_linker.clone(),
@@ -136,18 +131,12 @@ fn build(opts: &BuildOptions) -> Result<(), anyhow::Error> {
 
 /// Build the project
 pub fn check(opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
-    if opts.ide {
-        opts.build_args
-            .push("--message-format=json-diagnostic-rendered-ansi".into());
-        opts.build_args.push("--quiet".into());
-    }
-
     cargo("check", opts)
 }
 
 pub fn build_all(ebpf_dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
     // build our ebpf program followed by our application
-    ebpf::build(ebpf_dir, &opts.into()).context("Error while building eBPF program")?;
+    ebpf::build(ebpf_dir, &mut opts.into()).context("Error while building eBPF program")?;
 
     build(opts).context("Error while building userspace application")
 }
