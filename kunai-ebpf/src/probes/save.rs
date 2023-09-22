@@ -66,3 +66,15 @@ pub fn enter_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
     }
     0
 }
+
+#[kprobe(name = "kprobe.enter.kernel_clone")]
+pub fn enter_kernel_clone(ctx: ProbeContext) -> u32 {
+    unsafe {
+        ignore_result!(save_context(
+            ProbeFn::kernel_clone,
+            bpf_ktime_get_ns(),
+            &ctx
+        ));
+    }
+    0
+}

@@ -1,7 +1,7 @@
 #[allow(non_camel_case_types)]
 #[allow(non_upper_case_globals)]
 #[allow(dead_code)]
-// made public for debug
+// todo: remove pub
 pub mod gen;
 
 mod core_task_struct;
@@ -43,6 +43,9 @@ pub use core_cgroup::*;
 
 mod core_kernfs;
 pub use core_kernfs::*;
+
+mod core_clone_args;
+pub use core_clone_args::*;
 
 #[derive(Clone, Copy)]
 pub struct CoRe<P> {

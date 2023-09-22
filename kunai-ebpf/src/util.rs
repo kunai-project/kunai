@@ -28,6 +28,7 @@ pub enum ProbeFn {
     security_sb_mount,
     __sk_attach_prog,
     reuseport_attach_prog,
+    kernel_clone,
 }
 
 impl ProbeFn {

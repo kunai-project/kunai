@@ -390,7 +390,6 @@ impl EventProcessor {
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
             exe: self.get_hashes_with_ns(mnt_ns, &event.data.executable),
-
         };
 
         // we check wether a script is being interpreted
@@ -399,6 +398,20 @@ impl EventProcessor {
                 .get_hashes_with_ns(mnt_ns, &event.data.interpreter)
                 .into();
         }
+
+        Self::json_event_info_ref(&info, data)
+    }
+
+    #[inline]
+    fn json_clone(&mut self, info: StdEventInfo, event: &CloneEvent) -> JsonValue {
+        let exe = event.data.executable.to_path_buf();
+        let cmd_line = event.data.argv.to_command_line();
+
+        let data = object! {
+            exe: exe.to_string_lossy().to_string(),
+            command_line: cmd_line,
+            flags: format!("0x{:08x}",event.data.flags),
+        };
 
         Self::json_event_info_ref(&info, data)
     }
@@ -771,6 +784,14 @@ impl EventProcessor {
                 }
             }
 
+            events::Type::Clone => match event!(enc_event, CloneEvent) {
+                Ok(e) => {
+                    let e = self.json_clone(std_info, e);
+                    self.output_json(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
             events::Type::MmapExec => match event!(enc_event, MmapExecEvent) {
                 Ok(e) => {
                     let e = self.json_mmap_exec(std_info, e);
@@ -1049,12 +1070,16 @@ impl EventReader {
         match i.etype {
             Type::Execve | Type::ExecveScript => {
                 let execve = event!(e, ExecveEvent).unwrap();
-                let c: CorrelationEvent = execve.into();
-                self.send_event(c).unwrap();
+                self.send_event(CorrelationEvent::from(execve)).unwrap();
 
                 for h in HashEvent::all_from_execve(execve) {
                     self.send_event(h).unwrap();
                 }
+            }
+
+            Type::Clone => {
+                let event = event!(e, CloneEvent).unwrap();
+                self.send_event(CorrelationEvent::from(event)).unwrap();
             }
 
             Type::MmapExec => {
@@ -1420,6 +1445,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // kernel function name changed above 5.9
     if current_kernel < kernel!(5, 9) {
+        // kernel_clone -> _do_fork
+        programs
+            .expect_mut("kprobe.enter.kernel_clone")
+            .rename("kprobe.enter._do_fork");
+
+        // path_mount -> do_mount
         programs
             .expect_mut("fs.exit.path_mount")
             .rename("fs.exit.do_mount")

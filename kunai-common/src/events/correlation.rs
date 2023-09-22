@@ -1,6 +1,4 @@
-
-
-use super::{MmapExecEvent, ScheduleEvent};
+use super::{CloneEvent, MmapExecEvent, ScheduleEvent};
 use crate::path::Path;
 use crate::{buffer::Buffer, cgroup::Cgroup};
 
@@ -32,10 +30,24 @@ impl From<&ExecveEvent> for CorrelationEvent {
         Self {
             info: value.info,
             data: CorrelationData {
-                //origin: value.info.etype,
                 argv: value.data.argv,
                 exe: value.data.executable,
                 paths: [Some(value.data.interpreter)],
+                cgroup: value.data.cgroup,
+            },
+        }
+        .switch_type(Type::Correlation)
+    }
+}
+
+impl From<&CloneEvent> for CorrelationEvent {
+    fn from(value: &CloneEvent) -> Self {
+        Self {
+            info: value.info,
+            data: CorrelationData {
+                argv: value.data.argv,
+                exe: value.data.executable,
+                paths: [None],
                 cgroup: value.data.cgroup,
             },
         }
@@ -48,7 +60,6 @@ impl From<&ScheduleEvent> for CorrelationEvent {
         Self {
             info: value.info,
             data: CorrelationData {
-                //origin: value.info.etype,
                 argv: value.data.argv,
                 exe: value.data.exe,
                 paths: [None],

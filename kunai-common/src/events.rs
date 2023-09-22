@@ -10,7 +10,6 @@ bpf_target_code! {
     use crate::co_re::core_read_kernel;
     use crate::co_re::task_struct;
     use aya_bpf::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
-    use aya_bpf::cty::{c_void};
     use kunai_macros::BpfError;
 }
 
@@ -22,6 +21,8 @@ mod connect;
 pub use connect::*;
 mod execve;
 pub use execve::*;
+mod clone;
+pub use clone::*;
 mod mmap;
 use kunai_macros::StrEnum;
 pub use mmap::*;
@@ -71,6 +72,8 @@ pub enum Type {
     Exit,
     #[str("exit_group")]
     ExitGroup,
+    #[str("clone")]
+    Clone,
 
     // stuff loaded in kernel
     #[str("init_module")]
@@ -220,7 +223,7 @@ bpf_target_code! {
         /// # Safety
         /// * task must be a pointer to a valid task_struct
         #[inline(always)]
-        pub(crate) unsafe fn from_task(&mut self, task: &task_struct) -> Result<(), Error> {
+        pub unsafe fn from_task(&mut self, task: task_struct) -> Result<(), Error> {
             // process start time
             self.start_time = task.start_boottime().ok_or(Error::BootTimeMissing)?;
             self.tgid = task.tgid().ok_or(Error::TgidFieldMissing)?;
@@ -279,17 +282,17 @@ impl EventInfo {
 #[cfg(target_arch = "bpf")]
 impl EventInfo {
     #[inline(always)]
-    pub(crate) unsafe fn init(&mut self, t: Type, task: *const c_void) -> Result<(), Error> {
+    pub(crate) unsafe fn init(&mut self, t: Type, task: task_struct) -> Result<(), Error> {
         self.etype = t;
 
         // create a new Uuid for event
         self.uuid = Uuid::new_random();
 
         if !task.is_null() {
-            let task = task_struct::from_ptr(task as *const _);
-            self.process.from_task(&task)?;
+            //let task = task_struct::from_ptr(task as *const _);
+            self.process.from_task(task)?;
             self.parent
-                .from_task(&task.real_parent().ok_or(Error::RealParentFieldMissing)?)?;
+                .from_task(task.real_parent().ok_or(Error::RealParentFieldMissing)?)?;
         }
 
         //self.timestamp = bpf_ktime_get_boot_ns();
@@ -346,8 +349,12 @@ bpf_target_code! {
     impl<T> Event<T> {
         #[inline(always)]
         pub unsafe fn init_from_current_task(&mut self, ty: Type) -> Result<(), Error> {
-            let t = bpf_get_current_task() as *const c_void;
-            self.info.init(ty, t)?;
+            self.init_from_task(ty, task_struct::from_ptr(bpf_get_current_task() as *const _))
+        }
+
+        #[inline(always)]
+        pub unsafe fn init_from_task(&mut self, ty: Type, ts: task_struct) -> Result<(), Error> {
+            self.info.init(ty, ts)?;
             Ok(())
         }
     }
@@ -467,6 +474,7 @@ macro_rules! max {
 
 pub const MAX_EVENT_SIZE: usize = max!(
     core::mem::size_of::<ExecveEvent>(),
+    core::mem::size_of::<CloneEvent>(),
     core::mem::size_of::<BpfProgLoadEvent>(),
     core::mem::size_of::<BpfSocketFilterEvent>(),
     core::mem::size_of::<ConnectEvent>(),

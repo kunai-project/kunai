@@ -15,11 +15,12 @@ use kunai_common::{
     syscalls::*,
 };
 
-#[cfg(debug)]
+#[cfg(feature = "debug")]
 mod debug;
 
 mod bpf;
 mod bpf_socket;
+mod clone;
 mod connect;
 mod dns;
 mod execve;
@@ -35,11 +36,9 @@ mod schedule;
 mod send_data;
 
 macro_rules! ignore_result {
-    ($res:expr) => {
-        match $res {
-            Ok(_) | Err(_) => {}
-        }
-    };
+    ($res:expr) => {{
+        let _ = $res;
+    }};
 }
 
 use ignore_result;

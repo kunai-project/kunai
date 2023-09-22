@@ -33,11 +33,10 @@ unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
-    // TEST
+    // we keep track of linux_binprm
     if !linux_binprm.is_null() {
         ignore_result!(BPRM_EXECVE_ARGS.insert(&bpf_task_tracking_id(), &linux_binprm, 0))
     }
-    // END test
 
     alloc::init()?;
     let event = alloc::alloc_zero::<ExecveEvent>()?;

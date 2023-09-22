@@ -317,8 +317,7 @@ struct task_struct
 	pid_t pid;
 	__u64 start_time;
 	// attempt to make compatible with older kernels
-	union
-	{
+	union {
 		__u64 start_boottime;
 		__u64 real_start_time;
 	};
@@ -455,8 +454,7 @@ typedef __u32 __portpair;
 
 struct in6_addr
 {
-	union
-	{
+	union {
 		__u8 u6_addr8[16];
 		__be16 u6_addr16[8];
 		__be32 u6_addr32[4];
@@ -507,13 +505,11 @@ SHIM_REF(sockaddr_in6, sin6_addr);
 
 struct sock_common
 {
-	union
-	{
+	union {
 		__addrpair skc_addrpair;
 	};
 
-	union
-	{
+	union {
 		__portpair skc_portpair;
 	};
 
@@ -596,13 +592,11 @@ SHIM(iovec, iov_len);
 struct iov_iter
 {
 	size_t count;
-	union
-	{
+	union {
 		struct iovec *iov;
 	};
 
-	union
-	{
+	union {
 		unsigned long nr_segs;
 	};
 } __attribute__((preserve_access_index));
@@ -630,3 +624,10 @@ SHIM(user_msghdr, msg_name);
 SHIM(user_msghdr, msg_namelen);
 SHIM(user_msghdr, msg_iov);
 SHIM(user_msghdr, msg_iovlen);
+
+struct kernel_clone_args
+{
+	u64 flags;
+} __attribute__((preserve_access_index));
+
+SHIM(kernel_clone_args, flags);
