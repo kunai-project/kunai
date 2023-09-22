@@ -1,6 +1,9 @@
-use std::{path::PathBuf, process::Command, vec};
+use std::{
+    io::BufRead, io::BufReader, io::Cursor, io::Write, path::PathBuf, process::Command, vec,
+};
 
 use clap::Parser;
+use json::JsonValue;
 
 use crate::utils;
 
@@ -36,39 +39,36 @@ pub struct BuildOptions {
     /// Build the release target
     #[clap(long)]
     pub release: bool,
+    /// When building happens from an IDE
+    #[clap(long)]
+    pub ide: bool,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub target: BpfTarget,
     // Path to custom bpf-linker
     #[clap(long)]
     pub linker: Option<String>,
+    /// Additional build arguments
+    #[clap(name = "args", last = true)]
+    pub build_args: Vec<String>,
 }
 
-fn cargo(
-    command: &str,
-    dir: &str,
-    opt_args: Vec<&str>,
-    opts: &BuildOptions,
-) -> Result<(), anyhow::Error> {
+fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
     let dir = PathBuf::from(dir);
     let target = format!("--target={}", opts.target);
 
     let mut args = vec![
-        command,
-        "--verbose",
-        target.as_str(),
-        "-Z",
-        "build-std=core",
+        command.to_string(),
+        target,
+        "-Z".into(),
+        "build-std=core".into(),
     ];
-    opt_args.iter().for_each(|&arg| args.push(arg));
+
+    opts.build_args
+        .iter()
+        .for_each(|arg| args.push(arg.clone()));
 
     let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
-
-    if opts.release {
-        args.push("--release")
-    } else {
-        rustflags.push("--cfg debug".into());
-    }
 
     if let Some(linker) = &opts.linker {
         rustflags.push(format!("-C linker={linker}"));
@@ -82,21 +82,81 @@ fn cargo(
     // vars set by the cargo xtask command are also inherited. RUSTUP_TOOLCHAIN is removed
     // so the rust-toolchain.toml file in the -ebpf folder is honored.
 
-    let status = Command::new("cargo")
-        .current_dir(dir)
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(dir)
         .env_remove("RUSTUP_TOOLCHAIN")
         .env("RUSTFLAGS", rustflags.join(" "))
-        .args(&args)
+        .args(&args);
+    cmd
+}
+
+pub fn build(dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
+    let status = cargo("build", dir, opts)
         .status()
         .expect("failed to build bpf program");
     assert!(status.success());
     Ok(())
 }
 
-pub fn build(dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
-    cargo("build", dir, vec![], opts)
+fn fix_path_in_json(root: &str, val: &mut JsonValue) {
+    let pb_root = PathBuf::from(root);
+    match val {
+        JsonValue::Object(obj) => {
+            for (k, v) in obj.iter_mut() {
+                if v.is_array() || v.is_object() {
+                    fix_path_in_json(root, v);
+                    continue;
+                }
+
+                if k == "file_name" && v.is_string() {
+                    let full = pb_root.join(v.as_str().unwrap());
+                    *v = full.to_string_lossy().to_string().into();
+                }
+            }
+        }
+        JsonValue::Array(array) => {
+            for v in array.iter_mut() {
+                if v.is_array() || v.is_object() {
+                    fix_path_in_json(root, v);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
-pub fn check(dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
-    cargo("check", dir, vec!["--message-format=json"], opts)
+pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
+    let output = cargo("check", dir, opts)
+        .output()
+        .expect("failed to run cargo check");
+
+    let cursor = Cursor::new(output.stdout.as_slice());
+    let reader = BufReader::new(cursor);
+
+    if opts
+        .build_args
+        .iter()
+        .find(|s| s.contains("--message-format=json"))
+        .is_some()
+    {
+        // we have some json output to process
+        for line in reader.lines() {
+            let line = line.unwrap();
+            let mut j = json::parse(&line).expect("failed to parse json message");
+
+            fix_path_in_json(dir, &mut j);
+
+            println!("{}", j)
+        }
+    } else {
+        std::io::stdout().write_all(&output.stdout)?;
+    }
+
+    // we return stderr only at the end so that we can print error message to stdout
+    if !output.status.success() {
+        std::io::stderr().write_all(&output.stderr)?;
+        return Err(anyhow::anyhow!("cargo check failed"));
+    }
+
+    Ok(())
 }

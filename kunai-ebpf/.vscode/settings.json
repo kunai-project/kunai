@@ -1,0 +1,5 @@
+{
+    "rust-analyzer.cargo.target": "bpfel-unknown-none",
+    "rust-analyzer.checkOnSave.allTargets": false,
+    "rust-analyzer.showUnlinkedFileNotification": false,
+}

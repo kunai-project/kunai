@@ -60,6 +60,7 @@ impl From<RunOptions> for BuildOptions {
 impl From<&RunOptions> for BuildOptions {
     fn from(value: &RunOptions) -> Self {
         Self {
+            ide: false,
             target: value.target,
             bpf_target: value.bpf_target,
             bpf_linker: value.bpf_linker.clone(),
@@ -69,11 +70,14 @@ impl From<&RunOptions> for BuildOptions {
     }
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct BuildOptions {
     /// Build and run the release target
     #[clap(long)]
     pub release: bool,
+    /// When building happens from an IDE, a different target-dir is set (to speed up build process)
+    #[clap(long)]
+    pub ide: bool,
     /// Set the endianness of the BPF target
     #[clap(default_value = "x86_64-unknown-linux-musl", long)]
     pub target: Target,
@@ -97,9 +101,11 @@ impl From<BuildOptions> for ebpf::BuildOptions {
 impl From<&BuildOptions> for ebpf::BuildOptions {
     fn from(value: &BuildOptions) -> Self {
         Self {
+            ide: value.ide,
             target: value.bpf_target,
             release: value.release,
             linker: value.bpf_linker.clone(),
+            build_args: value.build_args.clone(),
         }
     }
 }
@@ -112,6 +118,7 @@ fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
 
     let target = format!("--target={}", opts.target);
     args.push(&target);
+
     opts.build_args.iter().for_each(|ba| args.push(ba));
 
     let status = Command::new("cargo")
@@ -128,7 +135,13 @@ fn build(opts: &BuildOptions) -> Result<(), anyhow::Error> {
 }
 
 /// Build the project
-pub fn check(opts: &BuildOptions) -> Result<(), anyhow::Error> {
+pub fn check(opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
+    if opts.ide {
+        opts.build_args
+            .push("--message-format=json-diagnostic-rendered-ansi".into());
+        opts.build_args.push("--quiet".into());
+    }
+
     cargo("check", opts)
 }
 

@@ -34,9 +34,9 @@ fn main() -> Result<(), anyhow::Error> {
         BuildEbpf(opts) => ebpf::build(EBPF_DIR, &opts)?,
         Build(opts) => user::build_all(EBPF_DIR, &opts)?,
         Run(opts) => user::run(EBPF_DIR, &opts)?,
-        Check(opts) => {
-            user::check(&opts)?;
-            ebpf::check(EBPF_DIR, &opts.into())?;
+        Check(mut opts) => {
+            user::check(&mut opts)?;
+            ebpf::check(EBPF_DIR, &mut opts.into())?;
         }
         BuildTools(opts) => {
             // checking we have the tools we need

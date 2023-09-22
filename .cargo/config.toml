@@ -1,8 +1,11 @@
 [build]
-target = ["x86_64-unknown-linux-gnu"]
+# specifying the two targets here seems necessary to enable
+# VSCode having code analysis for both the targets in workspace
+# members (needed for kunai-common)
+target = ["x86_64-unknown-linux-gnu", "bpfel-unknown-none"]
 
 [alias]
-xtask = "run -q --package xtask --release --"
+xtask = "run -q --target=x86_64-unknown-linux-gnu --package xtask --release --"
 
 [profile.release]
 lto = true

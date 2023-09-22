@@ -1,0 +1,32 @@
+{
+  "rust-analyzer.showUnlinkedFileNotification": false,
+  "rust-analyzer.check.overrideCommand": [
+    "cargo",
+    "xtask",
+    "check",
+    "--",
+    "--workspace",
+    "--quiet",
+    "--message-format=json"
+  ],
+  "rust-analyzer.linkedProjects": [
+    "Cargo.toml",
+    "kunai-ebpf/Cargo.toml"
+  ],
+  // no need to cargo check in every workspace member
+  // cargo xtask check does it for us
+  "rust-analyzer.check.invocationStrategy": "once",
+  // so that cargo check builds with the correct targets
+  "rust-analyzer.cargo.buildScripts.overrideCommand": [
+    "cargo",
+    "xtask",
+    "check",
+    "--",
+    "--workspace",
+    "--quiet",
+    "--message-format=json"
+  ],
+  // if set to workspace it tries to run cargo xtask inside
+  // kunai-ebpf which is problematic as xtask doesnt exists in there 
+  "rust-analyzer.cargo.buildScripts.invocationLocation": "root",
+}
