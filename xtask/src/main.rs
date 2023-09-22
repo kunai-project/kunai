@@ -107,7 +107,7 @@ fn main() -> Result<(), anyhow::Error> {
             println!("Synchronizing repo:{linker_repo} branch:{linker_branch}");
             git::sync(linker_branch, linker_repo, &linker_dir)?;
 
-            tools::build_linker(&llvm_install, linker_dir)?;
+            tools::build_linker(&llvm_install, linker_dir, &opts)?;
         }
     }
 

@@ -3,14 +3,21 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 pub struct Options {
+    /// generates a cache key (mostly to be used in CI)
     #[clap(long)]
     pub action_cache_key: bool,
+    /// force LLVM build
     #[clap(long)]
     pub force_llvm_build: bool,
+    /// free up space by removing LLVM build artifacts
     #[clap(long)]
     pub free_space: bool,
+    /// update bpf-linker
     #[clap(long)]
     pub update: bool,
+    /// target to build the build-tools for
+    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
+    pub target: super::user::Target,
 }
 
 pub struct LLVMBuilder {
@@ -76,6 +83,7 @@ impl LLVMBuilder {
 pub fn build_linker<T: AsRef<Path>, U: AsRef<Path>>(
     llvm_build_dir: T,
     linker_dir: U,
+    opts: &Options,
 ) -> Result<(), anyhow::Error> {
     let llvm_build_dir = llvm_build_dir.as_ref();
     let linker_dir = linker_dir.as_ref();
@@ -96,6 +104,7 @@ pub fn build_linker<T: AsRef<Path>, U: AsRef<Path>>(
         .current_dir(linker_dir)
         .env("LLVM_SYS_160_PREFIX", llvm_build_dir)
         .arg("build")
+        .arg(&format!("--target={}", opts.target))
         .arg("--release")
         .arg("--bins")
         .status()

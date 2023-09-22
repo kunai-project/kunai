@@ -8,6 +8,7 @@ use crate::ebpf::{self, BpfTarget};
 #[derive(Debug, Copy, Clone)]
 pub enum Target {
     X86_64Musl,
+    X86_64Gnu,
 }
 
 impl std::str::FromStr for Target {
@@ -16,6 +17,7 @@ impl std::str::FromStr for Target {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "x86_64-unknown-linux-musl" => Target::X86_64Musl,
+            "x86_64-unknown-linux-gnu" => Target::X86_64Gnu,
             _ => return Err("invalid target".to_owned()),
         })
     }
@@ -25,6 +27,7 @@ impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Target::X86_64Musl => "x86_64-unknown-linux-musl",
+            Target::X86_64Gnu => "x86_64-unknown-linux-gnu",
         })
     }
 }
