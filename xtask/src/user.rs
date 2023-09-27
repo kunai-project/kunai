@@ -43,9 +43,12 @@ pub struct RunOptions {
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub bpf_target: BpfTarget,
-    // custom bpf-linker
+    /// Path to custom bpf-linker
     #[clap(long)]
     pub bpf_linker: Option<String>,
+    /// Additional arguments to pass to bpf-linker
+    #[clap(long)]
+    pub bpf_link_arg: Vec<String>,
     /// The command used to wrap your application
     #[clap(short, long, default_value = "sudo -E")]
     pub runner: String,
@@ -67,6 +70,7 @@ impl From<&RunOptions> for BuildOptions {
             bpf_target: value.bpf_target,
             bpf_linker: value.bpf_linker.clone(),
             release: value.release,
+            bpf_link_arg: value.bpf_link_arg.clone(),
             build_args: vec![],
         }
     }
@@ -86,6 +90,9 @@ pub struct BuildOptions {
     /// Path to custom bpf-linker
     #[clap(long)]
     pub bpf_linker: Option<String>,
+    /// Additional arguments to pass to the linker
+    #[clap(long)]
+    pub bpf_link_arg: Vec<String>,
     /// Additional build arguments
     #[clap(name = "args", last = true)]
     pub build_args: Vec<String>,
@@ -103,6 +110,7 @@ impl From<&BuildOptions> for ebpf::BuildOptions {
             target: value.bpf_target,
             release: value.release,
             linker: value.bpf_linker.clone(),
+            link_arg: value.bpf_link_arg.clone(),
             build_args: value.build_args.clone(),
         }
     }

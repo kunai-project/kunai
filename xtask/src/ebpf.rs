@@ -48,12 +48,70 @@ pub struct BuildOptions {
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub target: BpfTarget,
-    // Path to custom bpf-linker
+    //// Path to custom bpf-linker
     #[clap(long)]
     pub linker: Option<String>,
+    /// Additional linker arguments to pass to bpf-linker
+    #[clap(long)]
+    pub link_arg: Vec<String>,
     /// Additional build arguments
     #[clap(name = "args", last = true)]
     pub build_args: Vec<String>,
+}
+
+impl BuildOptions {
+    fn mandatory_rustflags(&self) -> Vec<String> {
+        let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
+
+        if let Some(linker) = &self.linker {
+            rustflags.push(format!("-C linker={linker}"));
+        } else if let Ok(linker) =
+            utils::find_first_in("./build-tools", "bpf-linker").and_then(|p| p.canonicalize())
+        {
+            rustflags.push(format!("-C linker={}", linker.to_string_lossy()));
+        }
+
+        // we add linker arguments
+        self.link_arg
+            .iter()
+            .for_each(|link_arg| rustflags.push(format!("-C link-arg={link_arg}")));
+
+        rustflags
+    }
+
+    fn build_rustflags(&self) -> String {
+        let mut rustflags = self.mandatory_rustflags();
+
+        // profile we are building (release or debug)
+        let profile = if self.release { "release" } else { "debug" };
+
+        // we get the binary path
+        let linker_out_dir = {
+            let t = PathBuf::from("target")
+                .join(self.target.to_string())
+                .join(profile)
+                .join("linker");
+            std::fs::create_dir_all(&t).expect("failed to create target directory");
+            t.canonicalize()
+                .expect("failed to canonicalize target directory")
+        };
+        // bpf-linker log file
+        let log_file = linker_out_dir.join("bpf-linker.log");
+
+        // we ignore NotFound error
+        let res = std::fs::remove_file(&log_file);
+        if res.as_ref().is_err_and(|e| e.kind() != ErrorKind::NotFound) {
+            res.unwrap()
+        }
+
+        let dump_dir = linker_out_dir.join("dump_module");
+
+        rustflags.push("-C link-arg=--log-level=info".into());
+        rustflags.push(format!("-C link-arg=--log-file={}", log_file.to_string_lossy()).into());
+        rustflags.push(format!("-C link-arg=--dump-module={}", dump_dir.to_string_lossy()).into());
+
+        rustflags.join(" ")
+    }
 }
 
 fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
@@ -75,51 +133,12 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
         .iter()
         .for_each(|arg| args.push(arg.clone()));
 
-    let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
-
-    if let Some(linker) = &opts.linker {
-        rustflags.push(format!("-C linker={linker}"));
-    } else if let Ok(linker) =
-        utils::find_first_in("./build-tools", "bpf-linker").and_then(|p| p.canonicalize())
-    {
-        rustflags.push(format!("-C linker={}", linker.to_string_lossy()));
-    }
-
-    // profile we are building (release or debug)
-    let profile = if opts.release { "release" } else { "debug" };
-
-    // we get the binary path
-    let linker_out_dir = {
-        let t = PathBuf::from("target")
-            .join(opts.target.to_string())
-            .join(profile)
-            .join("linker");
-        std::fs::create_dir_all(&t).expect("failed to create target directory");
-        t.canonicalize()
-            .expect("failed to canonicalize target directory")
-    };
-
-    let log_file = linker_out_dir.join("bpf-linker.log");
-
-    // we ignore NotFound error
-    let res = std::fs::remove_file(&log_file);
-    if res.as_ref().is_err_and(|e| e.kind() != ErrorKind::NotFound) {
-        res.unwrap()
-    }
-
-    let dump_dir = linker_out_dir.join("dump_module");
-
-    rustflags.push("-C link-arg=--log-level=info".into());
-    rustflags.push(format!("-C link-arg=--log-file={}", log_file.to_string_lossy()).into());
-    rustflags.push(format!("-C link-arg=--dump-module={}", dump_dir.to_string_lossy()).into());
-
     // Command::new creates a child process which inherits all env variables. This means env
     // vars set by the cargo xtask command are also inherited. RUSTUP_TOOLCHAIN is removed
     // so the rust-toolchain.toml file in the -ebpf folder is honored.
     let mut cmd = Command::new("cargo");
     cmd.current_dir(dir)
         .env_remove("RUSTUP_TOOLCHAIN")
-        .env("RUSTFLAGS", rustflags.join(" "))
         .args(&args);
     cmd
 }
@@ -130,8 +149,10 @@ pub fn build(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     }
 
     let status = cargo("build", dir, opts)
+        .env("RUSTFLAGS", opts.build_rustflags())
         .status()
         .expect("failed to build bpf program");
+
     assert!(status.success());
     Ok(())
 }
@@ -165,6 +186,7 @@ fn fix_path_in_json(root: &str, val: &mut JsonValue) {
 
 pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     let output = cargo("check", dir, opts)
+        .env("RUSTFLAGS", opts.mandatory_rustflags().join(" "))
         .output()
         .expect("failed to run cargo check");
 
