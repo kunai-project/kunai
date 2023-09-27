@@ -152,7 +152,6 @@ pub fn run(ebpf_dir: &str, opts: &RunOptions) -> Result<(), anyhow::Error> {
     let profile = if opts.release { "release" } else { "debug" };
 
     // we get the binary path
-    // Todo: make binary name not hardcoded
     let bin_path = format!("target/{}/{profile}/kunai", opts.target);
 
     // arguments to pass to the application

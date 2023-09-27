@@ -1,5 +1,11 @@
 use std::{
-    io::BufRead, io::BufReader, io::Cursor, io::Write, path::PathBuf, process::Command, vec,
+    io::BufRead,
+    io::BufReader,
+    io::Cursor,
+    io::{ErrorKind, Write},
+    path::PathBuf,
+    process::Command,
+    vec,
 };
 
 use clap::Parser;
@@ -79,10 +85,37 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
         rustflags.push(format!("-C linker={}", linker.to_string_lossy()));
     }
 
+    // profile we are building (release or debug)
+    let profile = if opts.release { "release" } else { "debug" };
+
+    // we get the binary path
+    let linker_out_dir = {
+        let t = PathBuf::from("target")
+            .join(opts.target.to_string())
+            .join(profile)
+            .join("linker");
+        std::fs::create_dir_all(&t).expect("failed to create target directory");
+        t.canonicalize()
+            .expect("failed to canonicalize target directory")
+    };
+
+    let log_file = linker_out_dir.join("bpf-linker.log");
+
+    // we ignore NotFound error
+    let res = std::fs::remove_file(&log_file);
+    if res.as_ref().is_err_and(|e| e.kind() != ErrorKind::NotFound) {
+        res.unwrap()
+    }
+
+    let dump_dir = linker_out_dir.join("dump_module");
+
+    rustflags.push("-C link-arg=--log-level=info".into());
+    rustflags.push(format!("-C link-arg=--log-file={}", log_file.to_string_lossy()).into());
+    rustflags.push(format!("-C link-arg=--dump-module={}", dump_dir.to_string_lossy()).into());
+
     // Command::new creates a child process which inherits all env variables. This means env
     // vars set by the cargo xtask command are also inherited. RUSTUP_TOOLCHAIN is removed
     // so the rust-toolchain.toml file in the -ebpf folder is honored.
-
     let mut cmd = Command::new("cargo");
     cmd.current_dir(dir)
         .env_remove("RUSTUP_TOOLCHAIN")
