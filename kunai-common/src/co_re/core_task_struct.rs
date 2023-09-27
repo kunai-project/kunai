@@ -12,14 +12,17 @@ use super::{cred, mm_struct, nsproxy, rust_shim_kernel_impl, task_group, CoRe};
 pub type task_struct = CoRe<gen::task_struct>;
 
 impl task_struct {
+    #[inline(always)]
     pub unsafe fn current() -> Self {
         Self::from_ptr(bpf_get_current_task() as *const _)
     }
 
+    #[inline(always)]
     pub unsafe fn current_btf() -> Self {
         Self::from_ptr(bpf_get_current_task_btf() as *const _)
     }
 
+    #[inline(always)]
     pub unsafe fn uuid(&self) -> u128 {
         unsafe { core::mem::transmute([bpf_get_current_pid_tgid(), self.as_ptr() as u64]) }
     }
@@ -29,6 +32,7 @@ impl task_struct {
     rust_shim_kernel_impl!(pub(self), _start_boot_time, task_struct, start_boottime, u64);
     rust_shim_kernel_impl!(pub(self),_real_start_time, task_struct, real_start_time, u64);
 
+    #[inline(always)]
     pub unsafe fn start_boottime(&self) -> Option<u64> {
         if let Some(sbt) = self._start_boot_time() {
             return Some(sbt);
@@ -41,18 +45,21 @@ impl task_struct {
         None
     }
 
+    #[inline(always)]
     pub unsafe fn real_start_time(&self) -> Option<u64> {
         self.start_boottime()
     }
 
     rust_shim_kernel_impl!(pub, task_struct, comm, *mut u8);
 
+    #[inline(always)]
     pub unsafe fn comm_array(&self) -> Option<[u8; 16]> {
         let mut comm = [0u8; 16];
         bpf_probe_read_kernel_buf(self.comm()?, comm.as_mut_slice()).ok()?;
         Some(comm)
     }
 
+    #[inline(always)]
     pub unsafe fn comm_str(&self) -> Option<String<16>> {
         let mut comm = String::<16>::new();
         comm.read_kernel_str_bytes(self.comm()?).ok()?;

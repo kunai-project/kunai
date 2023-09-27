@@ -8,6 +8,7 @@ impl sock_fprog {
     rust_shim_kernel_impl!(pub, sock_fprog, len, u16);
     rust_shim_kernel_impl!(pub, sock_fprog, filter, sock_filter);
 
+    #[inline(always)]
     pub unsafe fn size(&self) -> Option<usize> {
         Some(self.len()? as usize * core::mem::size_of::<gen::sock_filter>())
     }
@@ -20,10 +21,12 @@ impl sock_fprog_kern {
     rust_shim_kernel_impl!(pub, sock_fprog_kern, len, u16);
     rust_shim_kernel_impl!(pub, sock_fprog_kern, filter, sock_filter);
 
+    #[inline(always)]
     pub unsafe fn byte_size_from_len(len: u16) -> usize {
         len as usize * core::mem::size_of::<gen::sock_filter>()
     }
 
+    #[inline(always)]
     pub unsafe fn byte_size(&self) -> Option<usize> {
         Some(Self::byte_size_from_len(self.len()?))
     }

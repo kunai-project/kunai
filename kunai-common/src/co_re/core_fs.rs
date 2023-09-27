@@ -19,10 +19,12 @@ impl inode {
     rust_shim_kernel_impl!(inode, i_mtime, timespec64);
     rust_shim_kernel_impl!(inode, i_ctime, timespec64);
 
+    #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {
         Some(self.i_mode()? & S_IFMT == S_IFREG)
     }
 
+    #[inline(always)]
     pub unsafe fn is_sock(&self) -> Option<bool> {
         Some(self.i_mode()? & S_IFMT == S_IFSOCK)
     }
@@ -35,10 +37,12 @@ impl file {
     rust_shim_kernel_impl!(pub, file, f_path, path);
     rust_shim_kernel_impl!(pub, file, f_inode, inode);
 
+    #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {
         self.f_inode()?.is_file()
     }
 
+    #[inline(always)]
     pub unsafe fn is_sock(&self) -> Option<bool> {
         self.f_inode()?.is_sock()
     }
@@ -68,10 +72,12 @@ impl qstr {
     rust_shim_kernel_impl!(pub, qstr, name, *const u8);
     rust_shim_kernel_impl!(pub, qstr, hash_len, u64);
 
+    #[inline(always)]
     pub unsafe fn hash(&self) -> Option<u32> {
         Some(self.hash_len()? as u32)
     }
 
+    #[inline(always)]
     pub unsafe fn len(&self) -> Option<u32> {
         //(shim_qstr_hash_len(self.as_ptr_mut()) >> 32) as u32
         Some((self.hash_len()? >> 32) as u32)
@@ -88,6 +94,7 @@ impl dentry {
     rust_shim_kernel_impl!(pub, dentry, d_parent, dentry);
     rust_shim_kernel_impl!(pub, dentry, d_flags, u32);
 
+    #[inline(always)]
     pub unsafe fn is_mountpoint(&self) -> Option<bool> {
         Some(self.d_flags()? & DCACHE_MOUNTED == DCACHE_MOUNTED)
     }
@@ -95,6 +102,7 @@ impl dentry {
     rust_shim_kernel_impl!(pub, dentry, d_name, qstr);
     rust_shim_kernel_impl!(pub, dentry, d_inode, inode);
 
+    #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {
         self.d_inode()?.is_file()
     }
@@ -121,6 +129,7 @@ impl mount {
 pub type vfsmount = CoRe<gen::vfsmount>;
 
 impl vfsmount {
+    #[inline(always)]
     pub unsafe fn mount(&self) -> mount {
         mount::from_ptr(shim_mount_from_vfsmount(self.as_ptr_mut()))
     }

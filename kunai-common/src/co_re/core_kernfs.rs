@@ -7,6 +7,7 @@ pub type kernfs_node = CoRe<gen::kernfs_node>;
 impl kernfs_node {
     rust_shim_kernel_impl!(pub(self),_name, kernfs_node, name, *const i8);
 
+    #[inline(always)]
     pub unsafe fn name(&self) -> Option<*const u8> {
         Some(self._name()? as *const u8)
     }

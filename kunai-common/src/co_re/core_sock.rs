@@ -11,33 +11,39 @@ impl in6_addr {
     rust_shim_kernel_impl!(pub(self), in6_addr, u6_addr8, *mut u8);
     rust_shim_user_impl!(pub(self), in6_addr, u6_addr8, *mut u8);
 
+    #[inline(always)]
     pub unsafe fn addr8(&self) -> Option<[u8; 16]> {
         let mut addr = [0u8; 16];
         bpf_probe_read_kernel_buf(self.u6_addr8()?, addr.as_mut_slice()).ok()?;
         Some(addr)
     }
 
+    #[inline(always)]
     pub unsafe fn addr16(&self) -> Option<[u16; 8]> {
         let addr = self.addr8()?;
         Some(core::mem::transmute(addr))
     }
 
+    #[inline(always)]
     pub unsafe fn addr32(&self) -> Option<[u32; 4]> {
         let addr = self.addr8()?;
         Some(core::mem::transmute(addr))
     }
 
+    #[inline(always)]
     pub unsafe fn addr8_user(&self) -> Option<[u8; 16]> {
         let mut addr = [0u8; 16];
         bpf_probe_read_user_buf(self.u6_addr8_user()?, addr.as_mut_slice()).ok()?;
         Some(addr)
     }
 
+    #[inline(always)]
     pub unsafe fn addr16_user(&self) -> Option<[u16; 8]> {
         let addr = self.addr8_user()?;
         Some(core::mem::transmute(addr))
     }
 
+    #[inline(always)]
     pub unsafe fn addr32_user(&self) -> Option<[u32; 4]> {
         let addr = self.addr8_user()?;
         Some(core::mem::transmute(addr))
@@ -82,11 +88,13 @@ impl sock_common {
     rust_shim_kernel_impl!(pub, sock_common, skc_family, u16);
     rust_shim_kernel_impl!(pub, sock_common, skc_addrpair, u64);
 
+    #[inline(always)]
     pub unsafe fn skc_daddr(&self) -> Option<u32> {
         let addrpair: skc_addrpair = core::mem::transmute(self.skc_addrpair()?);
         Some(addrpair.skc_daddr)
     }
 
+    #[inline(always)]
     pub unsafe fn skc_rcv_saddr(&self) -> Option<u32> {
         let addrpair: skc_addrpair = core::mem::transmute(self.skc_addrpair()?);
         Some(addrpair.skc_rcv_saddr)
@@ -94,11 +102,13 @@ impl sock_common {
 
     rust_shim_kernel_impl!(pub, sock_common, skc_portpair, u32);
 
+    #[inline(always)]
     pub unsafe fn skc_dport(&self) -> Option<u16> {
         let portpair: skc_portpair = core::mem::transmute(self.skc_portpair()?);
         Some(portpair.skc_dport)
     }
 
+    #[inline(always)]
     pub unsafe fn skc_num(&self) -> Option<u16> {
         let portpair: skc_portpair = core::mem::transmute(self.skc_portpair()?);
         Some(portpair.skc_num)
@@ -141,6 +151,7 @@ impl sk_buff_head {
 
     // depending on the kernel version next might be wrapped inside a list struct
     // we handle that case here.
+    #[inline(always)]
     pub unsafe fn next(&self) -> Option<sk_buff> {
         if let Some(next) = self._next() {
             return Some(next);
@@ -173,6 +184,7 @@ impl sockaddr {
 pub type sockaddr_in = CoRe<gen::sockaddr_in>;
 
 impl From<sockaddr> for sockaddr_in {
+    #[inline(always)]
     fn from(value: sockaddr) -> Self {
         Self::from_ptr(value.as_ptr() as *const _)
     }

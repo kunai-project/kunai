@@ -22,6 +22,7 @@ impl bpf_prog {
     rust_shim_kernel_impl!(pub, bpf_prog, orig_prog, sock_fprog_kern);
     rust_shim_kernel_impl!(pub, bpf_prog, tag, *mut u8);
 
+    #[inline(always)]
     pub unsafe fn tag_array(&self) -> Option<[u8; 8]> {
         let mut out = [0; 8];
         if let Some(tag) = self.tag() {

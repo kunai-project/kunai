@@ -254,6 +254,8 @@ bpf_target_code! {
 
     impl TryFrom<crate::co_re::sock> for SocketInfo {
         type Error = Error;
+
+        #[inline(always)]
         fn try_from(s: crate::co_re::sock) -> Result<Self, Self::Error> {
             unsafe{
                 let ty = core_read_kernel!(s, sk_type).ok_or(Error::SkTypeMissing)?;

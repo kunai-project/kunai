@@ -12,6 +12,7 @@ impl iovec {
     rust_shim_kernel_impl!(pub, iovec, iov_len, u64);
     rust_shim_user_impl!(pub, iovec, iov_len, u64);
 
+    #[inline(always)]
     pub unsafe fn get(&self, i: usize) -> Self {
         self.as_ptr().add(i).into()
     }
