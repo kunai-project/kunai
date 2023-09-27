@@ -23,7 +23,7 @@ path = "src/main.rs"
 
 [profile.dev]
 opt-level = 3
-# prevents LLVM from segfaulting
+# enable DI
 debug = 2
 debug-assertions = false
 overflow-checks = false
@@ -34,7 +34,8 @@ codegen-units = 1
 rpath = false
 
 [profile.release]
-# prevents LLVM from segfaulting
+opt-level = 3
+# enable DI
 debug = 2
 debug-assertions = false
 lto = true
