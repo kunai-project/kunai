@@ -9,7 +9,7 @@ use clap::Parser;
 use env_logger::Builder;
 use json::{object, JsonValue};
 use kunai::info::{AdditionalFields, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
-use kunai::{cache, configure_probes, util};
+use kunai::{cache, util};
 use kunai_common::cgroup::Cgroup;
 use kunai_common::config::{BpfConfig, Filter};
 
@@ -1345,7 +1345,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let mut programs = Programs::from_bpf(&mut bpf);
 
-    configure_probes(&mut programs, current_kernel);
+    kunai::configure_probes(&mut programs, current_kernel);
 
     // generic program loader
     for (_, mut p) in programs.into_vec_sorted_by_prio() {

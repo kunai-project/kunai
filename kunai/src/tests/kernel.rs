@@ -2,7 +2,6 @@ use anyhow::anyhow;
 use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
 use env_logger::Builder;
 use kunai::compat::{KernelVersion, Programs};
-use kunai::configure_probes;
 use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::{error, info, warn};
 use std::{ffi::CString, panic};
@@ -65,7 +64,7 @@ fn integration() -> anyhow::Result<()> {
 
     let mut programs = Programs::from_bpf(&mut bpf);
 
-    configure_probes(&mut programs, current_kernel);
+    kunai::configure_probes(&mut programs, current_kernel);
 
     info!("getting BTF");
     let btf = Btf::from_sys_fs()?;

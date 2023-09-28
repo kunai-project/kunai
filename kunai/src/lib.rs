@@ -6,15 +6,19 @@ pub mod config;
 pub mod info;
 pub mod util;
 
-pub fn configure_probes(programs: &mut Programs, for_kernel: KernelVersion) {
+/// function that responsible of probe priorities and compatibily across kernels
+/// panic: if a given probe name is not found
+pub fn configure_probes(programs: &mut Programs, target: KernelVersion) {
     programs.expect_mut("execve.security_bprm_check").prio = 0;
 
     programs.expect_mut("execve.exit.bprm_execve").prio = 20;
+    programs.expect_mut("syscalls.sys_exit_execve").prio = 20;
+
+    // bprm_execve does not exists before 5.9
     programs
         .expect_mut("execve.exit.bprm_execve")
         .min_kernel(kernel!(5, 9));
 
-    programs.expect_mut("syscalls.sys_exit_execve").prio = 20;
     programs
         .expect_mut("syscalls.sys_exit_execve")
         .max_kernel(kernel!(5, 9));
@@ -36,12 +40,12 @@ pub fn configure_probes(programs: &mut Programs, for_kernel: KernelVersion) {
     // kernel_clone -> _do_fork
     programs
         .expect_mut("kprobe.enter.kernel_clone")
-        .rename_if(for_kernel < kernel!(5, 9), "kprobe.enter._do_fork");
+        .rename_if(target < kernel!(5, 9), "kprobe.enter._do_fork");
 
     // path_mount -> do_mount
     programs
         .expect_mut("fs.exit.path_mount")
-        .rename_if(for_kernel < kernel!(5, 9), "fs.exit.do_mount");
+        .rename_if(target < kernel!(5, 9), "fs.exit.do_mount");
 
     // mmap probe
     programs.expect_mut("syscalls.sys_enter_mmap").prio = 90;
