@@ -93,7 +93,7 @@ pub struct BuildOptions {
     /// Additional arguments to pass to the linker
     #[clap(long)]
     pub bpf_link_arg: Vec<String>,
-    /// Additional build arguments
+    /// Additional build arguments to build userland application (it will not be propagated to eBPF build command)
     #[clap(name = "args", last = true)]
     pub build_args: Vec<String>,
 }
@@ -111,7 +111,9 @@ impl From<&BuildOptions> for ebpf::BuildOptions {
             release: value.release,
             linker: value.bpf_linker.clone(),
             link_arg: value.bpf_link_arg.clone(),
-            build_args: value.build_args.clone(),
+            // we don't propagate build arguments as they will very likely
+            // be different
+            build_args: vec![],
         }
     }
 }
