@@ -21,15 +21,15 @@ pub struct Event {
 }
 
 impl Event {
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub(crate) fn disable(&mut self) {
+    pub fn disable(&mut self) {
         self.enable = false
     }
 
-    pub(crate) fn enable(&mut self) {
+    pub fn enable(&mut self) {
         self.enable = true
     }
 }
@@ -87,11 +87,11 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn enable_all(&mut self) {
+    pub fn enable_all(&mut self) {
         self.events.iter_mut().for_each(|e| e.enable())
     }
 
-    pub(crate) fn disable_all(&mut self) {
+    pub fn disable_all(&mut self) {
         self.events.iter_mut().for_each(|e| e.disable())
     }
 }

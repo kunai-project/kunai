@@ -265,6 +265,12 @@ impl<'a> Program<'a> {
         self.name = new.as_ref().to_string();
     }
 
+    pub fn rename_if<T: AsRef<str>>(&mut self, cond: bool, new: T) {
+        if cond {
+            self.rename(new)
+        }
+    }
+
     pub fn enable(&mut self) {
         self.enable = true
     }

@@ -1,15 +1,15 @@
-mod cache;
-mod compat;
+/*mod cache;
 mod config;
 mod info;
-mod util;
+mod util;*/
 
 use aya::maps::MapData;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Builder;
-use info::{AdditionalFields, StdEventInfo};
 use json::{object, JsonValue};
+use kunai::info::{AdditionalFields, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
+use kunai::{cache, configure_probes, util};
 use kunai_common::cgroup::Cgroup;
 use kunai_common::config::{BpfConfig, Filter};
 
@@ -24,9 +24,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::Arc;
 
+use kunai::util::*;
 use std::thread;
 use users::get_current_uid;
-use util::*;
 
 use aya::{
     include_bytes_aligned,
@@ -41,20 +41,18 @@ use aya_log::BpfLogger;
 use kunai_common::{
     events::{self, EncodedEvent, Event, *},
     inspect_err,
-    uuid::TaskUuid,
 };
 
 use log::{debug, error, info, warn};
 
-//use tokio::sync::{Barrier, Mutex};
 use tokio::sync::{Barrier, Mutex};
 use tokio::{signal, task, time};
 
-use cache::*;
+use kunai::cache::*;
 
-use crate::compat::{KernelVersion, Programs};
-use crate::config::Config;
-use crate::util::namespaces::unshare;
+use kunai::compat::{KernelVersion, Programs};
+use kunai::config::Config;
+use kunai::util::namespaces::unshare;
 
 const PAGE_SIZE: usize = 4096;
 
@@ -62,74 +60,6 @@ macro_rules! format_ptr {
     ($value:expr) => {
         format!("{:p}", $value as *const u8)
     };
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ProcFsTaskInfo {
-    pid: i32,
-    uuid: TaskUuid,
-}
-
-impl ProcFsTaskInfo {
-    fn new(start_time_clk_tck: u64, random: u32, pid: i32) -> Self {
-        // starttime in procfs is measured in tick count so we need to convert it
-        let clk_tck = get_clk_tck() as u64;
-
-        Self {
-            pid,
-            uuid: TaskUuid::new(
-                // convert time to the same scale as starttime in task_struct
-                start_time_clk_tck * 1_000_000_000 / clk_tck,
-                random,
-                pid as u32,
-            ),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ProcFsInfo {
-    task: ProcFsTaskInfo,
-    parent: Option<ProcFsTaskInfo>,
-}
-
-#[derive(Debug, Clone)]
-enum CorrInfo {
-    ProcFs(ProcFsInfo),
-    Event(StdEventInfo),
-}
-
-impl CorrInfo {
-    fn corr_key(tuuid: TaskUuid) -> u128 {
-        // in task_struct start_time has a higher resolution so we need to scale it
-        // down in order to have a comparable value with the procfs one
-        let start_time_sec = tuuid.start_time_ns / 1_000_000_000;
-        TaskUuid::new(start_time_sec, tuuid.random, tuuid.pid).into()
-    }
-
-    #[inline]
-    fn pid(&self) -> i32 {
-        match self {
-            Self::ProcFs(pi) => pi.task.pid,
-            Self::Event(si) => si.info.process.tgid,
-        }
-    }
-
-    #[inline]
-    fn correlation_key(&self) -> u128 {
-        match self {
-            Self::ProcFs(pi) => Self::corr_key(pi.task.uuid),
-            Self::Event(si) => Self::corr_key(si.info.process.tg_uuid),
-        }
-    }
-
-    #[inline]
-    fn parent_correlation_key(&self) -> Option<u128> {
-        match self {
-            Self::ProcFs(pi) => Some(Self::corr_key(pi.parent?.uuid)),
-            Self::Event(si) => Some(Self::corr_key(si.info.parent.tg_uuid)),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -266,10 +196,7 @@ impl EventProcessor {
             ));
         }
 
-        let ci = CorrInfo::ProcFs(ProcFsInfo {
-            task: pi,
-            parent: ppi,
-        });
+        let ci = CorrInfo::from(ProcFsInfo::new(pi, ppi));
 
         let ck = ci.correlation_key();
 
@@ -1378,7 +1305,7 @@ async fn main() -> Result<(), anyhow::Error> {
         BpfLoader::new()
             .verifier_log_level(verifier_level)
             .load(include_bytes_aligned!(
-                "../../target/bpfel-unknown-none/debug/kunai-ebpf"
+                "../../../target/bpfel-unknown-none/debug/kunai-ebpf"
             ))?;
 
     #[cfg(not(debug_assertions))]
@@ -1386,7 +1313,7 @@ async fn main() -> Result<(), anyhow::Error> {
         BpfLoader::new()
             .verifier_log_level(verifier_level)
             .load(include_bytes_aligned!(
-                "../../target/bpfel-unknown-none/release/kunai-ebpf"
+                "../../../target/bpfel-unknown-none/release/kunai-ebpf"
             ))?;
 
     if let Err(e) = BpfLogger::init(&mut bpf) {
@@ -1418,46 +1345,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let mut programs = Programs::from_bpf(&mut bpf);
 
-    programs.expect_mut("execve.security_bprm_check").prio = 0;
-
-    programs.expect_mut("execve.exit.bprm_execve").prio = 20;
-    programs
-        .expect_mut("execve.exit.bprm_execve")
-        .min_kernel(kernel!(5, 9));
-
-    programs.expect_mut("syscalls.sys_exit_execve").prio = 20;
-    programs
-        .expect_mut("syscalls.sys_exit_execve")
-        .max_kernel(kernel!(5, 9));
-
-    programs
-        .expect_mut("syscalls.sys_exit_execveat")
-        .max_kernel(kernel!(5, 9));
-
-    // bpf probes
-    programs.expect_mut("entry.security_bpf_prog").prio = 90;
-    programs.expect_mut("exit.bpf_prog_load").prio = 100;
-
-    // fd_install
-    programs.expect_mut("fd.fd_install").prio = 0;
-    programs.expect_mut("fd.entry.__fdget").prio = 0;
-    programs.expect_mut("fd.exit.__fdget").prio = 10;
-
-    // kernel function name changed above 5.9
-    if current_kernel < kernel!(5, 9) {
-        // kernel_clone -> _do_fork
-        programs
-            .expect_mut("kprobe.enter.kernel_clone")
-            .rename("kprobe.enter._do_fork");
-
-        // path_mount -> do_mount
-        programs
-            .expect_mut("fs.exit.path_mount")
-            .rename("fs.exit.do_mount")
-    }
-
-    // mmap probe
-    programs.expect_mut("syscalls.sys_enter_mmap").prio = 90;
+    configure_probes(&mut programs, current_kernel);
 
     // generic program loader
     for (_, mut p) in programs.into_vec_sorted_by_prio() {

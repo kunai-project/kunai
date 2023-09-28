@@ -52,4 +52,8 @@ clap = { version = "4.3.4", features = ["derive"] }
 
 [[bin]]
 name = "kunai"
-path = "src/main.rs"
+path = "src/bin/main.rs"
+
+[[bin]]
+name = "tests"
+path = "src/tests/kernel.rs"

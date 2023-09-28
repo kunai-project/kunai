@@ -56,10 +56,7 @@ impl From<io::Error> for BpfError {
     }
 }
 
-pub(crate) fn bpf_dump_xlated_by_id_and_tag(
-    prog_id: u32,
-    prog_tag: [u8; 8],
-) -> Result<Vec<u8>, BpfError> {
+pub fn bpf_dump_xlated_by_id_and_tag(prog_id: u32, prog_tag: [u8; 8]) -> Result<Vec<u8>, BpfError> {
     let raw_fd = bpf_prog_get_fd_by_id(prog_id)?;
     // we first issue a call to get information about program
     let info = bpf_prog_get_info_by_fd(raw_fd)?;
@@ -84,7 +81,7 @@ pub(crate) fn bpf_dump_xlated_by_id_and_tag(
     Ok(insns)
 }
 
-pub(crate) fn bpf_type_to_string(t: u32) -> String {
+pub fn bpf_type_to_string(t: u32) -> String {
     if t > 31 {
         return "unknown".into();
     }

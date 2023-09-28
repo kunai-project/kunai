@@ -10,7 +10,7 @@ pub mod bpf;
 pub mod namespaces;
 
 #[inline]
-pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
+pub fn is_public_ip(ip: IpAddr) -> bool {
     let ip_network: IpNetwork = ip.into();
 
     match ip_network {
@@ -19,14 +19,14 @@ pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
-pub(crate) fn get_clk_tck() -> i64 {
+pub fn get_clk_tck() -> i64 {
     unsafe { libc::sysconf(libc::_SC_CLK_TCK) }
 }
 
 // inspired from: https://github.com/itchyny/uptime-rs
 // the code panics if we cannot retrieve boot time
 #[allow(dead_code)]
-pub(crate) fn get_boot_time() -> DateTime<Utc> {
+pub fn get_boot_time() -> DateTime<Utc> {
     let mut info: libc::sysinfo = unsafe { zeroed() };
     let ret = unsafe { libc::sysinfo(&mut info) };
     if ret != 0 {
@@ -51,7 +51,7 @@ pub enum RandError {
     PartiallyRandomized,
 }
 
-pub(crate) fn getrandom<T: Sized>() -> Result<T, RandError> {
+pub fn getrandom<T: Sized>() -> Result<T, RandError> {
     let mut t = MaybeUninit::<T>::uninit();
     let buflen = size_of::<T>();
     let rc = unsafe { libc::getrandom(t.as_mut_ptr() as *mut _, buflen, 0) };
@@ -65,28 +65,28 @@ pub(crate) fn getrandom<T: Sized>() -> Result<T, RandError> {
 }
 
 #[inline]
-pub(crate) fn md5_data<T: AsRef<[u8]>>(data: T) -> String {
+pub fn md5_data<T: AsRef<[u8]>>(data: T) -> String {
     let mut h = Md5::new();
     h.update(data.as_ref());
     hex::encode(h.finalize())
 }
 
 #[inline]
-pub(crate) fn sha1_data<T: AsRef<[u8]>>(data: T) -> String {
+pub fn sha1_data<T: AsRef<[u8]>>(data: T) -> String {
     let mut h = Sha1::new();
     h.update(data.as_ref());
     hex::encode(h.finalize())
 }
 
 #[inline]
-pub(crate) fn sha256_data<T: AsRef<[u8]>>(data: T) -> String {
+pub fn sha256_data<T: AsRef<[u8]>>(data: T) -> String {
     let mut h = Sha256::new();
     h.update(data.as_ref());
     hex::encode(h.finalize())
 }
 
 #[inline]
-pub(crate) fn sha512_data<T: AsRef<[u8]>>(data: T) -> String {
+pub fn sha512_data<T: AsRef<[u8]>>(data: T) -> String {
     let mut h = Sha512::new();
     h.update(data.as_ref());
     hex::encode(h.finalize())

@@ -6,3 +6,4 @@ private
 **/*.rs.bk
 target/
 .vim
+cache
