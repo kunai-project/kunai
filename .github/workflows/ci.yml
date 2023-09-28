@@ -21,7 +21,7 @@ jobs:
     - name: Install system tools
       run: |
         sudo apt update
-        sudo apt install -y cmake ninja-build clang lld git libbpf-dev
+        sudo apt install -y qemu-system-x86 cmake ninja-build clang lld git libbpf-dev
 
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
@@ -31,7 +31,7 @@ jobs:
           ~/.cargo
           ~/.rustup
           target
-        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
     - id: cache-key
       run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
@@ -45,12 +45,18 @@ jobs:
               
     - name: Build-Tools (LLVM and bpf-linker)
       run: cargo xtask build-tools --free-space
-
-    #- name: Save cached build tools
-    #  uses: actions/cache@v3
-    #  with:
-    #    path: build-tools # path where build-tools are installed
-    #    key: ${{ runner.os }}-build-tools-${{ hashFiles('xtask/src/**/*.rs') }}
       
     - name: Build (eBPF and userland)
-      run: cargo xtask build
+      run: cargo xtask build --release
+
+    - name: Linux Kernel LTS 5.4
+      run: ./scripts/ci/test_kernel.sh 5.4
+      
+    - name: Linux Kernel LTS 5.10
+      run: ./scripts/ci/test_kernel.sh 5.10
+
+    - name: Linux Kernel LTS 5.15
+      run: ./scripts/ci/test_kernel.sh 5.15
+
+    - name: Linux Kernel LTS 6.1
+      run: ./scripts/ci/test_kernel.sh 6.1
