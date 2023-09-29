@@ -1,12 +1,8 @@
 use crate::{bpf_target_code, not_bpf_target_code};
 
-not_bpf_target_code! {
-    use uuid;
-}
-
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
-pub struct Uuid([u32; 4]);
+pub struct Uuid([u8; 16]);
 
 bpf_target_code! {
 use aya_bpf::helpers::{bpf_get_prandom_u32};
@@ -26,15 +22,26 @@ impl Uuid {
 }
 
 not_bpf_target_code! {
+    use uuid;
 
     impl From<Uuid> for uuid::Uuid {
         fn from(value: Uuid) -> Self {
-            unsafe { core::mem::transmute(value) }
+            Self::from_bytes(value.0)
+        }
+    }
+
+    impl From<uuid::Uuid> for Uuid {
+        fn from(value: uuid::Uuid) -> Self {
+            Self(value.into_bytes())
         }
     }
 
 
     impl Uuid {
+        pub fn new_v4() -> Self {
+            uuid::Uuid::new_v4().into()
+        }
+
         pub fn into_uuid(self) -> uuid::Uuid {
             self.into()
         }
