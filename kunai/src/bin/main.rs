@@ -72,6 +72,11 @@ struct CorrelationData {
 }
 
 impl CorrelationData {
+    #[inline(always)]
+    fn command_line_string(&self) -> String {
+        self.command_line.join(" ")
+    }
+
     fn free_memory(&mut self) {
         self.resolved = HashMap::new();
     }
@@ -230,7 +235,7 @@ impl EventProcessor {
     fn get_command_line(&self, key: u128) -> String {
         let mut cl = String::from("?");
         if let Some(corr) = self.correlations.get(&key) {
-            cl = corr.command_line.join(" ");
+            cl = corr.command_line_string();
         }
         cl
     }

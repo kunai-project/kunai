@@ -277,6 +277,10 @@ impl EventInfo {
         self.process.tg_uuid.random = rand;
         self.parent.tg_uuid.random = rand;
     }
+
+    pub fn switch_type(&mut self, new: Type) {
+        self.etype = new
+    }
 }
 
 #[cfg(target_arch = "bpf")]
@@ -340,7 +344,7 @@ impl<T> Event<T> {
 
     pub fn switch_type(mut self, new: Type) -> Self {
         // we record original event type
-        self.info.etype = new;
+        self.info.switch_type(new);
         self
     }
 }

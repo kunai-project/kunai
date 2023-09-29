@@ -101,14 +101,17 @@ pub struct StdEventInfo {
 }
 
 impl StdEventInfo {
+    #[inline(always)]
     pub fn correlation_key(&self) -> u128 {
         CorrInfo::corr_key(self.info.process.tg_uuid)
     }
 
+    #[inline(always)]
     pub fn parent_correlation_key(&self) -> u128 {
         CorrInfo::corr_key(self.info.parent.tg_uuid)
     }
 
+    #[inline]
     pub fn with_event_info(mut info: EventInfo, rand: u32) -> Self {
         // we set the random part needed to generate uuids for events
         info.set_uuid_random(rand);
@@ -123,6 +126,7 @@ impl StdEventInfo {
         }
     }
 
+    #[inline]
     pub fn with_additional_fields(mut self, fields: AdditionalFields) -> Self {
         self.additional = fields;
         self

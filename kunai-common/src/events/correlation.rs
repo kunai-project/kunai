@@ -18,7 +18,6 @@ pub type CorrelationEvent = Event<CorrelationData>;
 // the data in this structure should always be serializable
 // to a byte array, it should not contain any pointers
 pub struct CorrelationData {
-    //pub origin: Type,
     pub argv: Buffer<MAX_ARGV_SIZE>,
     pub exe: Path,
     pub paths: [Option<Path>; 1],
