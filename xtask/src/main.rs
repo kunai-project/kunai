@@ -35,8 +35,15 @@ fn main() -> Result<(), anyhow::Error> {
         Build(opts) => user::build_all(EBPF_DIR, &opts)?,
         Run(opts) => user::run(EBPF_DIR, &opts)?,
         Check(mut opts) => {
+            // checking userland code
             user::check(&mut opts)?;
-            ebpf::check(EBPF_DIR, &mut opts.into())?;
+
+            // checking bpf code
+            // build arguments are not propagated by into method so we need
+            // to set them explicitely
+            let check_args = opts.build_args.clone();
+            let bo: ebpf::BuildOptions = opts.into();
+            ebpf::check(EBPF_DIR, &mut bo.build_args(check_args))?;
         }
         BuildTools(opts) => {
             // checking we have the tools we need

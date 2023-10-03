@@ -60,6 +60,11 @@ pub struct BuildOptions {
 }
 
 impl BuildOptions {
+    pub fn build_args(mut self, args: Vec<String>) -> Self {
+        self.build_args = args;
+        self
+    }
+
     fn mandatory_rustflags(&self) -> Vec<String> {
         let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
 
