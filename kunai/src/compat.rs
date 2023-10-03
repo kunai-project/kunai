@@ -223,6 +223,13 @@ impl<'a> Program<'a> {
         let program = self.prog();
 
         match program {
+            programs::Program::TracePoint(_) => {
+                let (cat, name) = Self::tp_cat_name(&self.name);
+                if cat == "syscalls" && name.starts_with("sys_exit") {
+                    return self.prio + 1;
+                }
+                return self.prio;
+            }
             programs::Program::KProbe(program) => match program.kind() {
                 programs::ProbeKind::URetProbe => self.prio + 1,
                 programs::ProbeKind::KRetProbe => self.prio + 1,
@@ -233,6 +240,22 @@ impl<'a> Program<'a> {
 
             _ => self.prio,
         }
+    }
+
+    #[inline(always)]
+    // gets tracepoint category and name out of program name
+    fn tp_cat_name(name: &str) -> (String, String) {
+        let v: Vec<String> = name.split('.').map(|s| String::from(s)).collect();
+        let cat = v.get(v.len() - 2).expect("category is missing");
+        let name = v.last().expect("name is missing");
+        (cat.into(), name.into())
+    }
+
+    #[inline(always)]
+    // gets tracepoint category and name out of program name
+    fn fn_name(name: &str) -> String {
+        let v: Vec<String> = name.split('.').map(|s| String::from(s)).collect();
+        v.last().expect("we must have at least one element").into()
     }
 
     pub fn min_kernel(&mut self, min: KernelVersion) -> &mut Self {
@@ -284,35 +307,22 @@ impl<'a> Program<'a> {
         let program = self.prog_mut();
 
         match program {
-            programs::Program::BtfTracePoint(program) => {
-                program.load(&name, btf)?;
-                program.attach()?;
-            }
             programs::Program::TracePoint(program) => {
-                let v: Vec<&str> = name.split('.').collect();
                 program.load()?;
-                let cat = v.get(v.len() - 2).expect("category is missing");
-                let name = v.last().expect("name is missing");
-                program.attach(cat, name)?;
+                let (cat, name) = Self::tp_cat_name(&name);
+                program.attach(&cat, &name)?;
             }
             programs::Program::KProbe(program) => {
-                let v: Vec<&str> = name.split('.').collect();
-                let name = v.last().expect("we must have at least one element");
                 program.load()?;
-                program.attach(name, 0)?;
+                program.attach(&Self::fn_name(&name), 0)?;
             }
-
             programs::Program::FEntry(program) => {
-                let v: Vec<&str> = name.split('.').collect();
-                let name = v.last().expect("we must have at least one element");
-                program.load(name, btf)?;
+                program.load(&Self::fn_name(&name), btf)?;
                 program.attach()?;
             }
 
             programs::Program::FExit(program) => {
-                let v: Vec<&str> = name.split('.').collect();
-                let name = v.last().expect("we must have at least one element");
-                program.load(name, btf)?;
+                program.load(&Self::fn_name(&name), btf)?;
                 program.attach()?;
             }
 
