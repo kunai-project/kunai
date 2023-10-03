@@ -118,6 +118,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
 
     let mut as_str_arms = vec![];
     let mut from_str_arms = vec![];
+    let mut try_from_uint_arms = vec![];
     let mut variants = vec![];
 
     // we iterate over the enum variants
@@ -144,6 +145,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
             as_str_arms.push(quote!(Self::#name => #args,));
             from_str_arms.push(quote!(#args => Ok(Self::#name),));
             variants.push(quote!(Self::#name,));
+            try_from_uint_arms.push(quote!(ty if Self::#name as u64 == ty => Ok(Self::#name),));
         } else {
             panic!("enum variant cannot hold values")
         }
@@ -155,6 +157,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
         impl core::str::FromStr for #enum_name {
             type Err = &'static str;
 
+            #[inline]
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 match s {
                     #(#from_str_arms)*
@@ -164,9 +167,18 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
         }
 
         impl #enum_name {
+            #[inline]
+            pub fn try_from_uint<T: Into<u64>>(value: T) -> Result<Self, &'static str> {
+                match value.into() {
+                    #(#try_from_uint_arms)*
+                    _ => Err("invalid value"),
+                }
+            }
+
+            #[inline]
             pub const fn variants() -> [Self;#variants_len]{
                 [
-                    #(#variants)*
+                #(#variants)*
                 ]
             }
 

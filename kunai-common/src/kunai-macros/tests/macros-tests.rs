@@ -86,4 +86,11 @@ fn test_named_enum() {
     assert_eq!(MyError::Variant102.as_str(), "Variant102");
 
     assert_eq!(MyError::from_str("Variant102"), Ok(MyError::Variant102));
+
+    assert_eq!(MyError::try_from_uint(0u8), Ok(MyError::Variant0));
+    assert_eq!(MyError::try_from_uint(0u16), Ok(MyError::Variant0));
+    assert_eq!(MyError::try_from_uint(0u32), Ok(MyError::Variant0));
+    assert_eq!(MyError::try_from_uint(0u64), Ok(MyError::Variant0));
+
+    assert!(MyError::try_from_uint(42u8).is_err());
 }
