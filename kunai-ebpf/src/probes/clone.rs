@@ -18,7 +18,7 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
     // makes sure we are inside kernel_clone
     if let Ok(entry_ctx) = restore_entry_ctx(ProbeFn::kernel_clone)
         .ok_or(ProbeError::KProbeCtxRestoreFailure)
-        .and_then(|c| Ok(c.restore()))
+        .and_then(|c| Ok(c.probe_context()))
     {
         let clone_args = kernel_clone_args::from_ptr(kprobe_arg!(&entry_ctx, 0)?);
         let new_task = task_struct::from_ptr(kprobe_arg!(ctx, 0)?);

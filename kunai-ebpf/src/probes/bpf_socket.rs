@@ -9,7 +9,7 @@ pub fn exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
         restore_entry_ctx(ProbeFn::__sk_attach_prog)
             .ok_or(ProbeError::KProbeCtxRestoreFailure)
             .and_then(|entry_ctx| {
-                let entry_ctx = &entry_ctx.restore();
+                let entry_ctx = &entry_ctx.probe_context();
 
                 let prog = co_re::bpf_prog::from_ptr(kprobe_arg!(entry_ctx, 0)?);
                 let sk = co_re::sock::from_ptr(kprobe_arg!(entry_ctx, 1)?);
@@ -31,7 +31,7 @@ pub fn exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
         restore_entry_ctx(ProbeFn::reuseport_attach_prog)
             .ok_or(ProbeError::KProbeCtxRestoreFailure)
             .and_then(|entry_ctx| {
-                let entry_ctx = &entry_ctx.restore();
+                let entry_ctx = &entry_ctx.probe_context();
 
                 let sk = co_re::sock::from_ptr(kprobe_arg!(entry_ctx, 0)?);
                 let prog = co_re::bpf_prog::from_ptr(kprobe_arg!(entry_ctx, 1)?);

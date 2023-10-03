@@ -38,7 +38,7 @@ unsafe fn try_exit_connect(
 ) -> ProbeResult<()> {
     let rc = exit_ctx.ret().unwrap_or(-1);
 
-    let entry_ctx = &entry_ctx.restore();
+    let entry_ctx = &entry_ctx.probe_context();
     let addr = co_re::sockaddr::from_ptr(kprobe_arg!(entry_ctx, 1)?);
     let sa_family = core_read_user!(addr, sa_family)?;
 

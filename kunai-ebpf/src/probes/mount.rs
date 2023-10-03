@@ -27,7 +27,7 @@ unsafe fn try_exit_security_sb_mount(
     exit: &ProbeContext,
 ) -> ProbeResult<()> {
     let key = entry.uuid();
-    let entry = entry.restore();
+    let entry = entry.probe_context();
 
     let dev_name: *const u8 = kprobe_arg!(entry, 0)?;
     let path = co_re::path::from_ptr(kprobe_arg!(entry, 1)?);

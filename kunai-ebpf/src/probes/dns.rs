@@ -96,7 +96,7 @@ unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let entry_ctx =
         restore_entry_ctx(ProbeFn::vfs_read).ok_or(ProbeError::KProbeCtxRestoreFailure)?;
-    let saved_ctx = entry_ctx.restore();
+    let saved_ctx = entry_ctx.probe_context();
 
     let file = co_re::file::from_ptr(kprobe_arg!(&saved_ctx, 0)?);
     let ubuf: *const u8 = kprobe_arg!(&saved_ctx, 1)?;
@@ -141,7 +141,7 @@ unsafe fn try_exit_recv(
     if rc < 0 {
         return Ok(());
     }
-    let ent_probe_ctx = &entry_ctx.restore();
+    let ent_probe_ctx = &entry_ctx.probe_context();
     let mut fd_map = FdMap::attach();
 
     let fd: c_int = kprobe_arg!(ent_probe_ctx, 0)?;
@@ -190,7 +190,7 @@ unsafe fn try_exit_recvmsg(
         return Ok(());
     }
 
-    let saved_ctx = &entry_ctx.restore();
+    let saved_ctx = &entry_ctx.probe_context();
     let mut fd_map = FdMap::attach();
 
     let fd: c_int = kprobe_arg!(saved_ctx, 0)?;
