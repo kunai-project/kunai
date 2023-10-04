@@ -349,6 +349,29 @@ impl EventProcessor {
     }
 
     #[inline]
+    fn json_prctl(&mut self, info: StdEventInfo, event: &PrctlEvent) -> JsonValue {
+        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+
+        let opt = event.data.option;
+        let opt_str = PrctlOption::try_from_uint(event.data.option)
+            .and_then(|o| Ok(o.as_str().into()))
+            .unwrap_or(format!("unknown({opt})"));
+
+        let data = object! {
+            exe: *exe.to_string_lossy(),
+            command_line: cmd_line,
+            option: opt_str,
+            arg2: format!("0x{:x}", event.data.arg2),
+            arg3: format!("0x{:x}", event.data.arg3),
+            arg4: format!("0x{:x}", event.data.arg4),
+            arg5: format!("0x{:x}", event.data.arg5),
+            success: event.data.success,
+        };
+
+        Self::json_event_info_ref(&info, data)
+    }
+
+    #[inline]
     fn json_mmap_exec(&mut self, info: StdEventInfo, event: &MmapExecEvent) -> JsonValue {
         let filename = event.data.filename;
         let mnt_ns = event.info.process.namespaces.mnt;
@@ -719,6 +742,14 @@ impl EventProcessor {
             events::Type::Clone => match event!(enc_event, CloneEvent) {
                 Ok(e) => {
                     let e = self.json_clone(std_info, e);
+                    self.output_json(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            events::Type::Prctl => match event!(enc_event, PrctlEvent) {
+                Ok(e) => {
+                    let e = self.json_prctl(std_info, e);
                     self.output_json(e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),

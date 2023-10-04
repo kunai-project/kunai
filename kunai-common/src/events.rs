@@ -44,6 +44,8 @@ mod schedule;
 pub use schedule::*;
 mod mount;
 pub use mount::*;
+mod prctl;
+pub use prctl::*;
 
 // prevent using correlation event in bpf code
 not_bpf_target_code! {
@@ -74,6 +76,8 @@ pub enum Type {
     ExitGroup,
     #[str("clone")]
     Clone,
+    #[str("prctl")]
+    Prctl,
 
     // stuff loaded in kernel
     #[str("init_module")]

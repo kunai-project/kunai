@@ -31,10 +31,12 @@ mod init_module;
 mod mmap;
 mod mount;
 mod mprotect;
+mod prctl;
 mod save;
 mod schedule;
 mod send_data;
 
+/// macro to track ignored results
 macro_rules! ignore_result {
     ($res:expr) => {{
         let _ = $res;
