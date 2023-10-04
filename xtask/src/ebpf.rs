@@ -162,6 +162,8 @@ pub fn build(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// fixes path in output json so that it becomes relative to
+/// Aya project root
 fn fix_path_in_json(root: &str, val: &mut JsonValue) {
     let pb_root = PathBuf::from(root);
     match val {
@@ -172,6 +174,7 @@ fn fix_path_in_json(root: &str, val: &mut JsonValue) {
                     continue;
                 }
 
+                // we fix any file_name key to have a full path from project root
                 if k == "file_name" && v.is_string() {
                     let full = pb_root.join(v.as_str().unwrap());
                     *v = full.to_string_lossy().to_string().into();
