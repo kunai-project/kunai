@@ -195,8 +195,8 @@ pub enum SaFamily {
 }
 
 impl SaFamily {
-    pub fn is_valid_sa_family<T: Into<u16>>(sa_family: T) -> bool {
-        sa_family.into() <= SaFamily::AF_XDP as u16
+    pub fn is_valid_sa_family<T: Into<u64>>(sa_family: T) -> bool {
+        Self::try_from_uint(sa_family).is_ok()
     }
 }
 
@@ -214,9 +214,8 @@ pub enum SockType {
 }
 
 impl SockType {
-    pub fn is_valid_type<T: Into<u16>>(ty: T) -> bool {
-        let ty: u16 = ty.into();
-        ty > 0 && ty <= SockType::SOCK_PACKET as u16
+    pub fn is_valid_type<T: Into<u64>>(ty: T) -> bool {
+        Self::try_from_uint(ty).is_ok()
     }
 }
 
