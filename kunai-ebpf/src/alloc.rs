@@ -33,7 +33,7 @@ const MAX_ALLOCS: u32 = 8;
 // to the bound checks must be taken because it may overrun the structures without
 // triping up the verifier.
 const HEAP_MAX_ALLOC_SIZE: usize = max!(
-    events::MAX_EVENT_SIZE,
+    events::MAX_BPF_EVENT_SIZE,
     mem::size_of::<Buffer<{ events::ENCRYPT_DATA_MAX_BUFFER_SIZE }>>()
 ) * 2;
 

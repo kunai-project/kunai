@@ -319,26 +319,37 @@ pub struct Event<T> {
 }
 
 impl<T> Event<T> {
+    #[inline]
+    pub const fn size_of() -> usize {
+        core::mem::size_of::<Event<T>>()
+    }
+
+    #[inline]
     pub fn ty(&self) -> Type {
         self.info.etype
     }
 
+    #[inline]
     pub fn data_mut(&mut self) -> &mut T {
         &mut self.data
     }
 
+    #[inline]
     pub fn as_ptr(&self) -> *const Event<T> {
         self as *const Event<T>
     }
 
+    #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut Event<T> {
         self as *mut Event<T>
     }
 
+    #[inline]
     pub fn encode(&self) -> &[u8] {
         unsafe { self.as_byte_slice() }
     }
 
+    #[inline]
     unsafe fn as_byte_slice(&self) -> &[u8] {
         core::slice::from_raw_parts(
             (self as *const Self) as *const u8,
@@ -346,6 +357,7 @@ impl<T> Event<T> {
         )
     }
 
+    #[inline]
     pub fn switch_type(mut self, new: Type) -> Self {
         // we record original event type
         self.info.switch_type(new);
@@ -468,35 +480,47 @@ not_bpf_target_code! {
 
 }
 
-const fn max(a: usize, b: usize) -> usize {
-    if a < b {
-        return b;
+pub const MAX_BPF_EVENT_SIZE: usize = max_bpf_event_size();
+
+/// function defined so that it generates an error in case of
+/// new Type created.
+const fn max_bpf_event_size() -> usize {
+    let mut i = 0;
+    let variants = Type::variants();
+    let mut max = 0;
+    loop {
+        if i == variants.len() {
+            break;
+        }
+        let size = match variants[i] {
+            Type::Execve | Type::ExecveScript => ExecveEvent::size_of(),
+            Type::TaskSched => ScheduleEvent::size_of(),
+            Type::Exit | Type::ExitGroup => ExitEvent::size_of(),
+            Type::Clone => CloneEvent::size_of(),
+            Type::Prctl => PrctlEvent::size_of(),
+            Type::InitModule => InitModuleEvent::size_of(),
+            Type::BpfProgLoad => BpfProgLoadEvent::size_of(),
+            Type::BpfSocketFilter => BpfSocketFilterEvent::size_of(),
+            Type::MprotectExec => MprotectEvent::size_of(),
+            Type::MmapExec => MmapExecEvent::size_of(),
+            Type::Connect => ConnectEvent::size_of(),
+            Type::DnsQuery => DnsQueryEvent::size_of(),
+            Type::SendData => SendEntropyEvent::size_of(),
+            Type::Mount => MountEvent::size_of(),
+            Type::Read | Type::ReadConfig | Type::Write | Type::WriteConfig => {
+                ConfigEvent::size_of()
+            }
+            Type::FileRename => FileRenameEvent::size_of(),
+            Type::Unknown | Type::EndEvents | Type::Correlation | Type::CacheHash | Type::Max => 0,
+            // never handle _ pattern otherwise this function loses all interest
+        };
+        if size > max {
+            max = size;
+        }
+        i += 1;
     }
-    a
+    max
 }
-
-macro_rules! max {
-    ($a:expr) => ($a);
-    ($a:expr, $($rest:expr),*) => {{max($a, max!($($rest),*))}};
-}
-
-pub const MAX_EVENT_SIZE: usize = max!(
-    core::mem::size_of::<ExecveEvent>(),
-    core::mem::size_of::<CloneEvent>(),
-    core::mem::size_of::<BpfProgLoadEvent>(),
-    core::mem::size_of::<BpfSocketFilterEvent>(),
-    core::mem::size_of::<ConnectEvent>(),
-    core::mem::size_of::<DnsQueryEvent>(),
-    core::mem::size_of::<ExitEvent>(),
-    core::mem::size_of::<MmapExecEvent>(),
-    core::mem::size_of::<SendEntropyEvent>(),
-    core::mem::size_of::<InitModuleEvent>(),
-    core::mem::size_of::<ConfigEvent>(),
-    core::mem::size_of::<SendEntropyEvent>(),
-    core::mem::size_of::<FileRenameEvent>(),
-    core::mem::size_of::<MprotectEvent>(),
-    core::mem::size_of::<MountEvent>()
-);
 
 not_bpf_target_code! {
 
@@ -534,6 +558,14 @@ not_bpf_target_code! {
             let mod_execve = unsafe { d.as_event_with_data::<ExecveData>() }.unwrap();
             assert_eq!(mod_execve.data.foo, 342);
         }
+    }
+
+    #[test]
+    fn test_max_bpf_event_size() {
+        // for the time being ExecveEvent is known to be the biggest
+        // event. This is subject to change and it might be normal
+        // this test fails in the future
+        assert_eq!(max_bpf_event_size(), ExecveEvent::size_of())
     }
 
 }

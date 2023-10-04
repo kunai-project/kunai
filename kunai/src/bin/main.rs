@@ -1076,7 +1076,7 @@ impl EventReader {
                     cpu_id,
                     Some(optimal_page_count(
                         PAGE_SIZE,
-                        MAX_EVENT_SIZE,
+                        MAX_BPF_EVENT_SIZE,
                         config.max_buffered_events as usize,
                     )),
                 )
@@ -1094,7 +1094,7 @@ impl EventReader {
                 // the number of buffers we want to use gives us the number of events we can read
                 // in one go in userland
                 let mut buffers = (0..conf.max_buffered_events)
-                    .map(|_| BytesMut::with_capacity(MAX_EVENT_SIZE))
+                    .map(|_| BytesMut::with_capacity(MAX_BPF_EVENT_SIZE))
                     .collect::<Vec<_>>();
 
                 // we need to be sure that the fast timeout is bigger than the slowest of
