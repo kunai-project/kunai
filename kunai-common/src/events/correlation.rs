@@ -18,6 +18,7 @@ pub type CorrelationEvent = Event<CorrelationData>;
 // the data in this structure should always be serializable
 // to a byte array, it should not contain any pointers
 pub struct CorrelationData {
+    pub origin: Type, // event type it is comming from
     pub argv: Buffer<MAX_ARGV_SIZE>,
     pub exe: Path,
     pub paths: [Option<Path>; 1],
@@ -29,6 +30,7 @@ impl From<&ExecveEvent> for CorrelationEvent {
         Self {
             info: value.info,
             data: CorrelationData {
+                origin: value.ty(),
                 argv: value.data.argv,
                 exe: value.data.executable,
                 paths: [Some(value.data.interpreter)],
@@ -44,6 +46,7 @@ impl From<&CloneEvent> for CorrelationEvent {
         Self {
             info: value.info,
             data: CorrelationData {
+                origin: value.ty(),
                 argv: value.data.argv,
                 exe: value.data.executable,
                 paths: [None],
@@ -59,6 +62,7 @@ impl From<&ScheduleEvent> for CorrelationEvent {
         Self {
             info: value.info,
             data: CorrelationData {
+                origin: value.ty(),
                 argv: value.data.argv,
                 exe: value.data.exe,
                 paths: [None],

@@ -660,6 +660,12 @@ impl EventProcessor {
     fn handle_correlation_event(&mut self, info: StdEventInfo, event: &CorrelationEvent) {
         let ck = info.correlation_key();
 
+        // Execve must remove any previous correlation (i.e. coming from
+        // clone or tasksched for instance)
+        if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
+            self.correlations.remove(&ck);
+        }
+
         // early return if correlation key exists
         if self.correlations.contains_key(&ck) {
             return;
@@ -732,6 +738,9 @@ impl EventProcessor {
             events::Type::Execve | events::Type::ExecveScript => {
                 match event!(enc_event, ExecveEvent) {
                     Ok(e) => {
+                        // this event is used for correlation but cannot be processed
+                        // asynchronously so we have to handle correlation here
+                        self.handle_correlation_event(std_info.clone(), &CorrelationEvent::from(e));
                         let e = self.json_execve(std_info, e);
                         self.output_json(e);
                     }
@@ -741,6 +750,9 @@ impl EventProcessor {
 
             events::Type::Clone => match event!(enc_event, CloneEvent) {
                 Ok(e) => {
+                    // this event is used for correlation but cannot be processed
+                    // asynchronously so we have to handle correlation here
+                    self.handle_correlation_event(std_info.clone(), &CorrelationEvent::from(e));
                     let e = self.json_clone(std_info, e);
                     self.output_json(e);
                 }
@@ -1027,24 +1039,11 @@ impl EventReader {
     }
 
     /// this method pass through some events directly to the event processor
+    /// only events that can be processed asynchronously should be passed through
     fn pass_through_events(&self, e: &EncodedEvent) {
         let i = unsafe { e.info() }.unwrap();
 
         match i.etype {
-            Type::Execve | Type::ExecveScript => {
-                let execve = event!(e, ExecveEvent).unwrap();
-                self.send_event(CorrelationEvent::from(execve)).unwrap();
-
-                for h in HashEvent::all_from_execve(execve) {
-                    self.send_event(h).unwrap();
-                }
-            }
-
-            Type::Clone => {
-                let event = event!(e, CloneEvent).unwrap();
-                self.send_event(CorrelationEvent::from(event)).unwrap();
-            }
-
             Type::MmapExec => {
                 let event = event!(e, MmapExecEvent).unwrap();
                 self.send_event(HashEvent::from(event)).unwrap();
@@ -1161,7 +1160,7 @@ impl EventReader {
 
                         // pre-processing events
                         // we eventually change event type in this function
-                        // example: Excve -> ExcveScript if necessary
+                        // example: Execve -> ExecveScript if necessary
                         er.pre_process_events(&mut dec);
                         // passing through some events used for correlation
                         er.pass_through_events(&dec);
