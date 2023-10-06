@@ -340,7 +340,7 @@ impl EventProcessor {
         let cmd_line = event.data.argv.to_command_line();
 
         let data = object! {
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             command_line: cmd_line,
             flags: format!("0x{:08x}",event.data.flags),
         };
@@ -358,7 +358,7 @@ impl EventProcessor {
             .unwrap_or(format!("unknown({opt})"));
 
         let data = object! {
-            exe: *exe.to_string_lossy(),
+            exe: exe.to_string_lossy().as_ref(),
             command_line: cmd_line,
             option: opt_str,
             arg2: format!("0x{:x}", event.data.arg2),
@@ -383,7 +383,7 @@ impl EventProcessor {
 
         let data = object! {
             command_line: self.get_command_line(ck),
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             mapped: mmapped_hashes,
         };
 
@@ -419,7 +419,7 @@ impl EventProcessor {
                 info.clone(),
                 object! {
                     command_line: cmd_line.clone(),
-                    exe: exe.to_string_lossy().to_string(),
+                    exe: exe.to_string_lossy().as_ref(),
                     query: r.question.clone(),
                     proto: proto.as_str(),
                     response: r.answers.join(";"),
@@ -451,7 +451,7 @@ impl EventProcessor {
             info,
             object! {
                 command_line: cmd_line,
-                exe: exe.to_string_lossy().to_string(),
+                exe: exe.to_string_lossy().as_ref(),
                 path: event.data.path.to_string(),
             },
         )
@@ -463,7 +463,7 @@ impl EventProcessor {
 
         let mut data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             dev_name: event.data.dev_name.to_string(),
             path: event.data.path.to_string(),
         };
@@ -481,7 +481,7 @@ impl EventProcessor {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
         let mut data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             id: event.data.id,
             prog_type: {
                 id: event.data.prog_type,
@@ -530,7 +530,7 @@ impl EventProcessor {
 
         let data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             socket: socket,
             filter: object!{
                 md5: md5_data(event.data.filter.as_slice()),
@@ -551,7 +551,7 @@ impl EventProcessor {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
         let data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             addr: format_ptr!(event.data.start),
             prot: format!("0x{:08x}", event.data.prot),
         };
@@ -565,7 +565,7 @@ impl EventProcessor {
         let dst_ip: IpAddr = event.data.ip_port.into();
         let data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             dst: object!{
                 hostname: self.get_resolved(dst_ip, &info),
                 ip: dst_ip.to_string(),
@@ -585,7 +585,7 @@ impl EventProcessor {
         let dst_ip: IpAddr = event.data.ip_port.into();
         let data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             dst: object!{
                 hostname: self.get_resolved(dst_ip, &info),
                 ip: dst_ip.to_string(),
@@ -606,7 +606,7 @@ impl EventProcessor {
 
         let data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             module_name: event.data.name.to_string(),
             args: event.data.uargs.to_string(),
             userspace_addr: format_ptr!(event.data.umod),
@@ -622,7 +622,7 @@ impl EventProcessor {
 
         let data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             old: event.data.old_name.to_string(),
             new: event.data.new_name.to_string(),
         };
@@ -636,7 +636,7 @@ impl EventProcessor {
 
         let data = object! {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().to_string(),
+            exe: exe.to_string_lossy().as_ref(),
             error_code: event.data.error_code,
         };
 
