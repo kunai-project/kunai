@@ -45,6 +45,24 @@ pub fn pull<P: AsRef<Path>>(repo: &str, outdir: P) -> Result<(), anyhow::Error> 
     Ok(())
 }
 
+pub fn checkout<P: AsRef<Path>>(project: P, commit: &str) -> Result<(), anyhow::Error> {
+    let project = project.as_ref();
+
+    let status = std::process::Command::new("git")
+        .current_dir(project)
+        .arg("-c")
+        .arg("advice.detachedHead=false")
+        .arg("checkout")
+        .arg(commit)
+        .status()?;
+
+    if !status.success() {
+        return Err(anyhow!("failed to checkout commit {commit}"));
+    }
+
+    Ok(())
+}
+
 pub fn clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
     let outdir = outdir.as_ref();
 
@@ -56,7 +74,7 @@ pub fn clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), 
         .arg("--branch")
         .arg(branch)
         .arg(repo)
-        .arg(outdir.to_string_lossy().to_string())
+        .arg(outdir.to_string_lossy().as_ref())
         .status()?;
 
     if !status.success() {
