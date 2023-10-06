@@ -1,6 +1,3 @@
-# used to specify --cfg debug in config.toml
-cargo-features = ["profile-rustflags"]
-
 [package]
 name = "kunai-ebpf"
 version = "0.1.0"
@@ -44,5 +41,3 @@ codegen-units = 1
 
 [workspace]
 members = []
-#aya-bpf = { path = "/home/quentin/Workspace/Rust/aya-dev/bpf/aya-bpf" }
-#aya-log-ebpf = { path = "/home/quentin/Workspace/Rust/aya-dev/bpf/aya-log-ebpf" }
