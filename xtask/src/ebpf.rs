@@ -146,6 +146,8 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
 
     if opts.release {
         args.push("--release".into())
+    } else {
+        args.push("--features=debug".into())
     }
 
     opts.build_args
@@ -163,10 +165,6 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
 }
 
 pub fn build(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
-    if !opts.release {
-        opts.build_args.push("--features=debug".into())
-    }
-
     let status = cargo("build", dir, opts)
         .env("RUSTFLAGS", opts.build_rustflags())
         .status()
