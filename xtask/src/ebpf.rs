@@ -111,9 +111,23 @@ impl BuildOptions {
 
         let dump_dir = linker_out_dir.join("dump_module");
 
-        rustflags.push("-C link-arg=--log-level=info".into());
-        rustflags.push(format!("-C link-arg=--log-file={}", log_file.to_string_lossy()).into());
-        rustflags.push(format!("-C link-arg=--dump-module={}", dump_dir.to_string_lossy()).into());
+        // do not override any previous rustflags set in command line
+        for (opt, value) in vec![
+            ("-C link-arg=--log-level", "info"),
+            (
+                "-C link-arg=--log-file",
+                log_file.to_string_lossy().as_ref(),
+            ),
+            (
+                "-C link-arg=--dump-module",
+                dump_dir.to_string_lossy().as_ref(),
+            ),
+            ("-C link-arg=--llvm-args=--cold-callsite-rel-freq", "0"),
+        ] {
+            if rustflags.iter().find(|s| s.contains(opt)).is_none() {
+                rustflags.push(format!("{opt}={value}").into())
+            }
+        }
 
         rustflags.join(" ")
     }

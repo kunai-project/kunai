@@ -4,7 +4,8 @@ mod tools;
 mod user;
 mod utils;
 
-use std::io::ErrorKind;
+use std::path::PathBuf;
+use std::{fs, io::ErrorKind};
 
 use clap::Parser;
 
@@ -35,15 +36,34 @@ fn main() -> Result<(), anyhow::Error> {
         Build(opts) => user::build_all(EBPF_DIR, &opts)?,
         Run(opts) => user::run(EBPF_DIR, &opts)?,
         Check(mut opts) => {
+            // preparing for eBPF check
+            // build arguments are not propagated by into() method so we need
+            // to set them explicitely
+            let bpf_check_args = opts.build_args.clone();
+            let bpf_build_opt: ebpf::BuildOptions = opts.clone().into();
+
+            // we create empty programs so that check does not complain if those
+            // are missing
+            let release_dir = PathBuf::from("target")
+                .join(bpf_build_opt.target.to_string())
+                .join("release");
+            if !release_dir.exists() {
+                fs::create_dir_all(&release_dir)?;
+                fs::write(release_dir.join(EBPF_DIR), b"")?;
+            }
+
+            let debug_dir = PathBuf::from("target")
+                .join(bpf_build_opt.target.to_string())
+                .join("debug");
+            if !debug_dir.exists() {
+                fs::create_dir_all(&debug_dir)?;
+                fs::write(debug_dir.join(EBPF_DIR), b"")?;
+            }
+
             // checking userland code
             user::check(&mut opts)?;
-
-            // checking bpf code
-            // build arguments are not propagated by into method so we need
-            // to set them explicitely
-            let check_args = opts.build_args.clone();
-            let bo: ebpf::BuildOptions = opts.into();
-            ebpf::check(EBPF_DIR, &mut bo.build_args(check_args))?;
+            // checking ebpf code
+            ebpf::check(EBPF_DIR, &mut bpf_build_opt.build_args(bpf_check_args))?;
         }
         BuildTools(opts) => {
             // checking we have the tools we need
@@ -56,7 +76,7 @@ fn main() -> Result<(), anyhow::Error> {
             // this is Aya's rustc LLVM fork, it is used to integrate very
             // specific LLVM patches faster than LLVM project
             let llvm_repo = "https://github.com/aya-rs/llvm-project";
-            let llvm_branch = "rustc/16.0-2023-06-05";
+            let llvm_branch = "rustc/17.0-2023-09-19";
             let branch_dir = llvm_branch.replace('/', "_");
             let llvm_dir = bt_root.join("llvm-project").join(&branch_dir);
             let llvm_install = bt_root.join("llvm-install").join(&branch_dir);
@@ -64,14 +84,17 @@ fn main() -> Result<(), anyhow::Error> {
             // bpf-linker related variables
             let linker_dir = bt_root.join("bpf-linker");
             // linker branch supporting Debug Information (DI)
-            let linker_repo = "https://github.com/0xrawsec/bpf-linker-davibe.git";
-            let linker_branch = "fix-di";
+            let linker_repo = "https://github.com/aya-rs/bpf-linker.git";
+            let linker_branch = "feature/fix-di";
+            // we tight the linker to a specific commit id so that we don't get surprises
+            // NB: when updating this commit in particular also remove the cold callsite disabling build
+            // option from linker args
+            let linker_commit = "a79d26c1293a88a26adc1a0d3e605dd88ee7d5fc";
 
             if opts.action_cache_key {
                 print!(
-                    "build-tools-{}-{}",
+                    "build-tools-{}-{linker_commit}",
                     git::last_commit_id(llvm_repo, llvm_branch)?,
-                    git::last_commit_id(linker_repo, linker_branch)?
                 );
                 return Ok(());
             }
@@ -113,6 +136,9 @@ fn main() -> Result<(), anyhow::Error> {
 
             println!("Synchronizing repo:{linker_repo} branch:{linker_branch}");
             git::sync(linker_branch, linker_repo, &linker_dir)?;
+
+            println!("Checking out to commit: {linker_commit}");
+            git::checkout(&linker_dir, linker_commit)?;
 
             tools::build_linker(&llvm_install, linker_dir, &opts)?;
         }

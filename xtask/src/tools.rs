@@ -102,11 +102,13 @@ pub fn build_linker<T: AsRef<Path>, U: AsRef<Path>>(
 
     let status = std::process::Command::new("cargo")
         .current_dir(linker_dir)
-        .env("LLVM_SYS_160_PREFIX", llvm_build_dir)
+        .env("LLVM_SYS_170_PREFIX", llvm_build_dir)
         .arg("build")
         .arg(&format!("--target={}", opts.target))
         .arg("--release")
         .arg("--bins")
+        .arg("--no-default-features")
+        .arg("--features=llvm-sys/force-static")
         .status()
         .expect("failed to build bpf-linker");
 
