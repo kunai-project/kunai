@@ -86,10 +86,8 @@ fn main() -> Result<(), anyhow::Error> {
             // linker branch supporting Debug Information (DI)
             let linker_repo = "https://github.com/aya-rs/bpf-linker.git";
             let linker_branch = "feature/fix-di";
-            // we tight the linker to a specific commit id so that we don't get surprises
-            // NB: when updating this commit in particular also remove the cold callsite disabling build
-            // option from linker args
-            let linker_commit = "a79d26c1293a88a26adc1a0d3e605dd88ee7d5fc";
+            // be carefull of rebased repository while taking commits
+            let linker_commit = git::last_commit_id(linker_repo, linker_branch)?;
 
             if opts.action_cache_key {
                 print!(

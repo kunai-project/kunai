@@ -122,7 +122,6 @@ impl BuildOptions {
                 "-C link-arg=--dump-module",
                 dump_dir.to_string_lossy().as_ref(),
             ),
-            ("-C link-arg=--llvm-args=--cold-callsite-rel-freq", "0"),
         ] {
             if rustflags.iter().find(|s| s.contains(opt)).is_none() {
                 rustflags.push(format!("{opt}={value}").into())

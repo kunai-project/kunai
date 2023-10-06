@@ -45,8 +45,9 @@ pub fn pull<P: AsRef<Path>>(repo: &str, outdir: P) -> Result<(), anyhow::Error> 
     Ok(())
 }
 
-pub fn checkout<P: AsRef<Path>>(project: P, commit: &str) -> Result<(), anyhow::Error> {
+pub fn checkout<P: AsRef<Path>, S: AsRef<str>>(project: P, commit: S) -> Result<(), anyhow::Error> {
     let project = project.as_ref();
+    let commit = commit.as_ref();
 
     let status = std::process::Command::new("git")
         .current_dir(project)
