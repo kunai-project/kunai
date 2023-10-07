@@ -10,8 +10,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-tools:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
 
+    - name: Install system tools
+      run: |
+        sudo apt update
+        sudo apt install -y qemu-system-x86 cmake ninja-build clang lld git libbpf-dev
+
+    # we need to fetch rust deps first to speed up cargo xtask
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo
+          ~/.rustup
+          target
+        # if xtask changed maybe linker version changed so we don't want old objects to mess with new ones
+        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml', '**/xtask/') }}
+
+    - id: cache-key
+      run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache build tools
+      uses: actions/cache@v3
+      with:
+        path: |
+          build-tools/
+        key: ${{ steps.cache-key.outputs.cache-key }}
+
+    - name: Build-Tools (LLVM and bpf-linker)
+      run: cargo xtask build-tools --free-space
+              
+  build:
+    needs: build-tools
     runs-on: ubuntu-latest
 
     steps:
@@ -31,7 +67,8 @@ jobs:
           ~/.cargo
           ~/.rustup
           target
-        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+        # if xtask changed maybe linker version changed so we don't want old objects to mess with new ones
+        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml', '**/xtask/') }}
 
     - id: cache-key
       run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
@@ -42,9 +79,6 @@ jobs:
         path: |
           build-tools/
         key: ${{ steps.cache-key.outputs.cache-key }}
-              
-    - name: Build-Tools (LLVM and bpf-linker)
-      run: cargo xtask build-tools --free-space
       
     - name: Build (eBPF and userland)
       run: cargo xtask build --release
@@ -60,3 +94,4 @@ jobs:
 
     - name: Linux Kernel LTS 6.1
       run: ./scripts/ci/test_kernel.sh 6.1
+
