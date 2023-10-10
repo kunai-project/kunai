@@ -268,6 +268,11 @@ impl EventProcessor {
     }
 
     #[inline]
+    fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
+        self.get_ancestors(i).join("|")
+    }
+
+    #[inline]
     fn get_parent_image(&self, i: &StdEventInfo) -> String {
         let ck = i.parent_correlation_key();
         self.correlations
@@ -313,8 +318,6 @@ impl EventProcessor {
     fn json_execve(&mut self, info: StdEventInfo, event: &ExecveEvent) -> JsonValue {
         let ancestors = self.get_ancestors(&info);
 
-        //let executable = event.data.executable.to_path_buf();
-        //let interpreter = event.data.interpreter.to_path_buf();
         let mnt_ns = event.info.process.namespaces.mnt;
 
         let mut data = object! {
@@ -605,6 +608,7 @@ impl EventProcessor {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
 
         let data = object! {
+            ancestors: self.get_ancestors_string(&info),
             command_line: cmd_line,
             exe: exe.to_string_lossy().as_ref(),
             module_name: event.data.name.to_string(),
