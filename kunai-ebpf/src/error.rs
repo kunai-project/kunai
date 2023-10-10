@@ -63,15 +63,35 @@ pub enum ProbeError {
     CgroupError(cgroup::Error),
 }
 
-#[macro_export]
+/// log a ProbeError using Aya log
 macro_rules! log_err {
     ($ctx:expr, $err:expr) => {
-        //aya_log_ebpf::error!($ctx, "{}: {}", $err.name(), $err.description());
-        aya_log_ebpf::error!($ctx, "{}", $err.name());
+        log_err!($ctx, "", $err)
+    };
+    ($ctx:expr, $msg:expr, $err:expr) => {
+        if $msg.is_empty() {
+            aya_log_ebpf::error!($ctx, "{}", $err.name())
+        } else {
+            aya_log_ebpf::error!($ctx, "{}: {}", $msg, $err.name())
+        }
     };
 }
 
 pub(crate) use log_err;
+
+/// if Result is an Err(BpfError), log it with Aya log
+macro_rules! log_result_err {
+    ($ctx:expr, $res:expr) => {
+        log_result_err!($ctx, "", $res)
+    };
+    ($ctx:expr, $msg:expr, $res:expr) => {
+        if let Err(e) = $res {
+            log_err!($ctx, $msg, e)
+        }
+    };
+}
+
+pub(crate) use log_result_err;
 
 impl From<syscalls::Error> for ProbeError {
     fn from(value: syscalls::Error) -> Self {

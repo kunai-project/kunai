@@ -65,10 +65,18 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
     // setting event data
     event.data.umod = args.umod;
     event.data.len = args.len;
-    event
-        .data
-        .uargs
-        .read_user_str_bytes(args.uargs as *const u8)?;
+
+    // Aya currently reports an error on empty string being read
+    // so until Aya is upgraded some errors might pop up while there
+    // is none.
+    log_result_err!(
+        ctx,
+        "failed to read uargs",
+        event
+            .data
+            .uargs
+            .read_user_str_bytes(args.uargs as *const u8)
+    );
 
     INIT_MODULE_TRACKING
         .insert(&key, event, 0)
