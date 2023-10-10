@@ -56,7 +56,7 @@ fi
 # running qemu
 kernel_logs=${tmp_dir}/kernel.log
 QEMU_ARGS=()
-if [ -c /dev/kvm ]
+if [[ -c /dev/kvm && $(echo $@ | grep -c -- '--accel') > 0 ]]
 then
     QEMU_ARGS+=(-accel kvm)
 fi
