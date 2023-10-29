@@ -28,6 +28,10 @@ pub enum RandError {
     PartiallyRandomized,
 }
 
+pub fn get_current_uid() -> libc::uid_t {
+    unsafe { libc::getuid() }
+}
+
 pub fn getrandom<T: Sized>() -> Result<T, RandError> {
     let mut t = MaybeUninit::<T>::uninit();
     let buflen = size_of::<T>();

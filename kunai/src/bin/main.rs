@@ -1,8 +1,3 @@
-/*mod cache;
-mod config;
-mod info;
-mod util;*/
-
 use aya::maps::MapData;
 use bytes::BytesMut;
 use clap::Parser;
@@ -26,9 +21,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::Arc;
 
-use kunai::util::*;
 use std::thread;
-use users::get_current_uid;
 
 use aya::{
     include_bytes_aligned,
@@ -51,6 +44,7 @@ use kunai::cache::*;
 use kunai::compat::{KernelVersion, Programs};
 use kunai::config::Config;
 use kunai::util::namespaces::unshare;
+use kunai::util::*;
 
 const PAGE_SIZE: usize = 4096;
 
