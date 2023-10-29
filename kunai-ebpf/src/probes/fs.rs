@@ -163,12 +163,9 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
 
     event.init_from_current_task(Type::FileRename)?;
 
-    let name = core_read_kernel!(old_dentry, d_name, name)?;
-    let len = core_read_kernel!(old_dentry, d_name, len)?;
-
     // parsing old_name
     inspect_err!(
-        event.data.old_name.prepend_qstr_name(name, len),
+        event.data.old_name.prepend_dentry(&old_dentry),
         |e: path::Error| error!(ctx, "failed to parse old_name dentry: {}", e.description())
     );
 
@@ -179,10 +176,7 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // parsing new_name
     inspect_err!(
-        event.data.new_name.prepend_qstr_name(
-            core_read_kernel!(new_dentry, d_name, name)?,
-            core_read_kernel!(new_dentry, d_name, len)?,
-        ),
+        event.data.new_name.prepend_dentry(&new_dentry),
         |e: path::Error| error!(ctx, "failed to parse new_name dentry: {}", e.description())
     );
 

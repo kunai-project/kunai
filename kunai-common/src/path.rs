@@ -386,7 +386,6 @@ impl Path {
             Ok(())
         }
 
-        // without this inline fentry probes get read! error, maybe there is an issue while passing bpf_types to functions
         #[inline(always)]
         pub unsafe fn core_resolve(&mut self, p: &co_re::path, max_depth: u16) -> Result<()> {
             // if path is null we return Ok
@@ -420,7 +419,6 @@ impl Path {
                     entry = mount.mnt_mountpoint().ok_or(Error::MntMountpointMissing)?;
                     mount = mnt_parent;
                     mnt_parent = mount.mnt_parent().ok_or(Error::MntParentMissing)?;
-                    //mnt_root = mount.mnt().mnt_root();
                     mnt_root = core_read_kernel!(mount,mnt,mnt_root).ok_or(Error::MntRootMissing)?;
                     continue;
                 }
@@ -435,21 +433,17 @@ impl Path {
                     self.prepend_path_sep()?;
                 }
 
-                let name = core_read_kernel!(entry, d_name, name).ok_or(Error::DNameNameMissing)?;
-                let len = core_read_kernel!(entry, d_name, len).ok_or(Error::DNameLenMissing)?;
-                //self.prepend_qstr_name(entry.d_name().name(), entry.d_name().len())?;
-                self.prepend_qstr_name(name, len)?;
+                // prepend segment
+                self.prepend_dentry(&entry)?;
+
                 if parent.is_null(){
                     break;
                 }
                 entry = parent;
             }
 
-            let name = core_read_kernel!(entry, d_name, name).ok_or(Error::DNameNameMissing)?;
-            let len = core_read_kernel!(entry, d_name, len).ok_or(Error::DNameLenMissing)?;
             // we read root
-            //self.prepend_qstr_name(entry.d_name().name(), entry.d_name().len())?;
-            self.prepend_qstr_name(name, len)?;
+            self.prepend_dentry(&entry)?;
 
             Ok(())
         }
@@ -469,7 +463,14 @@ impl Path {
             self.buffer.len() - self.len()
         }
 
-        pub unsafe fn prepend_qstr_name(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
+        #[inline(always)]
+        pub unsafe fn prepend_dentry(&mut self, entry: &co_re::dentry) -> Result<()> {
+            let name = core_read_kernel!(entry, d_name, name).ok_or(Error::DNameNameMissing)?;
+            let len = core_read_kernel!(entry, d_name, len).ok_or(Error::DNameLenMissing)?;
+            self.prepend_qstr_name(name, len)
+        }
+
+        unsafe fn prepend_qstr_name(&mut self, name: *const u8, qstr_len: u32 ) -> Result<()> {
             // needed so that the verifier knows self.len is bounded
             let left = self.space_left() as u32;
             // a way to restrict the length to read for the verifier
