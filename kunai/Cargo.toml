@@ -14,7 +14,7 @@ chrono = { version = "0.4.24", features = ["clock"] }
 libc = "0.2"
 json = "0.12"
 thiserror = "1.0"
-procfs = "0.15"
+procfs = "0.16"
 ip_network = "0.4"
 
 lru-st = { git = "https://github.com/0xrawsec/lru-st/", branch = "master", features = [
