@@ -12,6 +12,8 @@ use kunai::info::{AdditionalFields, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEve
 use kunai::{cache, util};
 use kunai_common::cgroup::Cgroup;
 use kunai_common::config::{BpfConfig, Filter};
+use kunai_common::events::{self, EncodedEvent, Event, *};
+use kunai_common::inspect_err;
 
 use log::LevelFilter;
 
@@ -38,10 +40,6 @@ use aya::{
 #[allow(unused_imports)]
 use aya::{BpfLoader, VerifierLogLevel};
 use aya_log::BpfLogger;
-use kunai_common::{
-    events::{self, EncodedEvent, Event, *},
-    inspect_err,
-};
 
 use log::{debug, error, info, warn};
 
