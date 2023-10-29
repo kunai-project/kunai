@@ -483,7 +483,7 @@ not_bpf_target_code! {
 pub const MAX_BPF_EVENT_SIZE: usize = max_bpf_event_size();
 
 /// function defined so that it generates an error in case of
-/// new Type created.
+/// new Type created and we forgot to take it into account
 const fn max_bpf_event_size() -> usize {
     let mut i = 0;
     let variants = Type::variants();
