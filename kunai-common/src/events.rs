@@ -1,3 +1,4 @@
+use crate::macros::test_flag;
 use crate::uuid::{TaskUuid, Uuid};
 use crate::{bpf_target_code, not_bpf_target_code};
 
@@ -172,6 +173,7 @@ pub struct Namespaces {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TaskInfo {
+    pub flags: u32,
     pub comm: [u8; COMM_SIZE],
     pub uid: u32,
     pub gid: u32,
@@ -191,6 +193,10 @@ impl TaskInfo {
         unsafe { core::str::from_utf8_unchecked(&self.comm[..]) }
     }
 
+    pub fn is_kernel_thread(&self) -> bool {
+        test_flag!(self.flags, 0x00200000)
+    }
+
     not_bpf_target_code! {
         pub fn comm_string(&self) -> std::string::String {
             crate::utils::cstr_to_string(self.comm)
@@ -202,6 +208,8 @@ bpf_target_code! {
 
     #[derive(BpfError)]
     pub enum Error {
+        #[error("flags field is missing")]
+        FlagFieldMissing,
         #[error("pid field is missing")]
         PidFieldMissing,
         #[error("tgid field is missing")]
@@ -228,6 +236,9 @@ bpf_target_code! {
         /// * task must be a pointer to a valid task_struct
         #[inline(always)]
         pub unsafe fn from_task(&mut self, task: task_struct) -> Result<(), Error> {
+            // flags
+            self.flags = task.flags().ok_or(Error::FlagFieldMissing)?;
+
             // process start time
             self.start_time = task.start_boottime().ok_or(Error::BootTimeMissing)?;
             self.tgid = task.tgid().ok_or(Error::TgidFieldMissing)?;
@@ -297,13 +308,11 @@ impl EventInfo {
         self.uuid = Uuid::new_random();
 
         if !task.is_null() {
-            //let task = task_struct::from_ptr(task as *const _);
             self.process.from_task(task)?;
             self.parent
                 .from_task(task.real_parent().ok_or(Error::RealParentFieldMissing)?)?;
         }
 
-        //self.timestamp = bpf_ktime_get_boot_ns();
         self.timestamp = bpf_ktime_get_ns();
 
         Ok(())

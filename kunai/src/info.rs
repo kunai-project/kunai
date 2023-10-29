@@ -7,6 +7,13 @@ use kunai_common::{
 
 use crate::util::get_clk_tck;
 
+macro_rules! to_hex {
+    ($value:expr) => {{
+        let pad = (std::mem::size_of_val(&$value) * 2) as usize;
+        format!("0x{:0pad$x}", $value)
+    }};
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ProcFsTaskInfo {
     pid: i32,
@@ -175,6 +182,8 @@ impl From<&StdEventInfo> for JsonValue {
                 namespaces: object!{
                     mnt: info.process.namespaces.mnt,
                 },
+                // task_struct->flags
+                flags: to_hex!(info.process.flags),
             },
             // parent task
             parent_task: object!{
@@ -192,6 +201,8 @@ impl From<&StdEventInfo> for JsonValue {
                 namespaces: object!{
                     mnt: info.process.namespaces.mnt,
                 },
+                // task_struct->flags
+                flags: to_hex!(info.parent.flags),
             },
             utc_time: ts,
         }
