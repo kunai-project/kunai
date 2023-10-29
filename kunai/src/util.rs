@@ -1,5 +1,4 @@
-use chrono::prelude::*;
-use core::mem::{size_of, zeroed, MaybeUninit};
+use core::mem::{size_of, MaybeUninit};
 use ip_network::IpNetwork;
 use md5::{Digest, Md5};
 use sha1::Sha1;
@@ -21,28 +20,6 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
 
 pub fn get_clk_tck() -> i64 {
     unsafe { libc::sysconf(libc::_SC_CLK_TCK) }
-}
-
-// inspired from: https://github.com/itchyny/uptime-rs
-// the code panics if we cannot retrieve boot time
-#[allow(dead_code)]
-pub fn get_boot_time() -> DateTime<Utc> {
-    let mut info: libc::sysinfo = unsafe { zeroed() };
-    let ret = unsafe { libc::sysinfo(&mut info) };
-    if ret != 0 {
-        panic!("failed to retrieve sysinfo");
-    }
-
-    // we have to work with seconds as sysinfo returns time since boot in seconds
-    #[allow(clippy::unnecessary_cast)]
-    let boot_time_sec = Utc::now()
-        .timestamp()
-        .checked_sub(info.uptime as i64)
-        .unwrap();
-    DateTime::<Utc>::from_utc(
-        NaiveDateTime::from_timestamp_opt(boot_time_sec, 0).unwrap(),
-        Utc,
-    )
 }
 
 #[derive(Debug)]
