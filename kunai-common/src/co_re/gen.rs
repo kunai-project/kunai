@@ -546,6 +546,7 @@ extern "C" {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct task_struct {
+    pub flags: ::core::ffi::c_uint,
     pub pid: pid_t,
     pub start_time: __u64,
     pub __bindgen_anon_1: task_struct__bindgen_ty_1,
@@ -563,6 +564,15 @@ pub struct task_struct {
 pub union task_struct__bindgen_ty_1 {
     pub start_boottime: __u64,
     pub real_start_time: __u64,
+}
+extern "C" {
+    pub fn shim_task_struct_flags(task_struct: *mut task_struct) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_task_struct_flags_user(task_struct: *mut task_struct) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_task_struct_flags_exists(task_struct: *mut task_struct) -> bool;
 }
 extern "C" {
     pub fn shim_task_struct_start_time(task_struct: *mut task_struct) -> ::core::ffi::c_ulonglong;

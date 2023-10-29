@@ -27,6 +27,7 @@ impl task_struct {
         unsafe { core::mem::transmute([bpf_get_current_pid_tgid(), self.as_ptr() as u64]) }
     }
 
+    rust_shim_kernel_impl!(pub, task_struct, flags, u32);
     rust_shim_kernel_impl!(pub, task_struct, start_time, u64);
 
     rust_shim_kernel_impl!(pub(self), _start_boot_time, task_struct, start_boottime, u64);
