@@ -94,7 +94,6 @@ not_bpf_target_code! {
 
 bpf_target_code! {
 
-    use crate::map_err;
     use super::{bpf_utils::*};
     use aya_bpf::helpers::{gen, *};
     use kunai_macros::BpfError;
@@ -188,10 +187,7 @@ bpf_target_code! {
 
         #[inline(always)]
         pub unsafe fn read_kernel_str<P>(&mut self, src:*const P) -> Result<(), Error>{
-            map_err!(
-                bpf_probe_read_kernel_str_bytes(src as *const _, &mut self.buf),
-                Error::FailedToRead
-            )?;
+            bpf_probe_read_kernel_str_bytes(src as *const _, &mut self.buf).map_err(|_| Error::FailedToRead)?;
             Ok(())
         }
 

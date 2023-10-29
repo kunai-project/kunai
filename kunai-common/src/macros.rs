@@ -1,16 +1,3 @@
-/// Result::map_err function seems to make eBPF not to pass verifier when
-/// used to pass strings. This macro removes the overhead of writing match
-/// cases manually
-#[macro_export]
-macro_rules! map_err {
-    ($e:expr, $err:expr) => {
-        match $e {
-            Ok(v) => Ok(v),
-            Err(_) => Err($err),
-        }
-    };
-}
-
 #[macro_export]
 macro_rules! inspect_err {
     ($e:expr, $clos:expr) => {
@@ -43,3 +30,11 @@ macro_rules! not_bpf_target_code {
         }
     };
 }
+
+macro_rules! test_flag {
+    ($test:expr, $flag:literal) => {
+        $test & $flag == $flag
+    };
+}
+
+pub(crate) use test_flag;
