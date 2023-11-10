@@ -110,7 +110,7 @@ pub struct Metadata {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Eq)]
 pub struct Path {
     buffer: [u8; MAX_PATH_LEN],
     len: u32,
@@ -119,6 +119,36 @@ pub struct Path {
     pub metadata: Option<Metadata>,
     pub mode: Mode,
     pub error: Option<Error>,
+}
+
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        let meta_eq = {
+            if self.metadata.is_none() && other.metadata.is_none() {
+                return true;
+            }
+
+            if let Some(sm) = self.metadata {
+                if let Some(om) = other.metadata {
+                    // we don't consider atime (access time)
+                    // as being relevant for path Eq checking
+                    return sm.ino == om.ino
+                        && sm.sb_ino == om.sb_ino
+                        && sm.size == om.size
+                        && sm.mtime == om.mtime
+                        && sm.ctime == om.ctime;
+                }
+            }
+
+            false
+        };
+
+        self.buffer == other.buffer
+            && self.len == other.len
+            && self.depth == other.depth
+            && self.real == other.real
+            && meta_eq
+    }
 }
 
 impl Default for Path {
