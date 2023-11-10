@@ -84,10 +84,12 @@ fn main() -> Result<(), anyhow::Error> {
             // bpf-linker related variables
             let linker_dir = bt_root.join("bpf-linker");
             // linker branch supporting Debug Information (DI)
-            let linker_repo = "https://github.com/aya-rs/bpf-linker.git";
+            // it is here a fork of Aya's bpf-linker, it is the only way to be sure
+            // commit id is valid as Aya's repos are often rebased
+            let linker_repo = "https://github.com/0xrawsec/bpf-linker";
             let linker_branch = "feature/fix-di";
             // be carefull of rebased repository while taking commits
-            let linker_commit = git::last_commit_id(linker_repo, linker_branch)?;
+            let linker_commit = "ef91ad89c0ce8a66d998bde1e97526eb46501e36";
 
             if opts.action_cache_key {
                 print!(
@@ -101,7 +103,7 @@ fn main() -> Result<(), anyhow::Error> {
             let llvm_config = llvm_install.join("bin").join("llvm-config");
             if !llvm_config.is_file() || opts.force_llvm_build {
                 println!("Synchronizing repo:{llvm_repo} branch:{llvm_branch}");
-                git::sync(llvm_branch, llvm_repo, &llvm_dir)?;
+                git::sync(llvm_branch, llvm_repo, &llvm_dir, 1)?;
 
                 println!("Building LLVM");
                 let llvm_builder = tools::LLVMBuilder::new(&llvm_dir, &llvm_install);
@@ -133,7 +135,8 @@ fn main() -> Result<(), anyhow::Error> {
             }
 
             println!("Synchronizing repo:{linker_repo} branch:{linker_branch}");
-            git::sync(linker_branch, linker_repo, &linker_dir)?;
+            // we should rarely need more than 10 commits back
+            git::sync(linker_branch, linker_repo, &linker_dir, 10)?;
 
             println!("Checking out to commit: {linker_commit}");
             git::checkout(&linker_dir, linker_commit)?;

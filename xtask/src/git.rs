@@ -64,13 +64,18 @@ pub fn checkout<P: AsRef<Path>, S: AsRef<str>>(project: P, commit: S) -> Result<
     Ok(())
 }
 
-pub fn clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
+pub fn clone<P: AsRef<Path>>(
+    branch: &str,
+    repo: &str,
+    outdir: P,
+    depth: u16,
+) -> Result<(), anyhow::Error> {
     let outdir = outdir.as_ref();
 
     let status = std::process::Command::new("git")
         .arg("clone")
         .arg("--depth")
-        .arg("1")
+        .arg(depth.to_string())
         .arg("--single-branch")
         .arg("--branch")
         .arg(branch)
@@ -85,7 +90,12 @@ pub fn clone<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), 
     Ok(())
 }
 
-pub fn sync<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), anyhow::Error> {
+pub fn sync<P: AsRef<Path>>(
+    branch: &str,
+    repo: &str,
+    outdir: P,
+    depth: u16,
+) -> Result<(), anyhow::Error> {
     let outdir = outdir.as_ref();
 
     if outdir.exists() {
@@ -93,5 +103,5 @@ pub fn sync<P: AsRef<Path>>(branch: &str, repo: &str, outdir: P) -> Result<(), a
         return pull(repo, outdir);
     }
 
-    clone(branch, repo, outdir)
+    clone(branch, repo, outdir, depth)
 }
