@@ -117,6 +117,8 @@ pub enum Type {
     WriteConfig,
     #[str("file_rename")]
     FileRename,
+    #[str("file_unlink")]
+    FileUnlink,
 
     // Materialize end of possible events
     #[str("end_event")]
@@ -520,6 +522,7 @@ const fn max_bpf_event_size() -> usize {
                 ConfigEvent::size_of()
             }
             Type::FileRename => FileRenameEvent::size_of(),
+            Type::FileUnlink => UnlinkEvent::size_of(),
             Type::Unknown | Type::EndEvents | Type::Correlation | Type::CacheHash | Type::Max => 0,
             // never handle _ pattern otherwise this function loses all interest
         };

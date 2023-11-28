@@ -57,6 +57,7 @@ pub enum ProbeFn {
     __sk_attach_prog,
     reuseport_attach_prog,
     kernel_clone,
+    security_path_unlink,
 }
 
 impl ProbeFn {

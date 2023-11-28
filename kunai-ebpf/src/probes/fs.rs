@@ -1,5 +1,6 @@
 use super::*;
 
+use aya_bpf::cty::c_int;
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::ProbeContext;
 use kunai_common::inspect_err;
@@ -186,6 +187,45 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
     );
 
     pipe_event(ctx, event);
+
+    Ok(())
+}
+
+// we have to hook into vfs_unlink (called by do_unlinkat) and recovering
+// path argument from the security_path_unlink call happening before.
+// do_unlinkat cannot be hooked at ret as path/dentry we wanna parse
+// seems to be cleaned up and cannot be parsed correctly.
+#[kretprobe(name = "kprobe.exit.vfs_unlink")]
+pub fn vfs_unlink(ctx: ProbeContext) -> u32 {
+    match unsafe { try_vfs_unlink(&ctx) } {
+        Ok(_) => error::BPF_PROG_SUCCESS,
+        Err(s) => {
+            log_err!(&ctx, s);
+            error::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
+    let entry_ctx = match restore_entry_ctx(ProbeFn::security_path_unlink) {
+        Some(e) => e.probe_context(),
+        None => return Ok(()),
+    };
+
+    let dir = co_re::path::from_ptr(kprobe_arg!(entry_ctx, 0)?);
+    let entry = co_re::dentry::from_ptr(kprobe_arg!(entry_ctx, 1)?);
+    let rc: c_int = ctx.ret().unwrap_or(-1);
+
+    alloc::init()?;
+    let e = alloc::alloc_zero::<UnlinkEvent>()?;
+
+    e.init_from_current_task(Type::FileUnlink)?;
+
+    e.data.path.prepend_dentry(&entry)?;
+    e.data.path.core_resolve(&dir, MAX_PATH_DEPTH)?;
+    e.data.success = rc == 0;
+
+    pipe_event(ctx, e);
 
     Ok(())
 }

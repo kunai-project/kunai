@@ -15,3 +15,11 @@ pub struct FileRenameData {
     pub old_name: Path,
     pub new_name: Path,
 }
+
+pub type UnlinkEvent = Event<UnlinkData>;
+
+#[repr(C)]
+pub struct UnlinkData {
+    pub path: Path,
+    pub success: bool,
+}

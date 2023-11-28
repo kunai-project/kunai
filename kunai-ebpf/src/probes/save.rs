@@ -78,3 +78,26 @@ pub fn enter_kernel_clone(ctx: ProbeContext) -> u32 {
     }
     0
 }
+
+// ToDo: move all save probes so that they use this macro
+/// def_save_probe helper to create kprobes to save entry context
+macro_rules! def_save_probe {
+    ($hook:ident) => {
+        paste::item! {
+            #[allow(non_snake_case)]
+            #[kprobe]
+            pub fn [<$hook>](ctx: ProbeContext) -> u32 {
+                unsafe {
+                    ignore_result!(save_context(
+                        ProbeFn::$hook,
+                        bpf_ktime_get_ns(),
+                        &ctx
+                    ));
+                }
+                0
+            }
+        }
+    };
+}
+
+def_save_probe!(security_path_unlink);

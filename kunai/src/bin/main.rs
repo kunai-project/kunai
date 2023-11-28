@@ -453,6 +453,21 @@ impl EventProcessor {
     }
 
     #[inline]
+    fn json_unlink_event(&mut self, info: StdEventInfo, event: &UnlinkEvent) -> JsonValue {
+        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+
+        Self::json_event(
+            info,
+            object! {
+                command_line: cmd_line,
+                exe: exe.to_string_lossy().as_ref(),
+                path: event.data.path.to_string(),
+                success: event.data.success,
+            },
+        )
+    }
+
+    #[inline]
     fn json_mount_event(&mut self, info: StdEventInfo, event: &MountEvent) -> JsonValue {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
 
@@ -732,6 +747,10 @@ impl EventProcessor {
         let etype = std_info.info.etype;
 
         match etype {
+            events::Type::Unknown => {
+                error!("Unknown event type: {}", etype as u64)
+            }
+            events::Type::Max | events::Type::EndEvents | events::Type::TaskSched => {}
             events::Type::Execve | events::Type::ExecveScript => {
                 match event!(enc_event, ExecveEvent) {
                     Ok(e) => {
@@ -830,6 +849,14 @@ impl EventProcessor {
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
+            events::Type::FileUnlink => match event!(enc_event, UnlinkEvent) {
+                Ok(e) => {
+                    let e = self.json_unlink_event(std_info, e);
+                    self.output_json(e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
             events::Type::Mount => match event!(enc_event, MountEvent) {
                 Ok(e) => {
                     let e = self.json_mount_event(std_info, e);
@@ -883,10 +910,6 @@ impl EventProcessor {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
-            _ => {
-                unimplemented!("event type not implemented")
-            }
         }
     }
 }
