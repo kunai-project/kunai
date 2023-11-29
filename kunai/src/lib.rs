@@ -3,6 +3,7 @@ use compat::{KernelVersion, Programs};
 pub mod cache;
 pub mod compat;
 pub mod config;
+pub mod events;
 pub mod info;
 pub mod util;
 

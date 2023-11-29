@@ -2,7 +2,9 @@ use aya::maps::MapData;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Builder;
+use gene::Engine;
 use json::{object, JsonValue};
+use kunai::events::JsonEvent;
 use kunai::info::{AdditionalFields, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
 use kunai::{cache, util};
 use kunai_common::cgroup::Cgroup;
@@ -14,6 +16,7 @@ use log::LevelFilter;
 
 use std::collections::{HashMap, VecDeque};
 
+use std::fs::File;
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -75,6 +78,7 @@ impl CorrelationData {
 }
 
 struct EventProcessor {
+    engine: gene::Engine,
     random: u32,
     hcache: cache::Cache,
     receiver: Receiver<EncodedEvent>,
@@ -136,6 +140,7 @@ impl EventProcessor {
         };
 
         let mut ep = Self {
+            engine: Engine::new(),
             random: util::getrandom::<u32>().unwrap(),
             hcache: Cache::with_max_entries(10000),
             correlations: HashMap::new(),
@@ -145,6 +150,11 @@ impl EventProcessor {
                 .create(true)
                 .open(output)?,
         };
+
+        // loading rules in the engine
+        if let Some(rules) = config.rules {
+            ep.engine.load_reader(File::open(rules)?)?;
+        }
 
         // should not raise any error, we just print it
         inspect_err! {
@@ -724,8 +734,21 @@ impl EventProcessor {
 
     #[inline(always)]
     fn output_json(&mut self, j: JsonValue) {
-        writeln!(self.output, "{j}").expect("failed to write json event");
-        std::io::stdout().flush().expect("failed to flush output");
+        let event = JsonEvent::from(j);
+
+        // if we have rules loaded in the engine
+        if !self.engine.is_empty() {
+            if let Ok(Some(scan_result)) = self.engine.scan(&event) {
+                if scan_result.is_detection() {
+                    writeln!(self.output, "{event}").expect("failed to write json event");
+                } else if scan_result.is_only_filter() {
+                    //writeln!(self.output, "{event}").expect("failed to write json event");
+                }
+            }
+        } else {
+            writeln!(self.output, "{event}").expect("failed to write json event");
+            self.output.flush().expect("failed to flush output");
+        }
     }
 
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {

@@ -24,6 +24,8 @@ lru-st = { git = "https://github.com/0xrawsec/lru-st/", branch = "master", featu
 aya = { git = "https://github.com/aya-rs/aya", branch = "main", features = [
     "async_tokio",
 ] }
+gene = { path = "/home/quentin/Workspace/Rust/rust-gene/gene" }
+event_derive = { path = "/home/quentin/Workspace/Rust/rust-gene/event_derive" }
 # part of tokio framework
 bytes = "1"
 futures = "0.3"
@@ -48,6 +50,7 @@ tokio = { version = "1.24", features = [
 toml = "0.7.4"
 serde = { version = "1.0.164", features = ["derive"] }
 clap = { version = "4.3.4", features = ["derive"] }
+lazy_static = "1.4.0"
 
 [[bin]]
 name = "kunai"

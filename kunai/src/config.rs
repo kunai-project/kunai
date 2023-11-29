@@ -39,6 +39,7 @@ impl Event {
 pub struct Config {
     pub output: String,
     pub max_buffered_events: u16,
+    pub rules: Option<String>,
     pub events: Vec<Event>,
 }
 
@@ -60,6 +61,7 @@ impl Default for Config {
         Self {
             output: "/dev/stdout".into(),
             max_buffered_events: 1024,
+            rules: None,
             events,
         }
     }
