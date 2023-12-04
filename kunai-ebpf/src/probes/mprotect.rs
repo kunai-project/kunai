@@ -39,7 +39,7 @@ unsafe fn try_sys_enter_mprotect(ctx: &TracePointContext) -> ProbeResult<()> {
         alloc::init()?;
         let event = alloc::alloc_zero::<MprotectEvent>()?;
 
-        event.init_from_current_task(events::Type::MprotectExec)?;
+        event.init_from_current_task(Type::MprotectExec)?;
 
         // setting event data
         event.data.start = args.start;

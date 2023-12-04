@@ -1,18 +1,25 @@
+use anyhow::anyhow;
 use aya::maps::MapData;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Builder;
 use gene::Engine;
-use json::{object, JsonValue};
-use kunai::events::JsonEvent;
+use kunai::events::{
+    BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
+    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MountData,
+    MprotectData, NetworkInfo, PrctlData, RWData, SendDataData, SocketInfo, UnlinkData, UserEvent,
+};
 use kunai::info::{AdditionalFields, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
 use kunai::{cache, util};
+use kunai_common::bpf_events::{
+    self, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
+};
 use kunai_common::cgroup::Cgroup;
 use kunai_common::config::{BpfConfig, Filter};
-use kunai_common::events::{self, EncodedEvent, Event, *};
 use kunai_common::inspect_err;
 
 use log::LevelFilter;
+use serde::Serialize;
 
 use std::collections::{HashMap, VecDeque};
 
@@ -50,12 +57,6 @@ use kunai::util::namespaces::unshare;
 use kunai::util::*;
 
 const PAGE_SIZE: usize = 4096;
-
-macro_rules! format_ptr {
-    ($value:expr) => {
-        format!("{:p}", $value as *const u8)
-    };
-}
 
 #[derive(Debug, Clone)]
 struct CorrelationData {
@@ -122,16 +123,6 @@ impl EventProcessor {
         None
     }
 
-    #[inline]
-    fn json_event(info: StdEventInfo, data: JsonValue) -> JsonValue {
-        object! {data: data, info: info,}
-    }
-
-    #[inline]
-    fn json_event_info_ref(info: &StdEventInfo, data: JsonValue) -> JsonValue {
-        object! {data: data, info: info}
-    }
-
     pub fn init(config: Config, receiver: Receiver<EncodedEvent>) -> anyhow::Result<()> {
         let output = match config.output.as_str() {
             "stdout" => "/dev/stdout",
@@ -152,8 +143,14 @@ impl EventProcessor {
         };
 
         // loading rules in the engine
-        if let Some(rules) = config.rules {
-            ep.engine.load_reader(File::open(rules)?)?;
+        if !config.rules.is_empty() {
+            for rule in config.rules.iter() {
+                info!("loading detection/filter rules from: {rule}");
+                ep.engine
+                    .load_rules_yaml_reader(File::open(rule)?)
+                    .map_err(|e| anyhow!("failed to load file {rule}: {e}"))?;
+            }
+            info!("number of loaded rules: {}", ep.engine.rules_count());
         }
 
         // should not raise any error, we just print it
@@ -317,67 +314,77 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn json_execve(&mut self, info: StdEventInfo, event: &ExecveEvent) -> JsonValue {
+    fn to_execve(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::ExecveEvent,
+    ) -> UserEvent<ExecveData> {
         let ancestors = self.get_ancestors(&info);
 
         let mnt_ns = event.info.process.namespaces.mnt;
 
-        let mut data = object! {
+        let mut data = ExecveData {
             ancestors: ancestors.join("|"),
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
             exe: self.get_hashes_with_ns(mnt_ns, &event.data.executable),
+            interpreter: None,
         };
 
-        // we check wether a script is being interpreted
         if event.data.executable != event.data.interpreter {
-            data["interpreter"] = self
-                .get_hashes_with_ns(mnt_ns, &event.data.interpreter)
-                .into();
+            data.interpreter = Some(self.get_hashes_with_ns(mnt_ns, &event.data.interpreter))
         }
 
-        Self::json_event_info_ref(&info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_clone(&mut self, info: StdEventInfo, event: &CloneEvent) -> JsonValue {
-        let exe = event.data.executable.to_path_buf();
-        let cmd_line = event.data.argv.to_command_line();
-
-        let data = object! {
-            exe: exe.to_string_lossy().as_ref(),
-            command_line: cmd_line,
-            flags: format!("0x{:08x}",event.data.flags),
+    fn to_clone(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::CloneEvent,
+    ) -> UserEvent<CloneData> {
+        let data = CloneData {
+            exe: event.data.executable.to_path_buf(),
+            command_line: event.data.argv.to_command_line(),
+            flags: event.data.flags,
         };
-
-        Self::json_event_info_ref(&info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_prctl(&mut self, info: StdEventInfo, event: &PrctlEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+    fn to_prctl(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::PrctlEvent,
+    ) -> UserEvent<PrctlData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let opt = event.data.option;
-        let opt_str = PrctlOption::try_from_uint(event.data.option)
+        let option = PrctlOption::try_from_uint(event.data.option)
             .and_then(|o| Ok(o.as_str().into()))
-            .unwrap_or(format!("unknown({opt})"));
+            .unwrap_or(format!("unknown({})", event.data.option))
+            .to_string();
 
-        let data = object! {
-            exe: exe.to_string_lossy().as_ref(),
-            command_line: cmd_line,
-            option: opt_str,
-            arg2: format!("0x{:x}", event.data.arg2),
-            arg3: format!("0x{:x}", event.data.arg3),
-            arg4: format!("0x{:x}", event.data.arg4),
-            arg5: format!("0x{:x}", event.data.arg5),
+        let data = PrctlData {
+            exe,
+            command_line,
+            option,
+            arg2: event.data.arg2,
+            arg3: event.data.arg3,
+            arg4: event.data.arg4,
+            arg5: event.data.arg5,
             success: event.data.success,
         };
 
-        Self::json_event_info_ref(&info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_mmap_exec(&mut self, info: StdEventInfo, event: &MmapExecEvent) -> JsonValue {
+    fn to_mmap_exec(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::MmapExecEvent,
+    ) -> UserEvent<kunai::events::MmapExecData> {
         let filename = event.data.filename;
         let mnt_ns = event.info.process.namespaces.mnt;
         let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename);
@@ -386,21 +393,25 @@ impl EventProcessor {
 
         let exe = self.get_exe(ck);
 
-        let data = object! {
+        let data = kunai::events::MmapExecData {
             command_line: self.get_command_line(ck),
-            exe: exe.to_string_lossy().as_ref(),
+            exe: exe,
             mapped: mmapped_hashes,
         };
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_dns_queries(&mut self, info: StdEventInfo, event: &DnsQueryEvent) -> Vec<JsonValue> {
-        let mut out: Vec<JsonValue> = vec![];
+    fn to_dns_queries(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::DnsQueryEvent,
+    ) -> Vec<UserEvent<DnsQueryData>> {
+        let mut out = vec![];
         let ck = info.correlation_key();
         let exe = self.get_exe(ck);
-        let cmd_line = self.get_command_line(ck);
+        let command_line = self.get_command_line(ck);
 
         let serv_ip: IpAddr = event.data.ip_port.into();
         let serv_port = event.data.ip_port.port();
@@ -420,21 +431,22 @@ impl EventProcessor {
         let responses = event.data.answers().unwrap_or_default();
 
         for r in responses {
-            out.push(Self::json_event(
-                info.clone(),
-                object! {
-                    command_line: cmd_line.clone(),
-                    exe: exe.to_string_lossy().as_ref(),
-                    query: r.question.clone(),
-                    proto: proto.as_str(),
-                    response: r.answers.join(";"),
-                    dns_server: {
-                        ip: serv_ip.to_string(),
-                        port: serv_port,
-                        public: is_public_ip(serv_ip),
-                    }
+            let data = DnsQueryData {
+                command_line: command_line.clone(),
+                exe: exe.clone(),
+                query: r.question.clone(),
+                proto: proto.clone().into(),
+                response: r.answers.join(";"),
+                dns_server: NetworkInfo {
+                    hostname: None,
+                    ip: serv_ip,
+                    port: serv_port,
+                    public: is_public_ip(serv_ip),
+                    is_v6: event.data.ip_port.is_v6(),
                 },
-            ));
+            };
+
+            out.push(UserEvent::new(data, info.clone()));
 
             // update the resolution map
             r.answers.iter().for_each(|a| {
@@ -449,110 +461,114 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn json_rw_event(&mut self, info: StdEventInfo, event: &ConfigEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+    fn to_rw(&mut self, info: StdEventInfo, event: &bpf_events::ConfigEvent) -> UserEvent<RWData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        Self::json_event(
-            info,
-            object! {
-                command_line: cmd_line,
-                exe: exe.to_string_lossy().as_ref(),
-                path: event.data.path.to_string(),
-            },
-        )
-    }
-
-    #[inline]
-    fn json_unlink_event(&mut self, info: StdEventInfo, event: &UnlinkEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
-
-        Self::json_event(
-            info,
-            object! {
-                command_line: cmd_line,
-                exe: exe.to_string_lossy().as_ref(),
-                path: event.data.path.to_string(),
-                success: event.data.success,
-            },
-        )
-    }
-
-    #[inline]
-    fn json_mount_event(&mut self, info: StdEventInfo, event: &MountEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
-
-        let mut data = object! {
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
-            dev_name: event.data.dev_name.to_string(),
-            path: event.data.path.to_string(),
+        let data = RWData {
+            command_line,
+            exe,
+            path: event.data.path.to_path_buf(),
         };
 
-        // we cannot use type keyword in object! macro
-        data["type"] = event.data.ty.to_string().into();
-        // in order to display success after type
-        data["success"] = (event.data.rc == 0).into();
-
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_bpf_prog_load(&mut self, info: StdEventInfo, event: &BpfProgLoadEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
-        let mut data = object! {
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
+    fn to_unlink(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::UnlinkEvent,
+    ) -> UserEvent<UnlinkData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        let data = UnlinkData {
+            command_line,
+            exe,
+            path: event.data.path.into(),
+            success: event.data.success,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline]
+    fn to_mount(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::MountEvent,
+    ) -> UserEvent<MountData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        let data = MountData {
+            command_line,
+            exe,
+            dev_name: event.data.dev_name.into(),
+            path: event.data.path.into(),
+            ty: event.data.ty.into(),
+            success: event.data.rc == 0,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline]
+    fn to_bpf_prog_load(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::BpfProgLoadEvent,
+    ) -> UserEvent<BpfProgLoadData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        let mut data = BpfProgLoadData {
+            command_line,
+            exe,
             id: event.data.id,
-            prog_type: {
+            prog_type: BpfProgTypeInfo {
                 id: event.data.prog_type,
                 name: util::bpf::bpf_type_to_string(event.data.prog_type),
             },
             tag: hex::encode(event.data.tag),
-            attached_func: event.data.attached_func_name.to_string(),
-            name: event.data.name.to_string(),
-            ksym: event.data.ksym.to_string(),
-            bpf_prog: {
-                md5: "?".to_string(),
-                sha1: "?".to_string(),
-                sha256: "?".to_string(),
-                sha512: "?".to_string(),
+            attached_func: event.data.attached_func_name.into(),
+            name: event.data.name.into(),
+            ksym: event.data.ksym.into(),
+            bpf_prog: kunai::events::BpfProgInfo {
+                md5: "?".into(),
+                sha1: "?".into(),
+                sha256: "?".into(),
+                sha512: "?".into(),
                 size: 0,
             },
-            // count of verified instructions
             verified_insns: event.data.verified_insns,
-            // if loading was successful
             loaded: event.data.loaded,
         };
 
         if let Some(h) = &event.data.hashes {
-            data["bpf_prog"]["md5"] = h.md5.to_string().into();
-            data["bpf_prog"]["sha1"] = h.sha1.to_string().into();
-            data["bpf_prog"]["sha256"] = h.sha256.to_string().into();
-            data["bpf_prog"]["sha512"] = h.sha512.to_string().into();
-            data["bpf_prog"]["size"] = h.size.into();
+            data.bpf_prog.md5 = h.md5.into();
+            data.bpf_prog.sha1 = h.sha1.into();
+            data.bpf_prog.sha256 = h.sha256.into();
+            data.bpf_prog.sha512 = h.sha512.into();
+            data.bpf_prog.size = h.size;
         }
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_bpf_socket_filter(
+    fn to_bpf_socket_filter(
         &mut self,
         info: StdEventInfo,
-        event: &BpfSocketFilterEvent,
-    ) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+        event: &bpf_events::BpfSocketFilterEvent,
+    ) -> UserEvent<BpfSocketFilterData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let mut socket = object! {
-            domain: event.data.socket_info.domain_to_string(),
-        };
-        socket["type"] = event.data.socket_info.type_to_string().into();
-
-        let data = object! {
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
-            socket: socket,
-            filter: object!{
+        let data = BpfSocketFilterData {
+            command_line,
+            exe,
+            socket: SocketInfo {
+                domain: event.data.socket_info.domain_to_string(),
+                ty: event.data.socket_info.type_to_string().into(),
+            },
+            filter: FilterInfo {
                 md5: md5_data(event.data.filter.as_slice()),
                 sha1: sha1_data(event.data.filter.as_slice()),
                 sha256: sha256_data(event.data.filter.as_slice()),
@@ -563,32 +579,43 @@ impl EventProcessor {
             attached: event.data.attached,
         };
 
-        Self::json_event(info, data)
+        //Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_mprotect(&self, info: StdEventInfo, event: &MprotectEvent) -> JsonValue {
+    fn to_mprotect(
+        &self,
+        info: StdEventInfo,
+        event: &bpf_events::MprotectEvent,
+    ) -> UserEvent<MprotectData> {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
-        let data = object! {
+
+        let data = MprotectData {
             command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
-            addr: format_ptr!(event.data.start),
-            prot: format!("0x{:08x}", event.data.prot),
+            exe: exe,
+            addr: event.data.start,
+            prot: event.data.prot,
         };
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_connect(&self, info: StdEventInfo, event: &ConnectEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+    fn to_connect(
+        &self,
+        info: StdEventInfo,
+        event: &bpf_events::ConnectEvent,
+    ) -> UserEvent<ConnectData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
         let dst_ip: IpAddr = event.data.ip_port.into();
-        let data = object! {
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
-            dst: object!{
-                hostname: self.get_resolved(dst_ip, &info),
-                ip: dst_ip.to_string(),
+
+        let data = ConnectData {
+            command_line,
+            exe,
+            dst: NetworkInfo {
+                hostname: Some(self.get_resolved(dst_ip, &info)),
+                ip: dst_ip,
                 port: event.data.ip_port.port(),
                 public: is_public_ip(dst_ip),
                 is_v6: event.data.ip_port.is_v6(),
@@ -596,19 +623,24 @@ impl EventProcessor {
             connected: event.data.connected,
         };
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_send_data(&self, info: StdEventInfo, event: &SendEntropyEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+    fn to_send_data(
+        &self,
+        info: StdEventInfo,
+        event: &bpf_events::SendEntropyEvent,
+    ) -> UserEvent<SendDataData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
         let dst_ip: IpAddr = event.data.ip_port.into();
-        let data = object! {
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
-            dst: object!{
-                hostname: self.get_resolved(dst_ip, &info),
-                ip: dst_ip.to_string(),
+
+        let data = SendDataData {
+            exe,
+            command_line,
+            dst: NetworkInfo {
+                hostname: Some(self.get_resolved(dst_ip, &info)),
+                ip: dst_ip,
                 port: event.data.ip_port.port(),
                 public: is_public_ip(dst_ip),
                 is_v6: event.data.ip_port.is_v6(),
@@ -617,47 +649,59 @@ impl EventProcessor {
             data_size: event.data.real_data_size,
         };
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_init_module(&self, info: StdEventInfo, event: &InitModuleEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+    fn to_init_module(
+        &self,
+        info: StdEventInfo,
+        event: &bpf_events::InitModuleEvent,
+    ) -> UserEvent<InitModuleData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let data = object! {
+        let data = InitModuleData {
             ancestors: self.get_ancestors_string(&info),
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
+            command_line,
+            exe,
             module_name: event.data.name.to_string(),
             args: event.data.uargs.to_string(),
-            userspace_addr: format_ptr!(event.data.umod),
+            userspace_addr: event.data.umod,
             loaded: event.data.loaded,
         };
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_file_rename(&self, info: StdEventInfo, event: &FileRenameEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+    fn to_file_rename(
+        &self,
+        info: StdEventInfo,
+        event: &bpf_events::FileRenameEvent,
+    ) -> UserEvent<FileRenameData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let data = object! {
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
-            old: event.data.old_name.to_string(),
-            new: event.data.new_name.to_string(),
+        let data = FileRenameData {
+            command_line,
+            exe,
+            old: event.data.old_name.into(),
+            new: event.data.new_name.into(),
         };
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn json_exit(&mut self, info: StdEventInfo, event: &ExitEvent) -> JsonValue {
-        let (exe, cmd_line) = self.get_exe_and_command_line(&info);
+    fn to_exit(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::ExitEvent,
+    ) -> UserEvent<ExitData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let data = object! {
-            command_line: cmd_line,
-            exe: exe.to_string_lossy().as_ref(),
+        let data = ExitData {
+            command_line,
+            exe,
             error_code: event.data.error_code,
         };
 
@@ -674,11 +718,15 @@ impl EventProcessor {
                 .and_modify(|c| c.free_memory());
         }
 
-        Self::json_event(info, data)
+        UserEvent::new(data, info)
     }
 
     #[inline]
-    fn handle_correlation_event(&mut self, info: StdEventInfo, event: &CorrelationEvent) {
+    fn handle_correlation_event(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::CorrelationEvent,
+    ) {
         let ck = info.correlation_key();
 
         // Execve must remove any previous correlation (i.e. coming from
@@ -712,12 +760,12 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn handle_hash_event(&mut self, info: StdEventInfo, event: &HashEvent) {
+    fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
         let mnt_ns = info.info.process.namespaces.mnt;
         self.get_hashes_with_ns(mnt_ns, &event.data.path);
     }
 
-    fn build_std_event_info(&mut self, i: EventInfo) -> StdEventInfo {
+    fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let ns = i.process.namespaces.mnt;
 
         let std_info = StdEventInfo::with_event_info(i, self.random);
@@ -733,21 +781,36 @@ impl EventProcessor {
     }
 
     #[inline(always)]
-    fn output_json(&mut self, j: JsonValue) {
-        let event = JsonEvent::from(j);
+    fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) {
+        macro_rules! serialize {
+            ($event:expr) => {
+                match serde_json::to_string($event) {
+                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
+                    Err(e) => error!("failed to serialize event to json: {e}"),
+                }
+            };
+        }
 
         // if we have rules loaded in the engine
         if !self.engine.is_empty() {
-            if let Ok(Some(scan_result)) = self.engine.scan(&event) {
+            let scan_result = match self.engine.scan(event) {
+                Ok(sr) => sr,
+                Err((sr, e)) => {
+                    error!("event scanning error: {e}");
+                    sr
+                }
+            };
+
+            if let Some(scan_result) = scan_result {
                 if scan_result.is_detection() {
-                    writeln!(self.output, "{event}").expect("failed to write json event");
+                    event.set_detection(scan_result);
+                    serialize!(event);
                 } else if scan_result.is_only_filter() {
-                    //writeln!(self.output, "{event}").expect("failed to write json event");
+                    serialize!(event);
                 }
             }
         } else {
-            writeln!(self.output, "{event}").expect("failed to write json event");
-            self.output.flush().expect("failed to flush output");
+            serialize!(event)
         }
     }
 
@@ -770,164 +833,170 @@ impl EventProcessor {
         let etype = std_info.info.etype;
 
         match etype {
-            events::Type::Unknown => {
+            Type::Unknown => {
                 error!("Unknown event type: {}", etype as u64)
             }
-            events::Type::Max | events::Type::EndEvents | events::Type::TaskSched => {}
-            events::Type::Execve | events::Type::ExecveScript => {
-                match event!(enc_event, ExecveEvent) {
+            Type::Max | Type::EndEvents | Type::TaskSched => {}
+            Type::Execve | Type::ExecveScript => {
+                match event!(enc_event, bpf_events::ExecveEvent) {
                     Ok(e) => {
                         // this event is used for correlation but cannot be processed
                         // asynchronously so we have to handle correlation here
-                        self.handle_correlation_event(std_info.clone(), &CorrelationEvent::from(e));
+                        self.handle_correlation_event(
+                            std_info.clone(),
+                            &bpf_events::CorrelationEvent::from(e),
+                        );
                         // we have to rebuild std_info as it has it is uses correlation
                         // information
                         let std_info = self.build_std_event_info(*i);
-                        let e = self.json_execve(std_info, e);
-                        self.output_json(e);
+                        let mut e = self.to_execve(std_info, e);
+
+                        self.scan_and_print(&mut e);
                     }
                     Err(e) => error!("failed to decode {} event: {:?}", etype, e),
                 }
             }
 
-            events::Type::Clone => match event!(enc_event, CloneEvent) {
+            Type::Clone => match event!(enc_event, bpf_events::CloneEvent) {
                 Ok(e) => {
                     // this event is used for correlation but cannot be processed
                     // asynchronously so we have to handle correlation here
-                    self.handle_correlation_event(std_info.clone(), &CorrelationEvent::from(e));
+                    self.handle_correlation_event(
+                        std_info.clone(),
+                        &bpf_events::CorrelationEvent::from(e),
+                    );
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
                     let std_info = self.build_std_event_info(*i);
-                    let e = self.json_clone(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_clone(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::Prctl => match event!(enc_event, PrctlEvent) {
+            Type::Prctl => match event!(enc_event, bpf_events::PrctlEvent) {
                 Ok(e) => {
-                    let e = self.json_prctl(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_prctl(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::MmapExec => match event!(enc_event, MmapExecEvent) {
+            Type::MmapExec => match event!(enc_event, bpf_events::MmapExecEvent) {
                 Ok(e) => {
-                    let e = self.json_mmap_exec(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_mmap_exec(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::MprotectExec => match event!(enc_event, MprotectEvent) {
+            Type::MprotectExec => match event!(enc_event, bpf_events::MprotectEvent) {
                 Ok(e) => {
-                    let e = self.json_mprotect(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_mprotect(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::Connect => match event!(enc_event, ConnectEvent) {
+            Type::Connect => match event!(enc_event, bpf_events::ConnectEvent) {
                 Ok(e) => {
-                    let e = self.json_connect(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_connect(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::DnsQuery => match event!(enc_event, DnsQueryEvent) {
+            Type::DnsQuery => match event!(enc_event, bpf_events::DnsQueryEvent) {
                 Ok(e) => {
-                    for e in self.json_dns_queries(std_info, e) {
-                        self.output_json(e);
+                    for e in self.to_dns_queries(std_info, e).iter_mut() {
+                        self.scan_and_print(e);
                     }
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::SendData => match event!(enc_event, SendEntropyEvent) {
+            Type::SendData => match event!(enc_event, bpf_events::SendEntropyEvent) {
                 Ok(e) => {
-                    let e = self.json_send_data(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_send_data(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::InitModule => match event!(enc_event, InitModuleEvent) {
+            Type::InitModule => match event!(enc_event, bpf_events::InitModuleEvent) {
                 Ok(e) => {
-                    let e = self.json_init_module(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_init_module(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::WriteConfig
-            | events::Type::Write
-            | events::Type::ReadConfig
-            | events::Type::Read => match event!(enc_event, ConfigEvent) {
+            Type::WriteConfig | Type::Write | Type::ReadConfig | Type::Read => {
+                match event!(enc_event, bpf_events::ConfigEvent) {
+                    Ok(e) => {
+                        let mut e = self.to_rw(std_info, e);
+                        self.scan_and_print(&mut e);
+                    }
+                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+                }
+            }
+
+            Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
                 Ok(e) => {
-                    let e = self.json_rw_event(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_unlink(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::FileUnlink => match event!(enc_event, UnlinkEvent) {
+            Type::Mount => match event!(enc_event, bpf_events::MountEvent) {
                 Ok(e) => {
-                    let e = self.json_unlink_event(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_mount(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::Mount => match event!(enc_event, MountEvent) {
+            Type::FileRename => match event!(enc_event, bpf_events::FileRenameEvent) {
                 Ok(e) => {
-                    let e = self.json_mount_event(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_file_rename(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::FileRename => match event!(enc_event, FileRenameEvent) {
+            Type::BpfProgLoad => match event!(enc_event, bpf_events::BpfProgLoadEvent) {
                 Ok(e) => {
-                    let e = self.json_file_rename(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_bpf_prog_load(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::BpfProgLoad => match event!(enc_event, BpfProgLoadEvent) {
+            Type::BpfSocketFilter => match event!(enc_event, bpf_events::BpfSocketFilterEvent) {
                 Ok(e) => {
-                    let e = self.json_bpf_prog_load(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_bpf_socket_filter(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::BpfSocketFilter => match event!(enc_event, BpfSocketFilterEvent) {
+            Type::Exit | Type::ExitGroup => match event!(enc_event, bpf_events::ExitEvent) {
                 Ok(e) => {
-                    let e = self.json_bpf_socket_filter(std_info, e);
-                    self.output_json(e);
+                    let mut e = self.to_exit(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::Exit | events::Type::ExitGroup => match event!(enc_event, ExitEvent) {
-                Ok(e) => {
-                    let e = self.json_exit(std_info, e);
-                    self.output_json(e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            events::Type::Correlation => match event!(enc_event) {
+            Type::Correlation => match event!(enc_event) {
                 Ok(e) => {
                     self.handle_correlation_event(std_info, e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            events::Type::CacheHash => match event!(enc_event) {
+            Type::CacheHash => match event!(enc_event) {
                 Ok(e) => {
                     self.handle_hash_event(std_info, e);
                 }
@@ -942,7 +1011,7 @@ struct EventReader {
     pipe: VecDeque<EncodedEvent>,
     sender: Sender<EncodedEvent>,
     filter: Filter,
-    stats: AyaHashMap<MapData, events::Type, u64>,
+    stats: AyaHashMap<MapData, Type, u64>,
 }
 
 #[inline(always)]
@@ -958,8 +1027,8 @@ impl EventReader {
         sender: Sender<EncodedEvent>,
     ) -> anyhow::Result<Arc<Mutex<Self>>> {
         let filter = (&config).try_into()?;
-        let stats_map: AyaHashMap<_, events::Type, u64> =
-            AyaHashMap::try_from(bpf.take_map(events::KUNAI_STATS_MAP).unwrap()).unwrap();
+        let stats_map: AyaHashMap<_, Type, u64> =
+            AyaHashMap::try_from(bpf.take_map(bpf_events::KUNAI_STATS_MAP).unwrap()).unwrap();
 
         let ep = EventReader {
             pipe: VecDeque::new(),
@@ -1059,18 +1128,18 @@ impl EventReader {
         #[allow(clippy::single_match)]
         match i.etype {
             Type::Execve => {
-                let mut event = mut_event!(e, ExecveEvent).unwrap();
+                let mut event = mut_event!(e, bpf_events::ExecveEvent).unwrap();
                 if event.data.interpreter != event.data.executable {
                     event.info.etype = Type::ExecveScript
                 }
             }
             Type::BpfProgLoad => {
-                let mut event = mut_event!(e, BpfProgLoadEvent).unwrap();
+                let mut event = mut_event!(e, bpf_events::BpfProgLoadEvent).unwrap();
 
                 // dumping eBPF program from userland
                 match util::bpf::bpf_dump_xlated_by_id_and_tag(event.data.id, event.data.tag) {
                     Ok(insns) => {
-                        let h = ProgHashes {
+                        let h = bpf_events::ProgHashes {
                             md5: md5_data(insns.as_slice()).try_into().unwrap(),
                             sha1: sha1_data(insns.as_slice()).try_into().unwrap(),
                             sha256: sha256_data(insns.as_slice()).try_into().unwrap(),
@@ -1097,19 +1166,20 @@ impl EventReader {
 
         match i.etype {
             Type::Execve | Type::ExecveScript => {
-                let event = event!(e, ExecveEvent).unwrap();
-                for e in HashEvent::all_from_execve(event) {
+                let event = event!(e, bpf_events::ExecveEvent).unwrap();
+                for e in bpf_events::HashEvent::all_from_execve(event) {
                     self.send_event(e).unwrap()
                 }
             }
 
             Type::MmapExec => {
-                let event = event!(e, MmapExecEvent).unwrap();
-                self.send_event(HashEvent::from(event)).unwrap();
+                let event = event!(e, bpf_events::MmapExecEvent).unwrap();
+                self.send_event(bpf_events::HashEvent::from(event)).unwrap();
             }
 
             Type::TaskSched => {
-                let c: CorrelationEvent = event!(e, ScheduleEvent).unwrap().into();
+                let c: bpf_events::CorrelationEvent =
+                    event!(e, bpf_events::ScheduleEvent).unwrap().into();
                 self.send_event(c).unwrap();
             }
 
@@ -1120,7 +1190,8 @@ impl EventReader {
     fn read_events(er: &Arc<Mutex<Self>>, bpf: &mut Bpf, config: &Config) {
         // try to convert the PERF_ARRAY map to an AsyncPerfEventArray
         let mut perf_array =
-            AsyncPerfEventArray::try_from(bpf.take_map(events::KUNAI_EVENTS_MAP).unwrap()).unwrap();
+            AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
+                .unwrap();
 
         let online_cpus = online_cpus().expect("failed to get online cpus");
         let barrier = Arc::new(Barrier::new(online_cpus.len()));
@@ -1152,28 +1223,20 @@ impl EventReader {
                     .map(|_| BytesMut::with_capacity(MAX_BPF_EVENT_SIZE))
                     .collect::<Vec<_>>();
 
-                // we need to be sure that the fast timeout is bigger than the slowest of
+                // we need to be sure that timeout is bigger than the slowest of
                 // our probes to guarantee that we can correctly re-order events
-                let fast_timeout_ms = 100;
-                let slow_timeout_ms = 500;
-                let mut timeout = fast_timeout_ms;
+                let timeout_ms = 100;
 
                 loop {
                     // we time this out so that the barrier does not wait too long
                     let events = match time::timeout(
-                        time::Duration::from_millis(timeout),
+                        time::Duration::from_millis(timeout_ms),
                         buf.read_events(&mut buffers),
                     )
                     .await
                     {
-                        Ok(r) => {
-                            timeout = fast_timeout_ms;
-                            r?
-                        }
-                        _ => {
-                            timeout = slow_timeout_ms;
-                            Events { read: 0, lost: 0 }
-                        }
+                        Ok(r) => r?,
+                        _ => Events { read: 0, lost: 0 },
                     };
 
                     // checking out lost events
@@ -1185,7 +1248,7 @@ impl EventReader {
 
                         {
                             let er = event_reader.lock().await;
-                            for ty in events::Type::variants() {
+                            for ty in Type::variants() {
                                 if ty.is_configurable() {
                                     error!(
                                         "stats {}: {}",
@@ -1280,6 +1343,9 @@ struct Cli {
     #[arg(long, help = "Prints a default configuration to stdout")]
     dump_config: bool,
 
+    #[arg(long, help = "Show details about configurable events on stdout")]
+    show_events: bool,
+
     #[arg(long, help = "Exclude events by name (comma separated)")]
     exclude: Option<String>,
 
@@ -1294,6 +1360,14 @@ struct Cli {
         help = "Increase the size of the buffer shared between eBPF probes and userland"
     )]
     max_buffered_events: Option<u16>,
+
+    #[arg(
+        short,
+        long,
+        value_name = "FILE",
+        help = "Detection/filtering rule file. Superseeds configuration file"
+    )]
+    rule_file: Option<Vec<String>>,
 
     #[arg(short, long, action = clap::ArgAction::Count, help="Set verbosity level, repeat option for more verbosity.")]
     verbose: u8,
@@ -1353,11 +1427,27 @@ async fn main() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
+    // show events
+    if cli.show_events {
+        for v in bpf_events::Type::variants() {
+            if v.is_configurable() {
+                let pad = 25 - v.as_str().len();
+                println!("{}: {:>pad$}", v.as_str(), v as u32)
+            }
+        }
+        return Ok(());
+    }
+
     if let Some(conf_file) = cli.config {
         conf = Config::from_toml(std::fs::read_to_string(conf_file)?)?;
     }
 
     // command line superseeds configuration
+
+    // superseeds configuration
+    if let Some(rules) = cli.rule_file {
+        conf.rules = rules;
+    }
 
     // we want to increase max_buffered_events
     if cli.max_buffered_events.is_some() {

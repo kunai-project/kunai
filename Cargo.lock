@@ -538,8 +538,8 @@ dependencies = [
 [[package]]
 name = "event_derive"
 version = "0.1.0"
+source = "git+https://github.com/0xrawsec/gene-rs?branch=main#1aed70c237eeafd12f282d10c728ef0a91e009ff"
 dependencies = [
- "gene",
  "proc-macro2",
  "quote",
  "syn 2.0.39",
@@ -647,7 +647,9 @@ dependencies = [
 [[package]]
 name = "gene"
 version = "0.1.0"
+source = "git+https://github.com/0xrawsec/gene-rs?branch=main#1aed70c237eeafd12f282d10c728ef0a91e009ff"
 dependencies = [
+ "event_derive",
  "lazy_static",
  "pest",
  "pest_derive",
@@ -821,7 +823,6 @@ dependencies = [
  "gene",
  "hex",
  "ip_network",
- "json",
  "kunai-common",
  "lazy_static",
  "libc",
@@ -830,6 +831,7 @@ dependencies = [
  "md-5",
  "procfs",
  "serde",
+ "serde_json",
  "sha1",
  "sha2",
  "thiserror",
@@ -1291,6 +1293,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.39",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.108"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d1c7e3eac408d115102c4c24ad393e0821bb3a5df4d506a80f85f7a742a526b"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]

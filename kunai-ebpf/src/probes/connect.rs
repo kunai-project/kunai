@@ -43,9 +43,9 @@ unsafe fn try_exit_connect(
     let sa_family = core_read_user!(addr, sa_family)?;
 
     alloc::init()?;
-    let event = alloc::alloc_zero::<events::ConnectEvent>()?;
+    let event = alloc::alloc_zero::<ConnectEvent>()?;
 
-    event.init_from_current_task(events::Type::Connect)?;
+    event.init_from_current_task(Type::Connect)?;
 
     let ip_port = match sa_family {
         AF_INET => {

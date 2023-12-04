@@ -72,7 +72,7 @@ impl SockHelper {
             }
         }
 
-        event.init_from_current_task(events::Type::DnsQuery)?;
+        event.init_from_current_task(Type::DnsQuery)?;
         pipe_event(ctx, event);
 
         Ok(())

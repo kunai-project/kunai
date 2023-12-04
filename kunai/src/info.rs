@@ -1,18 +1,10 @@
-use chrono::{DateTime, SecondsFormat, Utc};
-use json::{object, JsonValue};
+use chrono::{DateTime, Utc};
 use kunai_common::{
-    events::{self, EventInfo},
+    bpf_events::{self, EventInfo},
     uuid::TaskUuid,
 };
 
 use crate::util::get_clk_tck;
-
-macro_rules! to_hex {
-    ($value:expr) => {{
-        let pad = (std::mem::size_of_val(&$value) * 2) as usize;
-        format!("0x{:0pad$x}", $value)
-    }};
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProcFsTaskInfo {
@@ -102,7 +94,7 @@ pub struct AdditionalFields {
 
 #[derive(Default, Debug, Clone)]
 pub struct StdEventInfo {
-    pub info: events::EventInfo,
+    pub info: bpf_events::EventInfo,
     pub additional: AdditionalFields,
     pub utc_timestamp: DateTime<Utc>,
 }
@@ -137,74 +129,5 @@ impl StdEventInfo {
     pub fn with_additional_fields(mut self, fields: AdditionalFields) -> Self {
         self.additional = fields;
         self
-    }
-}
-
-impl From<StdEventInfo> for JsonValue {
-    fn from(value: StdEventInfo) -> Self {
-        Self::from(&value)
-    }
-}
-
-impl From<&StdEventInfo> for JsonValue {
-    fn from(i: &StdEventInfo) -> Self {
-        let ts = i.utc_timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true);
-        let info = i.info;
-
-        object! {
-            // host information
-            host: object!{
-                hostname: i.additional.hostname.as_str(),
-                container: i.additional.container.clone(),
-            },
-            // event information
-            event: object!{
-                // this field can be used by other tools to identify that event comes from kunai
-                source: "kunai",
-                id: info.etype.id(),
-                name: info.etype.as_str(),
-                uuid: info.uuid.into_uuid().hyphenated().to_string(),
-                batch: info.batch,
-            },
-            // current task
-            task: object!{
-                name: info.process.comm_string(),
-                // start_time
-                // start_time: info.process.start_time,
-                // task pid
-                pid: info.process.pid,
-                // task group id -> equals to pid when single threaded
-                tgid: info.process.tgid,
-                // group uuid
-                guuid: info.process.tg_uuid.into_uuid().hyphenated().to_string(),
-                uid: info.process.uid,
-                gid: info.process.gid,
-                namespaces: object!{
-                    mnt: info.process.namespaces.mnt,
-                },
-                // task_struct->flags
-                flags: to_hex!(info.process.flags),
-            },
-            // parent task
-            parent_task: object!{
-                name: info.parent.comm_string(),
-                // start_time
-                // start_time: info.parent.start_time,
-                // task pid
-                pid: info.parent.pid,
-                // task group id -> equals to pid when single threaded
-                tgid: info.parent.tgid,
-                // group uuid
-                guuid: info.parent.tg_uuid.into_uuid().hyphenated().to_string(),
-                uid: info.parent.uid,
-                gid: info.parent.gid,
-                namespaces: object!{
-                    mnt: info.process.namespaces.mnt,
-                },
-                // task_struct->flags
-                flags: to_hex!(info.parent.flags),
-            },
-            utc_time: ts,
-        }
     }
 }

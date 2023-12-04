@@ -6,10 +6,10 @@ use aya_bpf::macros::*;
 use aya_log_ebpf::*;
 
 use kunai_common::{
+    bpf_events::*,
     bpf_utils::*,
     co_re,
     consts::*,
-    events::{self, *},
     inspect_err,
     path::{self, *},
     syscalls::*,

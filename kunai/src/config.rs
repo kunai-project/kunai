@@ -1,7 +1,7 @@
 use core::str::FromStr;
 use kunai_common::{
+    bpf_events,
     config::{BpfConfig, Filter, Loader},
-    events,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -39,16 +39,16 @@ impl Event {
 pub struct Config {
     pub output: String,
     pub max_buffered_events: u16,
-    pub rules: Option<String>,
+    pub rules: Vec<String>,
     pub events: Vec<Event>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         let mut events = vec![];
-        for v in events::Type::variants() {
+        for v in bpf_events::Type::variants() {
             // some events get disabled by default because there are too many
-            let en = !matches!(v, events::Type::Read | events::Type::Write);
+            let en = !matches!(v, bpf_events::Type::Read | bpf_events::Type::Write);
 
             if v.is_configurable() {
                 events.push(Event {
@@ -61,7 +61,7 @@ impl Default for Config {
         Self {
             output: "/dev/stdout".into(),
             max_buffered_events: 1024,
-            rules: None,
+            rules: vec![],
             events,
         }
     }
@@ -78,7 +78,7 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), Error> {
         for e in self.events.iter() {
-            let Ok(ty) = events::Type::from_str(&e.name) else {
+            let Ok(ty) = bpf_events::Type::from_str(&e.name) else {
                 return Err(Error::InvalidEvent(e.name.clone()));
             };
 
@@ -114,8 +114,8 @@ impl TryFrom<&Config> for Filter {
 
         for e in value.events.iter() {
             // config should have been verified so it should not fail
-            let ty =
-                events::Type::from_str(&e.name).map_err(|_| Error::InvalidEvent(e.name.clone()))?;
+            let ty = bpf_events::Type::from_str(&e.name)
+                .map_err(|_| Error::InvalidEvent(e.name.clone()))?;
             // we enable event in BpfConfig only if it has been configured
             if e.enable {
                 filter.enable(ty);

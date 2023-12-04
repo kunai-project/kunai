@@ -12,7 +12,7 @@ bpf_target_code! {
     pub mod co_re;
 }
 
-pub mod events;
+pub mod bpf_events;
 pub mod net;
 pub mod path;
 

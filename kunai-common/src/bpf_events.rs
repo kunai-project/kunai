@@ -469,7 +469,7 @@ not_bpf_target_code! {
     macro_rules! mut_event {
         ($enc: expr) => {unsafe { $enc.as_mut_event_with_data() }};
         ($enc:expr, $event:ty) => {{
-            let event: Result<&mut $event, $crate::events::DecoderError> =
+            let event: Result<&mut $event, $crate::bpf_events::DecoderError> =
             unsafe { $enc.as_mut_event_with_data() };
             event
         }};
@@ -481,7 +481,7 @@ not_bpf_target_code! {
     macro_rules! event {
         ($enc: expr) => {unsafe { $enc.as_event_with_data() }};
         ($enc:expr, $event:ty) => {{
-            let event: Result<&$event, $crate::events::DecoderError> =
+            let event: Result<&$event, $crate::bpf_events::DecoderError> =
             unsafe { $enc.as_event_with_data() };
             event
         }};
@@ -538,7 +538,7 @@ not_bpf_target_code! {
 
     #[cfg(test)]
     mod test {
-        use super::*;
+        use bpf_events::*;
 
         #[repr(C)]
         pub struct ExecveData {

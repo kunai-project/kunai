@@ -55,7 +55,7 @@ unsafe fn try_sys_enter_mmap(ctx: &TracePointContext) -> ProbeResult<()> {
                 alloc::init()?;
                 let event = alloc::alloc_zero::<MmapExecEvent>()?;
 
-                event.init_from_current_task(events::Type::MmapExec)?;
+                event.init_from_current_task(Type::MmapExec)?;
 
                 event
                     .data

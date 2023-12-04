@@ -4,7 +4,7 @@ pub const KUNAI_EVENTS_MAP: &str = "KUNAI_EVENTS";
 pub const KUNAI_STATS_MAP: &str = "KUNAI_STATS";
 
 bpf_target_code! {
-    use super::{Event,Type};
+    use crate::bpf_events::{Event,Type};
     use aya_bpf::{macros::map, maps::{HashMap,PerfEventByteArray}, BpfContext};
 
     #[map(name = "KUNAI_EVENTS")]

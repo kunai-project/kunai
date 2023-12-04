@@ -1,6 +1,8 @@
-use json::{object, JsonValue};
+use event_derive::FieldGetter;
+use gene::{FieldGetter, FieldValue};
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};
+use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{
@@ -31,35 +33,16 @@ pub enum Error {
     FileNotFound,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct Hashes {
     pub file: PathBuf,
     pub md5: String,
     pub sha1: String,
     pub sha256: String,
     pub sha512: String,
-    pub tlsh: String,
     pub size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-impl From<Hashes> for JsonValue {
-    fn from(value: Hashes) -> Self {
-        let mut out = object! {
-            file: value.file.to_string_lossy().to_string(),
-            md5: value.md5,
-            sha1: value.sha1,
-            sha256: value.sha256,
-            sha512: value.sha512,
-            size: value.size,
-        };
-
-        if value.error.is_some() {
-            out["error"] = value.error.unwrap().into();
-        }
-
-        out
-    }
 }
 
 impl Hashes {

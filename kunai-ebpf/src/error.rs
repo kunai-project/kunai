@@ -2,9 +2,9 @@ use crate::alloc;
 use crate::maps;
 
 use aya_log_ebpf::error;
+use kunai_common::bpf_events;
 use kunai_common::buffer;
 use kunai_common::cgroup;
-use kunai_common::events;
 use kunai_common::net;
 use kunai_common::path;
 use kunai_common::string;
@@ -58,7 +58,7 @@ pub enum ProbeError {
     #[wrap]
     FdMapError(maps::Error),
     #[wrap]
-    EventError(events::Error),
+    EventError(bpf_events::Error),
     #[wrap]
     CgroupError(cgroup::Error),
 }
@@ -129,8 +129,8 @@ impl From<alloc::Error> for ProbeError {
     }
 }
 
-impl From<events::Error> for ProbeError {
-    fn from(value: events::Error) -> Self {
+impl From<bpf_events::Error> for ProbeError {
+    fn from(value: bpf_events::Error) -> Self {
         Self::EventError(value)
     }
 }

@@ -1,4 +1,4 @@
-use crate::{bpf_target_code, events, not_bpf_target_code};
+use crate::{bpf_events, bpf_target_code, not_bpf_target_code};
 
 // analyzer does not see both target so we can allow dead code
 // to prevent warnings to happen
@@ -23,7 +23,7 @@ not_bpf_target_code! {
     }
 }
 
-const FILTER_SIZE: usize = events::Type::Max as usize;
+const FILTER_SIZE: usize = bpf_events::Type::Max as usize;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -44,15 +44,15 @@ impl Filter {
         }
     }
 
-    pub fn disable(&mut self, ty: events::Type) {
+    pub fn disable(&mut self, ty: bpf_events::Type) {
         self.enabled[ty as usize] = false;
     }
 
-    pub fn enable(&mut self, ty: events::Type) {
+    pub fn enable(&mut self, ty: bpf_events::Type) {
         self.enabled[ty as usize] = true;
     }
 
-    pub fn is_enabled(&self, ty: events::Type) -> bool {
+    pub fn is_enabled(&self, ty: bpf_events::Type) -> bool {
         self.enabled[ty as usize]
     }
 }
@@ -86,7 +86,7 @@ bpf_target_code! {
             bpf_get_current_pid_tgid() as u32 == self.loader.tgid
         }
 
-        pub fn is_event_enabled(&self, ty: events::Type) -> bool {
+        pub fn is_event_enabled(&self, ty: bpf_events::Type) -> bool {
             self.filter.is_enabled(ty)
         }
     }

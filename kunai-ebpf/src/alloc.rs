@@ -3,7 +3,7 @@ use aya_bpf::{
     maps::{PerCpuArray, PerCpuHashMap},
 };
 use core::{mem, result};
-use kunai_common::{buffer::Buffer, events};
+use kunai_common::{bpf_events, buffer::Buffer};
 use kunai_macros::BpfError;
 
 const fn max(a: usize, b: usize) -> usize {
@@ -33,8 +33,8 @@ const MAX_ALLOCS: u32 = 8;
 // to the bound checks must be taken because it may overrun the structures without
 // triping up the verifier.
 const HEAP_MAX_ALLOC_SIZE: usize = max!(
-    events::MAX_BPF_EVENT_SIZE,
-    mem::size_of::<Buffer<{ events::ENCRYPT_DATA_MAX_BUFFER_SIZE }>>()
+    bpf_events::MAX_BPF_EVENT_SIZE,
+    mem::size_of::<Buffer<{ bpf_events::ENCRYPT_DATA_MAX_BUFFER_SIZE }>>()
 ) * 2;
 
 const ZEROS: [u8; HEAP_MAX_ALLOC_SIZE] = [0; HEAP_MAX_ALLOC_SIZE];
