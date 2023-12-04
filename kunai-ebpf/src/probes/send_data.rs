@@ -11,7 +11,7 @@ idea came of a more generic event giving more high level information,
 such as the shannon entropy, of the data sent over the network.
  */
 
-#[kprobe(name = "net.sock_sendmsg")]
+#[kprobe(name = "net.security_socket_sendmsg")]
 pub fn sock_sendmsg(ctx: ProbeContext) -> u32 {
     match unsafe { try_sock_send_data(&ctx) } {
         Ok(_) => error::BPF_PROG_SUCCESS,
@@ -42,7 +42,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     alloc::init()?;
     let event = alloc::alloc_zero::<SendEntropyEvent>()?;
 
-    event.init_from_current_task(events::Type::SendData)?;
+    event.init_from_current_task(Type::SendData)?;
 
     let iov_iter = pmsg.msg_iter().ok_or(ProbeError::CoReFieldMissing)?;
 
