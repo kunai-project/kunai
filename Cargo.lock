@@ -538,7 +538,7 @@ dependencies = [
 [[package]]
 name = "event_derive"
 version = "0.1.0"
-source = "git+https://github.com/0xrawsec/gene-rs?branch=main#1aed70c237eeafd12f282d10c728ef0a91e009ff"
+source = "git+https://github.com/0xrawsec/gene-rs?branch=main#5245797e8e56db96d3535499aa08cbf704063f65"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -647,7 +647,7 @@ dependencies = [
 [[package]]
 name = "gene"
 version = "0.1.0"
-source = "git+https://github.com/0xrawsec/gene-rs?branch=main#1aed70c237eeafd12f282d10c728ef0a91e009ff"
+source = "git+https://github.com/0xrawsec/gene-rs?branch=main#5245797e8e56db96d3535499aa08cbf704063f65"
 dependencies = [
  "event_derive",
  "lazy_static",
