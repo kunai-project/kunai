@@ -1,15 +1,13 @@
 <div align="center"><img src="assets/logo.svg" width="500"/></div>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/0xrawsec/kunai/ci.yml?style=for-the-badge)](https://github.com/0xrawsec/kunai/actions/workflows/ci.yml)
-[![Documentation][docs-badge]][docs-link]
 [![Downloads](https://img.shields.io/github/downloads/0xrawsec/kunai/total.svg?style=for-the-badge)]()
-[![GitHub release (with filter)](https://img.shields.io/github/v/release/0xrawsec/kunai?style=for-the-badge&label=stable&color=green)](https://github.com/0xrawsec/kunai/releases/latest)
-[![GitHub tag (with filter)](https://img.shields.io/github/v/tag/0xrawsec/kunai?style=for-the-badge&label=latest&color=orange)](https://github.com/0xrawsec/kunai/releases)
 [![Discord](https://img.shields.io/badge/Discord-chat-5865F2?style=for-the-badge&logo=discord)](https://discord.com/invite/AUMaBvHvNU)
 
-
-[docs-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=for-the-badge&logo=docsdotrs
-[docs-link]: https://why.kunai.rocks
+[![GitHub release (with filter)](https://img.shields.io/github/v/release/0xrawsec/kunai?style=for-the-badge&label=stable&color=green)](https://github.com/0xrawsec/kunai/releases/latest)
+[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg?style=for-the-badge&logo=docsdotrs)](https://why.kunai.rocks)
+[![GitHub tag (with filter)](https://img.shields.io/github/v/tag/0xrawsec/kunai?style=for-the-badge&label=latest&color=orange)](https://github.com/0xrawsec/kunai/releases)
+[![Documentation](https://img.shields.io/badge/docs-latest-orange.svg?style=for-the-badge&logo=docsdotrs)](https://why.kunai.rocks/docs/next/quickstart)
 
 # Leitmotiv
 
