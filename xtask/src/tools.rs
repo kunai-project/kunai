@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 pub struct Options {
+    /// build bpf-linker in debug mode
+    #[clap(long)]
+    pub debug: bool,
     /// generates a cache key (mostly to be used in CI)
     #[clap(long)]
     pub action_cache_key: bool,
@@ -100,15 +103,24 @@ pub fn build_linker<T: AsRef<Path>, U: AsRef<Path>>(
         })?;
     }
 
+    let mut build_args = vec![
+        format!("--target={}", opts.target),
+        "--bins".into(),
+        // next two opts force static linking against LLVM_SYS_XXX_PREFIX
+        "--no-default-features".into(),
+        "--features=llvm-sys/force-static".into(),
+    ];
+
+    // build release by default as debug is only needed to investigate crashes
+    if !opts.debug {
+        build_args.push("--release".into());
+    }
+
     let status = std::process::Command::new("cargo")
         .current_dir(linker_dir)
         .env("LLVM_SYS_170_PREFIX", llvm_build_dir)
         .arg("build")
-        .arg(&format!("--target={}", opts.target))
-        .arg("--release")
-        .arg("--bins")
-        .arg("--no-default-features")
-        .arg("--features=llvm-sys/force-static")
+        .args(build_args)
         .status()
         .expect("failed to build bpf-linker");
 
