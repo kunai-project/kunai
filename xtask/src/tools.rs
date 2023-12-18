@@ -20,7 +20,7 @@ pub struct Options {
     pub update: bool,
     /// target to build the build-tools for
     #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
-    pub target: super::user::Target,
+    pub target: String,
 }
 
 pub struct LLVMBuilder {

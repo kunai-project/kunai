@@ -5,44 +5,14 @@ use clap::Parser;
 
 use crate::ebpf::{self, BpfTarget};
 
-#[derive(Debug, Copy, Clone)]
-pub enum Target {
-    X86_64Musl,
-    X86_64Gnu,
-    Aarch64Musl,
-}
-
-impl std::str::FromStr for Target {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "x86_64-unknown-linux-musl" => Target::X86_64Musl,
-            "x86_64-unknown-linux-gnu" => Target::X86_64Gnu,
-            "aarch64-unknown-linux-musl" => Target::Aarch64Musl,
-            _ => return Err("invalid target".to_owned()),
-        })
-    }
-}
-
-impl std::fmt::Display for Target {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Target::X86_64Musl => "x86_64-unknown-linux-musl",
-            Target::X86_64Gnu => "x86_64-unknown-linux-gnu",
-            Target::Aarch64Musl => "aarch64-unknown-linux-musl",
-        })
-    }
-}
-
 #[derive(Debug, Parser)]
 pub struct RunOptions {
     /// Build and run the release target
     #[clap(long)]
     pub release: bool,
-    /// Set the endianness of the BPF target
+    /// Specify the building target for userland
     #[clap(default_value = "x86_64-unknown-linux-musl", long)]
-    pub target: Target,
+    pub target: String,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub bpf_target: BpfTarget,
@@ -69,7 +39,7 @@ impl From<RunOptions> for BuildOptions {
 impl From<&RunOptions> for BuildOptions {
     fn from(value: &RunOptions) -> Self {
         Self {
-            target: value.target,
+            target: value.target.clone(),
             linker: None,
             bpf_target: value.bpf_target,
             bpf_linker: value.bpf_linker.clone(),
@@ -85,9 +55,9 @@ pub struct BuildOptions {
     /// Build and run the release target
     #[clap(long)]
     pub release: bool,
-    /// Set the endianness of the BPF target
+    /// Specify the building target for userland
     #[clap(default_value = "x86_64-unknown-linux-musl", long)]
-    pub target: Target,
+    pub target: String,
     /// Set the linker to use to when building userland application
     /// this option is useful when cross-compiling
     #[clap(long)]
