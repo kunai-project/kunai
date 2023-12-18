@@ -88,6 +88,23 @@ cargo xtask build --release
 # find your executable in: ./target/x86_64-unknown-linux-musl/release/kunai
 ```
 
+### Cross-compiling
+
+Let's say you want to cross-compile Kunai for aarch64 using MUSL, so that you have a single static binary at the end.
+
+1. Install the proper target using rustup `rustup install target aarch64-unknown-linux-musl`
+2. You need to install an appropriate toolchain to cross-compile to your target on your distribution. When building to a
+MUSL target, it may work using `lld` as linker and it works for `aarch64-unknown-linux-musl` target.
+3. Specify the target you want to build for in the command line and specify the linker to use.
+   ```
+   cargo xtask build --release --target aarch64-unknown-linux-musl --linker /usr/bin/lld
+   ```
+   If using `lld` does not work, you need to find the appropriate linker to use when cross-compiling to the wanted target.
+   Please dig a bit on the internet for that as I don't know them all, and it also depends on your distribution.
+4. You should find your cross-compiled binary at `./target/aarch64-unknown-linux-musl/release/kunai`
+
+**NB:** specifying `--linker` option is just a shortcut for setting appropriate RUSTFLAGS env variable when building userland
+application.
 
 # Acknowledgements
 
