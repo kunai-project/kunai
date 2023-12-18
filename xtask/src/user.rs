@@ -9,6 +9,7 @@ use crate::ebpf::{self, BpfTarget};
 pub enum Target {
     X86_64Musl,
     X86_64Gnu,
+    Aarch64Musl,
 }
 
 impl std::str::FromStr for Target {
@@ -18,6 +19,7 @@ impl std::str::FromStr for Target {
         Ok(match s {
             "x86_64-unknown-linux-musl" => Target::X86_64Musl,
             "x86_64-unknown-linux-gnu" => Target::X86_64Gnu,
+            "aarch64-unknown-linux-musl" => Target::Aarch64Musl,
             _ => return Err("invalid target".to_owned()),
         })
     }
@@ -28,6 +30,7 @@ impl std::fmt::Display for Target {
         f.write_str(match self {
             Target::X86_64Musl => "x86_64-unknown-linux-musl",
             Target::X86_64Gnu => "x86_64-unknown-linux-gnu",
+            Target::Aarch64Musl => "aarch64-unknown-linux-musl",
         })
     }
 }
@@ -67,6 +70,7 @@ impl From<&RunOptions> for BuildOptions {
     fn from(value: &RunOptions) -> Self {
         Self {
             target: value.target,
+            linker: None,
             bpf_target: value.bpf_target,
             bpf_linker: value.bpf_linker.clone(),
             release: value.release,
@@ -84,6 +88,10 @@ pub struct BuildOptions {
     /// Set the endianness of the BPF target
     #[clap(default_value = "x86_64-unknown-linux-musl", long)]
     pub target: Target,
+    /// Set the linker to use to when building userland application
+    /// this option is useful when cross-compiling
+    #[clap(long)]
+    pub linker: Option<String>,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub bpf_target: BpfTarget,
@@ -124,12 +132,19 @@ fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
         args.push("--release")
     }
 
+    let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
+
+    if let Some(linker) = opts.linker.as_ref() {
+        rustflags.push(format!("-C linker={linker}"))
+    }
+
     let target = format!("--target={}", opts.target);
     args.push(&target);
 
     opts.build_args.iter().for_each(|ba| args.push(ba));
 
     let status = Command::new("cargo")
+        .env("RUSTFLAGS", rustflags.join(" "))
         .args(&args)
         .status()
         .expect("failed to build userspace");
