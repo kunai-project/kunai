@@ -606,6 +606,7 @@ struct iov_iter
 	union
 	{
 		struct iovec *iov;
+		struct iovec *__iov;
 	};
 
 	union
@@ -617,6 +618,7 @@ struct iov_iter
 SHIM(iov_iter, count);
 SHIM(iov_iter, nr_segs);
 SHIM(iov_iter, iov);
+SHIM(iov_iter, __iov);
 
 struct msghdr
 {

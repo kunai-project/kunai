@@ -24,5 +24,10 @@ pub type iov_iter = CoRe<gen::iov_iter>;
 impl iov_iter {
     rust_shim_kernel_impl!(pub, iov_iter, count, u64);
     rust_shim_kernel_impl!(pub, iov_iter, nr_segs, u64);
-    rust_shim_kernel_impl!(pub, iov_iter, iov, iovec);
+    rust_shim_kernel_impl!(pub(self), _iov, iov_iter, iov, iovec);
+    rust_shim_kernel_impl!(pub(self), ___iov, iov_iter, __iov, iovec);
+
+    pub unsafe fn iov(&self) -> Option<iovec> {
+        self._iov().or(self.___iov())
+    }
 }

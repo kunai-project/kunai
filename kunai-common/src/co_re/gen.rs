@@ -1365,6 +1365,7 @@ pub struct iov_iter {
 #[derive(Copy, Clone)]
 pub union iov_iter__bindgen_ty_1 {
     pub iov: *mut iovec,
+    pub __iov: *mut iovec,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -1397,6 +1398,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_iov_iter_iov_exists(iov_iter: *mut iov_iter) -> bool;
+}
+extern "C" {
+    pub fn shim_iov_iter___iov(iov_iter: *mut iov_iter) -> *mut iovec;
+}
+extern "C" {
+    pub fn shim_iov_iter___iov_user(iov_iter: *mut iov_iter) -> *mut iovec;
+}
+extern "C" {
+    pub fn shim_iov_iter___iov_exists(iov_iter: *mut iov_iter) -> bool;
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
