@@ -3,13 +3,16 @@ use aya::maps::MapData;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Builder;
+use gene::rules::MAX_SEVERITY;
 use gene::Engine;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
     ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MountData,
-    MprotectData, NetworkInfo, PrctlData, RWData, SendDataData, SocketInfo, UnlinkData, UserEvent,
+    MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
+    UserEvent,
 };
 use kunai::info::{AdditionalFields, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
+use kunai::ioc::IoC;
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
     self, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
@@ -21,12 +24,12 @@ use kunai_common::inspect_err;
 use log::LevelFilter;
 use serde::Serialize;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use std::fs::File;
-use std::io::Write;
+use std::io::{self, BufRead, Write};
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::Arc;
@@ -80,6 +83,7 @@ impl CorrelationData {
 
 struct EventProcessor {
     engine: gene::Engine,
+    iocs: HashSet<String>,
     random: u32,
     hcache: cache::Cache,
     receiver: Receiver<EncodedEvent>,
@@ -132,6 +136,7 @@ impl EventProcessor {
 
         let mut ep = Self {
             engine: Engine::new(),
+            iocs: HashSet::new(),
             random: util::getrandom::<u32>().unwrap(),
             hcache: Cache::with_max_entries(10000),
             correlations: HashMap::new(),
@@ -153,6 +158,15 @@ impl EventProcessor {
             info!("number of loaded rules: {}", ep.engine.rules_count());
         }
 
+        // loading iocs
+        if !config.iocs.is_empty() {
+            for file in config.iocs {
+                ep.load_iocs(file)
+                    .map_err(|e| anyhow!("failed to load IoC file: {e}"))?;
+            }
+            info!("number of IoCs loaded: {}", ep.iocs.len());
+        }
+
         // should not raise any error, we just print it
         inspect_err! {
             ep.init_correlations_from_procfs(),
@@ -166,6 +180,19 @@ impl EventProcessor {
                 ep.handle_event(&mut enc);
             }
         });
+
+        Ok(())
+    }
+
+    fn load_iocs<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        let p = p.as_ref();
+        let f = io::BufReader::new(File::open(p)?);
+
+        for line in f.lines() {
+            let line = line?;
+            let ioc: IoC = serde_json::from_str(&line)?;
+            self.iocs.insert(ioc.value);
+        }
 
         Ok(())
     }
@@ -431,30 +458,28 @@ impl EventProcessor {
         let responses = event.data.answers().unwrap_or_default();
 
         for r in responses {
-            let data = DnsQueryData {
-                command_line: command_line.clone(),
-                exe: exe.clone(),
-                query: r.question.clone(),
-                proto: proto.clone().into(),
-                response: r.answers.join(";"),
-                dns_server: NetworkInfo {
-                    hostname: None,
-                    ip: serv_ip,
-                    port: serv_port,
-                    public: is_public_ip(serv_ip),
-                    is_v6: event.data.ip_port.is_v6(),
-                },
+            let mut data = DnsQueryData::new().with_responses(r.answers);
+            data.command_line = command_line.clone();
+            data.exe = exe.clone();
+            data.query = r.question.clone();
+            data.proto = proto.clone().into();
+            data.dns_server = NetworkInfo {
+                hostname: None,
+                ip: serv_ip,
+                port: serv_port,
+                public: is_public_ip(serv_ip),
+                is_v6: event.data.ip_port.is_v6(),
             };
 
-            out.push(UserEvent::new(data, info.clone()));
-
             // update the resolution map
-            r.answers.iter().for_each(|a| {
+            data.responses().iter().for_each(|a| {
                 // if we manage to parse IpAddr
                 if let Ok(ip) = a.parse::<IpAddr>() {
                     self.update_resolved(ip, &r.question, &info);
                 }
             });
+
+            out.push(UserEvent::new(data, info.clone()));
         }
 
         out
@@ -781,6 +806,51 @@ impl EventProcessor {
     }
 
     #[inline(always)]
+    fn scan<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> Option<ScanResult> {
+        let mut scan_result: Option<ScanResult> = None;
+
+        if !self.engine.is_empty() {
+            scan_result = match self.engine.scan(event) {
+                Ok(sr) => sr.map(ScanResult::from),
+                Err((sr, e)) => {
+                    error!("event scanning error: {e}");
+                    sr.map(ScanResult::from)
+                }
+            };
+        }
+
+        // we collect a vector of ioc matching
+        let matching_iocs = event
+            .iocs()
+            .iter()
+            .filter_map(|ioc| {
+                if self.iocs.contains(&ioc.to_string()) {
+                    return Some(ioc);
+                }
+                None
+            })
+            .map(|ioc| ioc.to_string())
+            .collect::<HashSet<String>>();
+
+        if !matching_iocs.is_empty() {
+            // we create a new ScanResult if necessary
+            if scan_result.is_none() {
+                scan_result = Some(ScanResult::default());
+            }
+
+            // we add ioc matching to the list of matching rules
+            scan_result.as_mut().map(|sr| {
+                sr.iocs = matching_iocs;
+                // if we match an ioc we consider the event is of
+                // the higher severity
+                sr.severity = MAX_SEVERITY;
+            });
+        }
+
+        scan_result
+    }
+
+    #[inline(always)]
     fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) {
         macro_rules! serialize {
             ($event:expr) => {
@@ -791,26 +861,20 @@ impl EventProcessor {
             };
         }
 
-        // if we have rules loaded in the engine
-        if !self.engine.is_empty() {
-            let scan_result = match self.engine.scan(event) {
-                Ok(sr) => sr,
-                Err((sr, e)) => {
-                    error!("event scanning error: {e}");
-                    sr
-                }
-            };
+        // we have neither rules nor iocs to inspect for
+        if self.iocs.is_empty() && self.engine.is_empty() {
+            serialize!(event);
+            return;
+        }
 
-            if let Some(scan_result) = scan_result {
-                if scan_result.is_detection() {
-                    event.set_detection(scan_result);
-                    serialize!(event);
-                } else if scan_result.is_only_filter() {
-                    serialize!(event);
-                }
+        // scan for iocs and filter/matching rules
+        if let Some(sr) = self.scan(event) {
+            if sr.is_detection() {
+                event.set_detection(sr);
+                serialize!(event);
+            } else if sr.is_only_filter() {
+                serialize!(event);
             }
-        } else {
-            serialize!(event)
         }
     }
 
@@ -1369,6 +1433,14 @@ struct Cli {
     )]
     rule_file: Option<Vec<String>>,
 
+    #[arg(
+        short,
+        long,
+        value_name = "FILE",
+        help = "File containing IoCs (json line)"
+    )]
+    ioc_file: Option<Vec<String>>,
+
     #[arg(short, long, action = clap::ArgAction::Count, help="Set verbosity level, repeat option for more verbosity.")]
     verbose: u8,
 
@@ -1447,6 +1519,11 @@ async fn main() -> Result<(), anyhow::Error> {
     // superseeds configuration
     if let Some(rules) = cli.rule_file {
         conf.rules = rules;
+    }
+
+    // superseeds configuration
+    if let Some(iocs) = cli.ioc_file {
+        conf.iocs = iocs;
     }
 
     // we want to increase max_buffered_events

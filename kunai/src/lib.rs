@@ -5,6 +5,7 @@ pub mod compat;
 pub mod config;
 pub mod events;
 pub mod info;
+pub mod ioc;
 pub mod util;
 
 /// function that responsible of probe priorities and compatibily across kernels

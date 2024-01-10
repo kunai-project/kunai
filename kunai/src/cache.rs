@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs::{self, File},
     io::{self, BufReader, Read},
@@ -78,6 +79,17 @@ impl Hashes {
         }
 
         h
+    }
+
+    #[inline]
+    pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
+        vec![
+            self.file.to_string_lossy(),
+            self.md5.as_str().into(),
+            self.sha1.as_str().into(),
+            self.sha256.as_str().into(),
+            self.sha512.as_str().into(),
+        ]
     }
 }
 

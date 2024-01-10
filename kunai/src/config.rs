@@ -40,6 +40,7 @@ pub struct Config {
     pub output: String,
     pub max_buffered_events: u16,
     pub rules: Vec<String>,
+    pub iocs: Vec<String>,
     pub events: Vec<Event>,
 }
 
@@ -62,6 +63,7 @@ impl Default for Config {
             output: "/dev/stdout".into(),
             max_buffered_events: 1024,
             rules: vec![],
+            iocs: vec![],
             events,
         }
     }

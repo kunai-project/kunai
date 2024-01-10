@@ -1,8 +1,14 @@
-use std::{fmt::LowerHex, net::IpAddr, path::PathBuf};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    fmt::LowerHex,
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+};
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
 use event_derive::{Event, FieldGetter};
-use gene::{Event, FieldGetter, FieldValue, ScanResult};
+use gene::{Event, FieldGetter, FieldValue};
 
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -174,7 +180,81 @@ impl From<StdEventInfo> for EventInfo {
     }
 }
 
-pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter {
+pub trait IocGetter {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>>;
+}
+
+macro_rules! impl_std_iocs {
+    ($ty:ty) => {
+        impl IocGetter for $ty {
+            fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+                vec![self.exe.to_string_lossy()]
+            }
+        }
+    };
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
+pub struct ScanResult {
+    /// union of the rule names matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub iocs: HashSet<String>,
+    /// union of the rule names matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub rules: HashSet<String>,
+    /// union of tags defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub tags: HashSet<String>,
+    /// union of attack ids defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub attack: HashSet<String>,
+    /// union of actions defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub actions: HashSet<String>,
+    /// flag indicating whether a filter rule matched
+    #[serde(skip)]
+    pub filtered: bool,
+    /// total severity score (bounded to [MAX_SEVERITY](rules::MAX_SEVERITY))
+    pub severity: u8,
+}
+
+impl From<gene::ScanResult> for ScanResult {
+    fn from(value: gene::ScanResult) -> Self {
+        ScanResult {
+            iocs: HashSet::new(),
+            rules: value.rules,
+            tags: value.tags,
+            attack: value.attack,
+            actions: value.actions,
+            filtered: value.filtered,
+            severity: value.severity,
+        }
+    }
+}
+
+impl ScanResult {
+    #[inline(always)]
+    pub fn is_detection(&self) -> bool {
+        !(self.rules.is_empty() && self.iocs.is_empty())
+    }
+
+    #[inline(always)]
+    pub fn is_only_filter(&self) -> bool {
+        !self.is_detection() && self.is_filtered()
+    }
+
+    #[inline(always)]
+    pub fn is_filtered(&self) -> bool {
+        self.filtered
+    }
+}
+
+pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter {
     fn set_detection(&mut self, sr: ScanResult);
 }
 
@@ -187,9 +267,18 @@ pub struct UserEvent<T> {
     pub info: EventInfo,
 }
 
+impl<T> IocGetter for UserEvent<T>
+where
+    T: IocGetter,
+{
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        self.data.iocs()
+    }
+}
+
 impl<T> KunaiEvent for UserEvent<T>
 where
-    T: FieldGetter,
+    T: FieldGetter + IocGetter,
 {
     fn set_detection(&mut self, sr: ScanResult) {
         self.detection = Some(sr)
@@ -230,7 +319,8 @@ where
 /// ```
 macro_rules! def_user_data {
             // Match for a struct with fields and field attributes
-            ($struct_vis:vis struct $struct_name:ident { $($(#[$struct_meta:meta])* $vis:vis $field_name:ident : $field_type:ty),* $(,)? }) => {
+            ($(#[$derive:meta])* $struct_vis:vis struct $struct_name:ident { $($(#[$struct_meta:meta])* $vis:vis $field_name:ident : $field_type:ty),* $(,)? }) => {
+                $(#[$derive])*
                 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
                 $struct_vis struct $struct_name {
                     pub command_line: String,
@@ -253,12 +343,31 @@ pub struct ExecveData {
     pub interpreter: Option<Hashes>,
 }
 
+impl IocGetter for ExecveData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        // parent_exe path
+        let mut v = vec![self.parent_exe.as_str().into()];
+
+        // exe path + hashes
+        v.extend(self.exe.iocs().into_iter());
+
+        // exe path + hashes of interpreter if any
+        self.interpreter
+            .as_ref()
+            .map(|h| v.extend(h.iocs().into_iter()));
+
+        v
+    }
+}
+
 def_user_data!(
     pub struct CloneData {
         #[serde(serialize_with = "serialize_to_hex")]
         pub flags: u64,
     }
 );
+
+impl_std_iocs!(CloneData);
 
 def_user_data!(
     pub struct PrctlData {
@@ -275,11 +384,21 @@ def_user_data!(
     }
 );
 
+impl_std_iocs!(PrctlData);
+
 def_user_data!(
     pub struct MmapExecData {
         pub mapped: Hashes,
     }
 );
+
+impl IocGetter for MmapExecData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        let mut v = vec![self.exe.to_string_lossy()];
+        v.extend(self.mapped.iocs());
+        v
+    }
+}
 
 def_user_data!(
     pub struct MprotectData {
@@ -289,6 +408,8 @@ def_user_data!(
         pub prot: u64,
     }
 );
+
+impl_std_iocs!(MprotectData);
 
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct NetworkInfo {
@@ -300,6 +421,28 @@ pub struct NetworkInfo {
     pub is_v6: bool,
 }
 
+impl Default for NetworkInfo {
+    fn default() -> Self {
+        Self {
+            hostname: None,
+            ip: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            port: 0,
+            public: false,
+            is_v6: false,
+        }
+    }
+}
+
+impl IocGetter for NetworkInfo {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        let mut v = vec![self.ip.to_string().into()];
+
+        self.hostname.as_ref().map(|hn| v.push(hn.into()));
+
+        v
+    }
+}
+
 def_user_data!(
     pub struct ConnectData {
         pub dst: NetworkInfo,
@@ -307,14 +450,74 @@ def_user_data!(
     }
 );
 
+impl IocGetter for ConnectData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        self.dst.iocs()
+    }
+}
+
 def_user_data!(
+    #[derive(Default)]
     pub struct DnsQueryData {
         pub query: String,
         pub proto: String,
         pub response: String,
         pub dns_server: NetworkInfo,
+        #[serde(skip)]
+        #[getter(skip)]
+        responses: Vec<String>,
     }
 );
+
+impl DnsQueryData {
+    const SEP: &'static str = ";";
+
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    #[inline]
+    pub fn with_responses(mut self, responses: Vec<String>) -> Self {
+        self.response = responses.join(Self::SEP);
+        self.responses = responses;
+        self
+    }
+
+    #[inline]
+    fn cache_responses(&mut self) {
+        if !self.response.is_empty() && self.responses.is_empty() {
+            self.responses = self.response.split(Self::SEP).map(|s| s.into()).collect();
+        }
+    }
+
+    #[inline]
+    pub fn responses(&mut self) -> &Vec<String> {
+        self.cache_responses();
+        &self.responses
+    }
+}
+
+impl IocGetter for DnsQueryData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        // we build up responses if needed
+        self.cache_responses();
+
+        // set executable
+        let mut v = vec![self.exe.to_string_lossy()];
+        // the ip addresses in the response
+        v.extend(
+            self.responses
+                .iter()
+                .map(|ioc| ioc.into())
+                .collect::<Vec<Cow<'_, str>>>(),
+        );
+        // the domain queried
+        v.push((&self.query).into());
+        // dns server iocs
+        v.extend(self.dns_server.iocs().into_iter());
+        v
+    }
+}
 
 def_user_data!(
     pub struct SendDataData {
@@ -323,6 +526,14 @@ def_user_data!(
         pub data_size: u64,
     }
 );
+
+impl IocGetter for SendDataData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        let mut v = vec![self.exe.to_string_lossy()];
+        v.extend(self.dst.iocs());
+        v
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct InitModuleData {
@@ -336,11 +547,23 @@ pub struct InitModuleData {
     pub loaded: bool,
 }
 
+impl IocGetter for InitModuleData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        vec![self.exe.to_string_lossy()]
+    }
+}
+
 def_user_data!(
     pub struct RWData {
         pub path: PathBuf,
     }
 );
+
+impl IocGetter for RWData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        vec![self.exe.to_string_lossy(), self.path.to_string_lossy()]
+    }
+}
 
 def_user_data!(
     pub struct UnlinkData {
@@ -348,6 +571,12 @@ def_user_data!(
         pub success: bool,
     }
 );
+
+impl IocGetter for UnlinkData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        vec![self.exe.to_string_lossy(), self.path.to_string_lossy()]
+    }
+}
 
 def_user_data!(
     pub struct MountData {
@@ -359,12 +588,28 @@ def_user_data!(
     }
 );
 
+impl IocGetter for MountData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        vec![self.exe.to_string_lossy(), self.path.to_string_lossy()]
+    }
+}
+
 def_user_data!(
     pub struct FileRenameData {
         pub old: PathBuf,
         pub new: PathBuf,
     }
 );
+
+impl IocGetter for FileRenameData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        vec![
+            self.exe.to_string_lossy(),
+            self.old.to_string_lossy(),
+            self.new.to_string_lossy(),
+        ]
+    }
+}
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct BpfProgTypeInfo {
@@ -395,6 +640,18 @@ def_user_data!(
     }
 );
 
+impl IocGetter for BpfProgLoadData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        vec![
+            self.exe.to_string_lossy(),
+            self.bpf_prog.md5.as_str().into(),
+            self.bpf_prog.sha1.as_str().into(),
+            self.bpf_prog.sha256.as_str().into(),
+            self.bpf_prog.sha512.as_str().into(),
+        ]
+    }
+}
+
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct SocketInfo {
     pub domain: String,
@@ -420,8 +677,22 @@ def_user_data!(
     }
 );
 
+impl IocGetter for BpfSocketFilterData {
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        vec![
+            self.exe.to_string_lossy(),
+            self.filter.md5.as_str().into(),
+            self.filter.sha1.as_str().into(),
+            self.filter.sha256.as_str().into(),
+            self.filter.sha512.as_str().into(),
+        ]
+    }
+}
+
 def_user_data!(
     pub struct ExitData {
         pub error_code: u64,
     }
 );
+
+impl_std_iocs!(ExitData);
