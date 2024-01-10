@@ -17,7 +17,12 @@ impl inode {
     rust_shim_kernel_impl!(inode, i_size, i64);
     rust_shim_kernel_impl!(inode, i_atime, timespec64);
     rust_shim_kernel_impl!(inode, i_mtime, timespec64);
-    rust_shim_kernel_impl!(inode, i_ctime, timespec64);
+    rust_shim_kernel_impl!(pub(self),_i_ctime, inode, i_ctime, timespec64);
+    rust_shim_kernel_impl!(pub(self), ___i_ctime, inode, __i_ctime, timespec64);
+
+    pub unsafe fn i_ctime(&self) -> Option<timespec64> {
+        self._i_ctime().or_else(|| self.___i_ctime())
+    }
 
     #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {

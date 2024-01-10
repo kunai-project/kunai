@@ -210,7 +210,11 @@ struct inode
 	loff_t i_size;
 	struct timespec64 i_atime;
 	struct timespec64 i_mtime;
-	struct timespec64 i_ctime;
+	union
+	{
+		struct timespec64 i_ctime;
+		struct timespec64 __i_ctime;
+	};
 } __attribute__((preserve_access_index));
 
 SHIM(inode, i_ino);
@@ -220,6 +224,7 @@ SHIM(inode, i_size);
 SHIM(inode, i_atime);
 SHIM(inode, i_mtime);
 SHIM(inode, i_ctime);
+SHIM(inode, __i_ctime);
 
 struct file
 {

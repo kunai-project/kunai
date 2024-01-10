@@ -243,7 +243,7 @@ pub struct timespec64 {
 pub type umode_t = ::core::ffi::c_ushort;
 pub type loff_t = __kernel_loff_t;
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct inode {
     pub i_mode: umode_t,
     pub i_ino: ::core::ffi::c_ulong,
@@ -251,7 +251,13 @@ pub struct inode {
     pub i_size: loff_t,
     pub i_atime: timespec64,
     pub i_mtime: timespec64,
+    pub __bindgen_anon_1: inode__bindgen_ty_1,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union inode__bindgen_ty_1 {
     pub i_ctime: timespec64,
+    pub __i_ctime: timespec64,
 }
 extern "C" {
     pub fn shim_inode_i_ino(inode: *mut inode) -> ::core::ffi::c_ulong;
@@ -315,6 +321,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_inode_i_ctime_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
+    pub fn shim_inode___i_ctime(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode___i_ctime_user(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode___i_ctime_exists(inode: *mut inode) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
