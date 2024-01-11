@@ -15,10 +15,6 @@ The goal behind this project is to bring relevant events to achieve
 various monitoring tasks ranging from security monitoring to Threat Hunting on 
 Linux based systems. If you are familiar with Sysmon on Windows, you can think of Kunai as being a Sysmon equivalent for Linux.
 
-I imagine what you are thinking now: Hey man ! You've just re-invented the wheel, 
-Sysmon for Linux is already there ! Yes, that is true, but I was not really 
-happy with what Sysmon for Linux offered so I decided to bring this project up.
-
 ## What makes Kunai special ?
 
 * events arrive sorted in chronological order
@@ -31,13 +27,10 @@ All the kernel components of this project are running as eBPF programs (also ca
 
 On the implementation side, Kunai is written for its majority in Rust, leveraging the **awesome** [Aya library](https://github.com/aya-rs/aya) so everything you'll need to run is a standalone binary embedding both all the eBPF probes and the userland program.
 
-# What kind of events can I get ?
+# FAQ
 
-Please take a read to [events documentation](https://why.kunai.rocks/docs/category/kunai---events)
-
-# Compatibility
-
-Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
+* **Is it compatible with my OS/Kernel ?** : Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
+* **What kind of events can I get ?** : Please take a read to [events documentation](https://why.kunai.rocks/docs/category/kunai---events)
 
 # How to build the project ?
 
@@ -105,6 +98,10 @@ MUSL target, it may work using `lld` as linker and it works for `aarch64-unknown
 
 **NB:** specifying `--linker` option is just a shortcut for setting appropriate RUSTFLAGS env variable when building userland
 application.
+
+# Related Work
+
+Sysmon For Linux: https://github.com/Sysinternals/SysmonForLinux
 
 # Acknowledgements
 
