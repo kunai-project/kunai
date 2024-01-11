@@ -602,11 +602,13 @@ SHIM(iovec, iov_len);
 
 struct iov_iter
 {
+	u8 iter_type;
 	size_t count;
 	union
 	{
 		struct iovec *iov;
 		struct iovec *__iov;
+		void *ubuf;
 	};
 
 	union
@@ -615,8 +617,10 @@ struct iov_iter
 	};
 } __attribute__((preserve_access_index));
 
+SHIM(iov_iter, iter_type);
 SHIM(iov_iter, count);
 SHIM(iov_iter, nr_segs);
+SHIM(iov_iter, ubuf);
 SHIM(iov_iter, iov);
 SHIM(iov_iter, __iov);
 

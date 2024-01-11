@@ -6,6 +6,7 @@ pub type __u32 = ::core::ffi::c_uint;
 pub type __u16 = ::core::ffi::c_ushort;
 pub type u16_ = __u16;
 pub type __u8 = ::core::ffi::c_uchar;
+pub type u8_ = __u8;
 pub type __be16 = __u16;
 pub type __be32 = __u32;
 pub type __s64 = ::core::ffi::c_longlong;
@@ -1357,6 +1358,7 @@ extern "C" {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct iov_iter {
+    pub iter_type: u8_,
     pub count: size_t,
     pub __bindgen_anon_1: iov_iter__bindgen_ty_1,
     pub __bindgen_anon_2: iov_iter__bindgen_ty_2,
@@ -1366,11 +1368,21 @@ pub struct iov_iter {
 pub union iov_iter__bindgen_ty_1 {
     pub iov: *mut iovec,
     pub __iov: *mut iovec,
+    pub ubuf: *mut ::core::ffi::c_void,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union iov_iter__bindgen_ty_2 {
     pub nr_segs: ::core::ffi::c_ulong,
+}
+extern "C" {
+    pub fn shim_iov_iter_iter_type(iov_iter: *mut iov_iter) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_iov_iter_iter_type_user(iov_iter: *mut iov_iter) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_iov_iter_iter_type_exists(iov_iter: *mut iov_iter) -> bool;
 }
 extern "C" {
     pub fn shim_iov_iter_count(iov_iter: *mut iov_iter) -> ::core::ffi::c_ulong;
@@ -1389,6 +1401,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_iov_iter_nr_segs_exists(iov_iter: *mut iov_iter) -> bool;
+}
+extern "C" {
+    pub fn shim_iov_iter_ubuf(iov_iter: *mut iov_iter) -> *mut ::core::ffi::c_void;
+}
+extern "C" {
+    pub fn shim_iov_iter_ubuf_user(iov_iter: *mut iov_iter) -> *mut ::core::ffi::c_void;
+}
+extern "C" {
+    pub fn shim_iov_iter_ubuf_exists(iov_iter: *mut iov_iter) -> bool;
 }
 extern "C" {
     pub fn shim_iov_iter_iov(iov_iter: *mut iov_iter) -> *mut iovec;

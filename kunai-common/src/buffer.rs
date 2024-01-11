@@ -100,6 +100,7 @@ bpf_target_code! {
     use crate::co_re::{iov_iter, iovec};
 
 
+
     #[derive(BpfError)]
     pub enum Error {
         #[error("bpf_probe_read failed")]
@@ -114,14 +115,20 @@ bpf_target_code! {
         NullIovBase,
         #[error("nr_segs member is missing")]
         NrSegsMissing,
+        #[error("count member is missing")]
+        CountMissing,
         #[error("iov member is null")]
         IovNull,
         #[error("iov member is missing")]
         IovMissing,
         #[error("iovec.iov_len member is missing")]
         IovLenMissing,
+        #[error("iovec.ubuf member is missing")]
+        UbufMissing,
         #[error("iovec.iov_base member is missing")]
         IovBaseMissing,
+        #[error("unimplemented iter")]
+        UnimplementedIter,
         #[error("should not happen")]
         ShouldNotHappen,
         #[error("buffer full")]
@@ -142,12 +149,22 @@ bpf_target_code! {
                 return Err(Error::IovNull);
             }
 
-            // we put a threshold to nr_segs (that can be fixed from call site)
-            for i in 0..MAX_NR_SEGS {
-                if self.is_full() || i >= nr_segs{
-                    break;
+            // in case we are iterating over a ubuf
+            if iter.is_iter_ubuf()  {
+                let ubuf = iter.ubuf().ok_or(Error::UbufMissing)?;
+                let count = iter.count().ok_or(Error::CountMissing)?;
+                // ubuf is in userland so we need to read it accordingly
+                self.read_user_at(ubuf, count as u32)?;
+            } else if iter.is_iter_iovec(){
+                // we put a threshold to nr_segs (that can be fixed from call site)
+                for i in 0..MAX_NR_SEGS {
+                    if self.is_full() || i >= nr_segs{
+                        break;
+                    }
+                    self.append_iov(&iov.get(i), count)?;
                 }
-                self.append_iov(&iov.get(i), count)?;
+            } else {
+                return Err(Error::UnimplementedIter);
             }
 
             Ok(())
@@ -173,14 +190,14 @@ bpf_target_code! {
 
             if gen::bpf_probe_read_user(
                 self.buf[len as usize..N].as_mut_ptr() as *mut _,
-                size,
+                cap_size(size, N as u32),
                 iov_base as *const _,
             ) < 0
             {
                 return Err(Error::FailedToReadIovBase);
             }
 
-            self.len += size as usize ;
+            self.len += size as usize;
 
             Ok(())
         }
