@@ -24,6 +24,7 @@ use kunai_common::inspect_err;
 use log::LevelFilter;
 use serde::Serialize;
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use std::fs::File;
@@ -88,6 +89,7 @@ struct EventProcessor {
     hcache: cache::Cache,
     receiver: Receiver<EncodedEvent>,
     correlations: HashMap<u128, CorrelationData>,
+    resolved: HashMap<IpAddr, String>,
     output: std::fs::File,
 }
 
@@ -140,6 +142,7 @@ impl EventProcessor {
             random: util::getrandom::<u32>().unwrap(),
             hcache: Cache::with_max_entries(10000),
             correlations: HashMap::new(),
+            resolved: HashMap::new(),
             receiver,
             output: std::fs::OpenOptions::new()
                 .append(true)
@@ -310,22 +313,43 @@ impl EventProcessor {
     #[inline]
     fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
         let ck = i.correlation_key();
+
+        // update local resolve table
         self.correlations.get_mut(&ck).map(|c| {
             c.resolved
                 .entry(ip)
                 .and_modify(|r| *r = resolved.to_owned())
                 .or_insert(resolved.to_owned())
         });
+
+        // update global resolve table
+        self.resolved
+            .entry(ip)
+            .and_modify(|r| *r = resolved.to_owned())
+            .or_insert(resolved.to_owned());
     }
 
     #[inline]
-    fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> String {
+    fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.correlation_key();
-        self.correlations
+
+        // we lookup in the local table
+        if let Some(domain) = self
+            .correlations
             .get(&ck)
-            .map(|c| c.resolved.get(&ip))
-            .and_then(|o| o.cloned())
-            .unwrap_or("?".into())
+            .map(|c| c.resolved.get(&ip).map(|s| Cow::from(s)))
+            .flatten()
+        {
+            return domain.into();
+        }
+
+        // we lookup in the global table
+        if let Some(domain) = self.resolved.get(&ip) {
+            return domain.into();
+        }
+
+        // default value
+        "?".into()
     }
 
     #[inline]
@@ -639,7 +663,7 @@ impl EventProcessor {
             command_line,
             exe,
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst_ip, &info)),
+                hostname: Some(self.get_resolved(dst_ip, &info).into()),
                 ip: dst_ip,
                 port: event.data.ip_port.port(),
                 public: is_public_ip(dst_ip),
@@ -664,7 +688,7 @@ impl EventProcessor {
             exe,
             command_line,
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst_ip, &info)),
+                hostname: Some(self.get_resolved(dst_ip, &info).into()),
                 ip: dst_ip,
                 port: event.data.ip_port.port(),
                 public: is_public_ip(dst_ip),
