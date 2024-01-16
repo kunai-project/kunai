@@ -10,7 +10,7 @@ not_bpf_target_code! {
 bpf_target_code! {
     use crate::co_re::core_read_kernel;
     use crate::co_re::task_struct;
-    use aya_bpf::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
+    use crate::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
     use kunai_macros::BpfError;
 }
 

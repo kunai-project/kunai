@@ -1,0 +1,11 @@
+# Proxy package providing new Aya helpers
+# to the project without having to migrate
+# all Aya (which is not yet functional). 
+
+[package]
+name = "aya-helpers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }

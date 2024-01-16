@@ -173,7 +173,7 @@ impl Transfer {
 }
 
 bpf_target_code! {
-    use aya_bpf::helpers::bpf_get_prandom_u32;
+    use crate::helpers::bpf_get_prandom_u32;
     use aya_bpf::maps::{LruPerCpuHashMap, PerfEventArray};
     use aya_bpf::{BpfContext, macros::*};
     use core::ffi::c_void;

@@ -5,7 +5,7 @@ use crate::{bpf_target_code, not_bpf_target_code};
 pub struct Uuid([u8; 16]);
 
 bpf_target_code! {
-use aya_bpf::helpers::{bpf_get_prandom_u32};
+use crate::helpers::{bpf_get_prandom_u32};
 
 impl Uuid {
     pub fn new_random() -> Self {

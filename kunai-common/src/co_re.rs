@@ -5,7 +5,6 @@
 pub mod gen;
 
 mod core_task_struct;
-use aya_bpf::helpers::bpf_probe_read;
 pub use core_task_struct::*;
 
 mod core_cred;
@@ -73,7 +72,7 @@ impl<P> From<*const P> for CoRe<P> {
 impl<P> CoRe<P> {
     #[inline(always)]
     pub unsafe fn bpf_read(&self) -> Result<*const P, i64> {
-        bpf_probe_read(&self.ptr)
+        crate::helpers::bpf_probe_read(&self.ptr)
     }
 
     #[inline(always)]
