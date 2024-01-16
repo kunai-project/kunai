@@ -46,6 +46,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aya-helpers"
+version = "0.1.0"
+dependencies = [
+ "aya-bpf",
+]
+
+[[package]]
 name = "aya-log-common"
 version = "0.1.13"
 source = "git+https://github.com/aya-rs/aya?branch=main#4c08b9b43f2734c776c6b3f22cf9262a0db577db"
@@ -155,6 +162,7 @@ name = "kunai-common"
 version = "0.1.0"
 dependencies = [
  "aya-bpf",
+ "aya-helpers",
  "aya-log-ebpf",
  "bindgen",
  "cfg-if",

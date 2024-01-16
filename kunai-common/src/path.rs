@@ -381,7 +381,7 @@ not_bpf_target_code! {
 // BPF related implementations
 bpf_target_code! {
 
-use aya_bpf::helpers::{gen};
+use crate::helpers::{gen};
 use crate::co_re::{self, core_read_kernel};
 
 type Result<T> = core::result::Result<T, Error>;

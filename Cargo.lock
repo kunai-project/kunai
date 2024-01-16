@@ -155,6 +155,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aya-helpers"
+version = "0.1.0"
+dependencies = [
+ "aya-bpf",
+]
+
+[[package]]
 name = "aya-log"
 version = "0.1.13"
 source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
@@ -846,6 +853,7 @@ version = "0.1.0"
 dependencies = [
  "aya",
  "aya-bpf",
+ "aya-helpers",
  "aya-log-ebpf",
  "aya-obj",
  "bindgen",

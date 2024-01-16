@@ -1,4 +1,4 @@
-use aya_bpf::helpers::bpf_probe_read_kernel_buf;
+use crate::helpers::bpf_probe_read_kernel_buf;
 
 use super::gen::{self, *};
 use super::{rust_shim_kernel_impl, sock_fprog_kern, CoRe};

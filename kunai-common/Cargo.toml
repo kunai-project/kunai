@@ -44,6 +44,7 @@ kunai-macros = { path = "src/kunai-macros" }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 # Aya deps
+aya-helpers = { path = "src/aya-helpers" }
 aya = { git = "https://github.com/aya-rs/aya", branch = "main", optional = true }
 aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
 aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }

@@ -95,7 +95,7 @@ not_bpf_target_code! {
 bpf_target_code! {
 
     use super::{bpf_utils::*};
-    use aya_bpf::helpers::{gen, *};
+    use crate::helpers::{gen, *};
     use kunai_macros::BpfError;
     use crate::co_re::{iov_iter, iovec};
 

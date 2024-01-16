@@ -173,7 +173,7 @@ impl<const N: usize> String<N> {
 // BPF specific implementation
 bpf_target_code! {
     use kunai_macros::BpfError;
-    use aya_bpf::helpers::{bpf_probe_read_user_str_bytes,bpf_probe_read_kernel_str_bytes};
+    use crate::helpers::{bpf_probe_read_user_str_bytes,bpf_probe_read_kernel_str_bytes};
 
     #[repr(C)]
     #[derive(BpfError)]

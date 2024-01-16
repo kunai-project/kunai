@@ -71,7 +71,7 @@ pub struct BpfConfig {
 bpf_target_code! {
     use aya_bpf::maps::Array;
     use aya_bpf::macros::map;
-    use aya_bpf::helpers::bpf_get_current_pid_tgid;
+    use crate::helpers::bpf_get_current_pid_tgid;
 
     #[map]
     static mut KUNAI_CONFIG_ARRAY: Array<BpfConfig> = Array::with_max_entries(1, 0);
