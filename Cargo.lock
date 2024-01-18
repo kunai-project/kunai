@@ -831,6 +831,7 @@ dependencies = [
  "hex",
  "ip_network",
  "kunai-common",
+ "kunai-macros",
  "lazy_static",
  "libc",
  "log",

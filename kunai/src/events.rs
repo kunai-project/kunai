@@ -14,6 +14,7 @@ use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     cache::Hashes,
+    containers::Container,
     info::{ContainerInfo, StdEventInfo},
 };
 
@@ -21,7 +22,7 @@ use crate::{
 pub struct ContainerSection {
     pub name: String,
     #[serde(rename = "type")]
-    pub ty: Option<String>,
+    pub ty: Option<Container>,
 }
 
 impl From<ContainerInfo> for ContainerSection {
