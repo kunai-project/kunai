@@ -4,7 +4,7 @@ use kunai_common::{
     uuid::TaskUuid,
 };
 
-use crate::util::get_clk_tck;
+use crate::{containers::Container, util::get_clk_tck};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProcFsTaskInfo {
@@ -95,7 +95,7 @@ pub struct HostInfo {
 #[derive(Default, Debug, Clone)]
 pub struct ContainerInfo {
     pub name: String,
-    pub ty: Option<String>,
+    pub ty: Option<Container>,
 }
 
 #[derive(Default, Debug, Clone)]

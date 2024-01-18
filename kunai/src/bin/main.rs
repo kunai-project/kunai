@@ -5,6 +5,7 @@ use clap::Parser;
 use env_logger::Builder;
 use gene::rules::MAX_SEVERITY;
 use gene::Engine;
+use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
     ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MountData,
@@ -17,7 +18,6 @@ use kunai::{cache, util};
 use kunai_common::bpf_events::{
     self, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
 };
-use kunai_common::cgroup::Cgroup;
 use kunai_common::config::{BpfConfig, Filter};
 use kunai_common::inspect_err;
 
@@ -67,7 +67,7 @@ struct CorrelationData {
     image: PathBuf,
     command_line: Vec<String>,
     resolved: HashMap<IpAddr, String>,
-    container: Option<String>,
+    container: Option<Container>,
     info: CorrInfo,
 }
 
@@ -117,41 +117,6 @@ struct EventProcessor {
 }
 
 impl EventProcessor {
-    #[inline]
-    fn container_type_from_cgroup(cgrp: &Cgroup) -> Option<String> {
-        let s: Vec<String> = cgrp.to_vec();
-
-        if let Some(last) = s.last() {
-            if last.starts_with("docker-") {
-                return Some("docker".into());
-            }
-        }
-
-        if let Some(first) = s.get(1) {
-            if first.starts_with("lxc.payload.") {
-                return Some("lxc".into());
-            }
-        }
-
-        None
-    }
-
-    #[inline]
-    fn container_type_from_ancestors(ancestors: Vec<String>) -> Option<String> {
-        for a in ancestors {
-            match a.as_str() {
-                "/usr/bin/firejail" => return Some("firejail".into()),
-                "/usr/bin/containerd-shim-runc-v2" => return Some("docker".into()),
-                _ => {}
-            };
-
-            if a.starts_with("/snap/lxd/") && a.ends_with("/bin/lxd/") {
-                return Some("lxc".into());
-            }
-        }
-        None
-    }
-
     pub fn init(config: Config, receiver: Receiver<EncodedEvent>) -> anyhow::Result<()> {
         let output = match &config.output.as_str() {
             &"stdout" => String::from("/dev/stdout"),
@@ -826,11 +791,11 @@ impl EventProcessor {
 
         let cgroup = event.data.cgroup;
 
-        let mut container_type = Self::container_type_from_cgroup(&cgroup);
+        let mut container_type = Container::from_cgroup(&cgroup);
 
         if container_type.is_none() {
             let ancestors = self.get_ancestors(&info);
-            container_type = Self::container_type_from_ancestors(ancestors);
+            container_type = Container::from_ancestors(ancestors);
         }
 
         // we insert only if not existing
@@ -866,7 +831,7 @@ impl EventProcessor {
         if mnt_ns != self.system_info.mount_ns {
             container = Some(kunai::info::ContainerInfo {
                 name: self.cache.get_hostname(mnt_ns).unwrap_or("?".into()),
-                ty: cd.and_then(|cd| cd.container.clone()),
+                ty: cd.and_then(|cd| cd.container),
             });
         }
 
