@@ -123,7 +123,7 @@ impl StdEventInfo {
     }
 
     #[inline]
-    pub fn with_event_info(mut info: EventInfo, rand: u32) -> Self {
+    pub fn from_bpf(mut info: EventInfo, rand: u32) -> Self {
         // we set the random part needed to generate uuids for events
         info.set_uuid_random(rand);
 

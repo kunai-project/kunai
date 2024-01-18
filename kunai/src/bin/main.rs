@@ -852,7 +852,7 @@ impl EventProcessor {
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let mnt_ns = Namespace::mnt(i.process.namespaces.mnt);
 
-        let std_info = StdEventInfo::with_event_info(i, self.random);
+        let std_info = StdEventInfo::from_bpf(i, self.random);
 
         let cd = self.correlations.get(&std_info.correlation_key());
 
