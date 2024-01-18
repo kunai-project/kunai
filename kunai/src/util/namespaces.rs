@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process;
 use std::{fs::File, os::fd::AsRawFd};
 
+use kunai_macros::StrEnum;
 use libc::{c_int, pid_t, syscall, SYS_pidfd_open};
 use thiserror::Error;
 
@@ -40,42 +41,36 @@ pub fn unshare(flags: c_int) -> Result<(), IoError> {
     Ok(())
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(StrEnum, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum Kind {
+    #[str("cgroup")]
     Cgroup,
+    #[str("ipc")]
     Ipc,
+    #[str("mnt")]
     Mnt,
+    #[str("net")]
     Net,
+    #[str("pid")]
     Pid,
+    #[str("time")]
     Time,
+    #[str("user")]
     User,
+    #[str("uts")]
     Uts,
 }
 
 impl std::fmt::Display for Kind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "{}", self.as_str())
     }
 }
 
 impl Kind {
     #[inline]
     pub fn path(&self, pid: u32) -> PathBuf {
-        PathBuf::from(format!("/proc/{pid}/ns")).join(self.to_str())
-    }
-
-    #[inline]
-    pub const fn to_str(&self) -> &str {
-        match self {
-            Self::Cgroup => "cgroup",
-            Self::Ipc => "ipc",
-            Self::Mnt => "mnt",
-            Self::Net => "net",
-            Self::Pid => "pid",
-            Self::Time => "time",
-            Self::User => "user",
-            Self::Uts => "uts",
-        }
+        PathBuf::from(format!("/proc/{pid}/ns")).join(self.as_str())
     }
 }
 
@@ -87,7 +82,7 @@ pub struct Namespace {
 
 impl std::fmt::Display for Namespace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "inum={} kind={}", self.inum, self.kind.to_str())
+        write!(f, "inum={} kind={}", self.inum, self.kind.as_str())
     }
 }
 
@@ -156,7 +151,7 @@ impl Namespace {
     pub fn from_pid(kind: Kind, pid: u32) -> Result<Self, NsError> {
         let link = kind.path(pid).read_link()?;
         let tmp = link.to_string_lossy();
-        let prefix = format!("{}:[", kind.to_str());
+        let prefix = format!("{}:[", kind.as_str());
 
         let s = tmp
             .strip_prefix(prefix.as_str())
@@ -198,13 +193,15 @@ impl Switcher {
         let self_pid = process::id();
         let self_ns = Namespace::from_pid(ns.kind, self_pid)?;
 
-        let fd = ns.open(pid)?;
-        let saved = self_ns.open(self_pid)?;
+        // namespace of the current process
+        let src = self_ns.open(self_pid)?;
+        // namespace of the target process
+        let dst = ns.open(pid)?;
 
         Ok(Self {
             namespace: ns,
-            dst: fd,
-            src: saved,
+            src,
+            dst,
         })
     }
 
