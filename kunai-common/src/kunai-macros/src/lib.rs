@@ -144,7 +144,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
         if v.fields.is_empty() {
             as_str_arms.push(quote!(Self::#name => #args,));
             from_str_arms.push(quote!(#args => Ok(Self::#name),));
-            variants.push(quote!(Self::#name,));
+            variants.push(quote!(Self::#name));
             try_from_uint_arms.push(quote!(ty if Self::#name as u64 == ty => Ok(Self::#name),));
         } else {
             panic!("enum variant cannot hold values")
@@ -178,7 +178,14 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
             #[inline]
             pub const fn variants() -> [Self;#variants_len]{
                 [
-                #(#variants)*
+                #(#variants),*
+                ]
+            }
+
+            #[inline]
+            pub const fn variants_str() -> [&'static str;#variants_len]{
+                [
+                #(#variants.as_str()),*
                 ]
             }
 
