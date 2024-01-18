@@ -106,7 +106,6 @@ impl SystemInfo {
 
 struct EventProcessor {
     system_info: SystemInfo,
-    config: Config,
     engine: gene::Engine,
     iocs: HashSet<String>,
     random: u32,
@@ -161,11 +160,14 @@ impl EventProcessor {
         };
 
         // building up system information
-        let system_info = SystemInfo::from_sys()?.with_host_uuid(config.host_uuid().unwrap());
+        let system_info = SystemInfo::from_sys()?.with_host_uuid(
+            config
+                .host_uuid()
+                .ok_or(anyhow!("failed to read host_uuid"))?,
+        );
 
         let mut ep = Self {
             system_info,
-            config,
             engine: Engine::new(),
             iocs: HashSet::new(),
             random: util::getrandom::<u32>().unwrap(),
@@ -180,8 +182,8 @@ impl EventProcessor {
         };
 
         // loading rules in the engine
-        if !ep.config.rules.is_empty() {
-            for rule in ep.config.rules.iter() {
+        if !config.rules.is_empty() {
+            for rule in config.rules.iter() {
                 info!("loading detection/filter rules from: {rule}");
                 ep.engine
                     .load_rules_yaml_reader(File::open(rule)?)
@@ -191,15 +193,15 @@ impl EventProcessor {
         }
 
         // loading iocs
-        if !ep.config.iocs.is_empty() {
-            for file in ep.config.iocs.clone() {
+        if !config.iocs.is_empty() {
+            for file in config.iocs.clone() {
                 ep.load_iocs(file.to_string())
                     .map_err(|e| anyhow!("failed to load IoC file: {e}"))?;
             }
             info!("number of IoCs loaded: {}", ep.iocs.len());
         }
 
-        ep.config
+        config
             .host_uuid()
             .ok_or(anyhow!("failed to read host_uuid"))?;
 
