@@ -11,7 +11,7 @@ use kunai::events::{
     MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
     UserEvent,
 };
-use kunai::info::{AdditionalFields, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
+use kunai::info::{AdditionalInfo, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
 use kunai::ioc::IoC;
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
@@ -27,7 +27,7 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufRead, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::Arc;
 
-use std::thread;
+use std::{process, thread};
 
 use aya::{
     include_bytes_aligned,
@@ -57,7 +57,7 @@ use kunai::cache::*;
 
 use kunai::compat::{KernelVersion, Programs};
 use kunai::config::Config;
-use kunai::util::namespaces::unshare;
+use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
 
 const PAGE_SIZE: usize = 4096;
@@ -82,11 +82,35 @@ impl CorrelationData {
     }
 }
 
+struct SystemInfo {
+    host_uuid: uuid::Uuid,
+    hostname: String,
+    mount_ns: Namespace,
+}
+
+impl SystemInfo {
+    fn from_sys() -> Result<Self, anyhow::Error> {
+        let pid = process::id();
+        Ok(SystemInfo {
+            host_uuid: uuid::Uuid::from_u128(0),
+            hostname: fs::read_to_string("/etc/hostname")?.trim_end().to_string(),
+            mount_ns: Namespace::from_pid(namespaces::Kind::Mnt, pid)?,
+        })
+    }
+
+    fn with_host_uuid(mut self, uuid: uuid::Uuid) -> Self {
+        self.host_uuid = uuid;
+        self
+    }
+}
+
 struct EventProcessor {
+    system_info: SystemInfo,
+    config: Config,
     engine: gene::Engine,
     iocs: HashSet<String>,
     random: u32,
-    hcache: cache::Cache,
+    cache: cache::Cache,
     receiver: Receiver<EncodedEvent>,
     correlations: HashMap<u128, CorrelationData>,
     resolved: HashMap<IpAddr, String>,
@@ -130,17 +154,22 @@ impl EventProcessor {
     }
 
     pub fn init(config: Config, receiver: Receiver<EncodedEvent>) -> anyhow::Result<()> {
-        let output = match config.output.as_str() {
-            "stdout" => "/dev/stdout",
-            "stderr" => "/dev/stderr",
-            v => v,
+        let output = match &config.output.as_str() {
+            &"stdout" => String::from("/dev/stdout"),
+            &"stderr" => String::from("/dev/stderr"),
+            v => v.to_string(),
         };
 
+        // building up system information
+        let system_info = SystemInfo::from_sys()?.with_host_uuid(config.host_uuid().unwrap());
+
         let mut ep = Self {
+            system_info,
+            config,
             engine: Engine::new(),
             iocs: HashSet::new(),
             random: util::getrandom::<u32>().unwrap(),
-            hcache: Cache::with_max_entries(10000),
+            cache: Cache::with_max_entries(10000),
             correlations: HashMap::new(),
             resolved: HashMap::new(),
             receiver,
@@ -151,8 +180,8 @@ impl EventProcessor {
         };
 
         // loading rules in the engine
-        if !config.rules.is_empty() {
-            for rule in config.rules.iter() {
+        if !ep.config.rules.is_empty() {
+            for rule in ep.config.rules.iter() {
                 info!("loading detection/filter rules from: {rule}");
                 ep.engine
                     .load_rules_yaml_reader(File::open(rule)?)
@@ -162,13 +191,17 @@ impl EventProcessor {
         }
 
         // loading iocs
-        if !config.iocs.is_empty() {
-            for file in config.iocs {
-                ep.load_iocs(file)
+        if !ep.config.iocs.is_empty() {
+            for file in ep.config.iocs.clone() {
+                ep.load_iocs(file.to_string())
                     .map_err(|e| anyhow!("failed to load IoC file: {e}"))?;
             }
             info!("number of IoCs loaded: {}", ep.iocs.len());
         }
+
+        ep.config
+            .host_uuid()
+            .ok_or(anyhow!("failed to read host_uuid"))?;
 
         // should not raise any error, we just print it
         inspect_err! {
@@ -353,8 +386,8 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn get_hashes_with_ns(&mut self, ns_inum: u32, p: &kunai_common::path::Path) -> Hashes {
-        match self.hcache.get_or_cache_in_ns(ns_inum, p) {
+    fn get_hashes_with_ns(&mut self, ns: Namespace, p: &kunai_common::path::Path) -> Hashes {
+        match self.cache.get_or_cache_in_ns(ns, p) {
             Ok(h) => h,
             Err(e) => Hashes {
                 file: p.to_path_buf(),
@@ -372,7 +405,7 @@ impl EventProcessor {
     ) -> UserEvent<ExecveData> {
         let ancestors = self.get_ancestors(&info);
 
-        let mnt_ns = event.info.process.namespaces.mnt;
+        let mnt_ns = Namespace::mnt(event.info.process.namespaces.mnt);
 
         let mut data = ExecveData {
             ancestors: ancestors.join("|"),
@@ -437,7 +470,7 @@ impl EventProcessor {
         event: &bpf_events::MmapExecEvent,
     ) -> UserEvent<kunai::events::MmapExecData> {
         let filename = event.data.filename;
-        let mnt_ns = event.info.process.namespaces.mnt;
+        let mnt_ns = Namespace::mnt(event.info.process.namespaces.mnt);
         let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename);
 
         let ck = info.correlation_key();
@@ -810,23 +843,32 @@ impl EventProcessor {
 
     #[inline]
     fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
-        let mnt_ns = info.info.process.namespaces.mnt;
+        let mnt_ns = Namespace::mnt(info.info.process.namespaces.mnt);
         self.get_hashes_with_ns(mnt_ns, &event.data.path);
     }
 
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
-        let ns = i.process.namespaces.mnt;
+        let mnt_ns = Namespace::mnt(i.process.namespaces.mnt);
 
         let std_info = StdEventInfo::with_event_info(i, self.random);
 
         let cd = self.correlations.get(&std_info.correlation_key());
 
-        let additional = AdditionalFields {
-            hostname: self.hcache.get_hostname(ns).unwrap_or("?".into()),
-            container: cd.and_then(|cd| cd.container.clone()),
+        let host = kunai::info::HostInfo {
+            name: self.system_info.hostname.clone(),
+            uuid: self.system_info.host_uuid,
         };
 
-        std_info.with_additional_fields(additional)
+        let mut container = None;
+
+        if mnt_ns != self.system_info.mount_ns {
+            container = Some(kunai::info::ContainerInfo {
+                name: self.cache.get_hostname(mnt_ns).unwrap_or("?".into()),
+                ty: cd.and_then(|cd| cd.container.clone()),
+            });
+        }
+
+        std_info.with_additional_info(AdditionalInfo { host, container })
     }
 
     #[inline(always)]
@@ -911,8 +953,9 @@ impl EventProcessor {
         }
 
         let pid = i.process.tgid;
-        let ns = i.process.namespaces.mnt;
-        if let Err(e) = self.hcache.cache_ns(pid, ns) {
+        let ns = Namespace::mnt(i.process.namespaces.mnt);
+
+        if let Err(e) = self.cache.cache_ns(pid, ns) {
             debug!("failed to cache namespace pid={pid} ns={ns}: {e}");
         }
 
@@ -1476,9 +1519,7 @@ struct Cli {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
-    let mut conf = Config {
-        ..Default::default()
-    };
+    let mut conf = Config::default();
 
     // Handling any CLI argument not needing to run eBPF
     // setting log level according to the verbosity level
@@ -1516,9 +1557,8 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // dumping configuration
     if cli.dump_config {
-        let conf = Config {
-            ..Default::default()
-        };
+        let mut conf = Config::default();
+        conf.generate_host_uuid();
         println!("{}", conf.to_toml()?);
         return Ok(());
     }

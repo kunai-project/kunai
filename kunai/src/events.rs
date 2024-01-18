@@ -12,21 +12,33 @@ use gene::{Event, FieldGetter, FieldValue};
 
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{cache::Hashes, info::StdEventInfo};
+use crate::{
+    cache::Hashes,
+    info::{ContainerInfo, StdEventInfo},
+};
+
+#[derive(FieldGetter, Serialize, Deserialize)]
+pub struct ContainerSection {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Option<String>,
+}
+
+impl From<ContainerInfo> for ContainerSection {
+    fn from(value: ContainerInfo) -> Self {
+        Self {
+            name: value.name,
+            ty: value.ty,
+        }
+    }
+}
 
 #[derive(FieldGetter, Serialize, Deserialize)]
 pub struct HostSection {
-    hostname: String,
-    container: Option<String>,
-}
-
-impl From<&StdEventInfo> for HostSection {
-    fn from(value: &StdEventInfo) -> Self {
-        Self {
-            hostname: value.additional.hostname.clone(),
-            container: value.additional.container.clone(),
-        }
-    }
+    #[getter(skip)]
+    uuid: uuid::Uuid,
+    name: String,
+    container: Option<ContainerSection>,
 }
 
 #[derive(FieldGetter, Serialize, Deserialize)]
@@ -163,8 +175,9 @@ impl From<StdEventInfo> for EventInfo {
     fn from(value: StdEventInfo) -> Self {
         Self {
             host: HostSection {
-                hostname: value.additional.hostname,
-                container: value.additional.container,
+                name: value.additional.host.name,
+                uuid: value.additional.host.uuid,
+                container: value.additional.container.map(ContainerSection::from),
             },
             event: EventSection {
                 source: "kunai".into(),

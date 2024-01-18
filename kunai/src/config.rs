@@ -4,6 +4,7 @@ use kunai_common::{
     config::{BpfConfig, Filter, Loader},
 };
 use serde::{Deserialize, Serialize};
+use std::fs;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -37,6 +38,7 @@ impl Event {
 /// Kunai configuration structure to be used in userland
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    host_uuid: Option<uuid::Uuid>,
     pub output: String,
     pub max_buffered_events: u16,
     pub rules: Vec<String>,
@@ -60,6 +62,7 @@ impl Default for Config {
         }
 
         Self {
+            host_uuid: None,
             output: "/dev/stdout".into(),
             max_buffered_events: 1024,
             rules: vec![],
@@ -69,7 +72,31 @@ impl Default for Config {
     }
 }
 
+fn host_uuid() -> Option<uuid::Uuid> {
+    if let Ok(machine_id) = fs::read_to_string("/etc/machine-id") {
+        let machine_id = machine_id.trim_end();
+        // we do not generate uuid if machine_id is empty string
+        if machine_id.is_empty() {
+            return None;
+        }
+        return Some(uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_OID,
+            machine_id.as_bytes(),
+        ));
+    }
+    None
+}
+
 impl Config {
+    pub fn host_uuid(&self) -> Option<uuid::Uuid> {
+        // host_uuid in config superseeds system host_uuid
+        self.host_uuid.or(host_uuid())
+    }
+
+    pub fn generate_host_uuid(&mut self) {
+        self.host_uuid = host_uuid().or(Some(uuid::Uuid::new_v4()));
+    }
+
     pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
         toml::to_string(self)
     }
@@ -161,5 +188,12 @@ mod test {
         config.validate().unwrap();
 
         println!("{}", toml::to_string_pretty(&config).unwrap());
+    }
+
+    #[test]
+    fn test_machine_uuid() {
+        let uuid = host_uuid();
+        assert!(uuid.is_some());
+        println!("machine uuid: {}", uuid.unwrap())
     }
 }

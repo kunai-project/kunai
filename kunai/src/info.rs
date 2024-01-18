@@ -87,15 +87,27 @@ impl CorrInfo {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct AdditionalFields {
-    pub hostname: String,
-    pub container: Option<String>,
+pub struct HostInfo {
+    pub name: String,
+    pub uuid: uuid::Uuid,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct ContainerInfo {
+    pub name: String,
+    pub ty: Option<String>,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct AdditionalInfo {
+    pub host: HostInfo,
+    pub container: Option<ContainerInfo>,
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct StdEventInfo {
     pub info: bpf_events::EventInfo,
-    pub additional: AdditionalFields,
+    pub additional: AdditionalInfo,
     pub utc_timestamp: DateTime<Utc>,
 }
 
@@ -126,8 +138,8 @@ impl StdEventInfo {
     }
 
     #[inline]
-    pub fn with_additional_fields(mut self, fields: AdditionalFields) -> Self {
-        self.additional = fields;
+    pub fn with_additional_info(mut self, info: AdditionalInfo) -> Self {
+        self.additional = info;
         self
     }
 }
