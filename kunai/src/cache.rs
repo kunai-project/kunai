@@ -16,12 +16,14 @@ use std::{
 };
 use thiserror::Error;
 
-use crate::util::namespaces::{self, MntNamespace};
+use crate::util::namespaces::{self, Kind, Namespace, Switcher};
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unknown namespace inum={0}")]
-    UnknownNs(u32),
+    #[error("unknown namespace expected={exp} got={got}")]
+    WrongNsKind { exp: Kind, got: Kind },
+    #[error("unknown namespace {0}")]
+    UnknownNs(Namespace),
     #[error("{0}")]
     Namespace(#[from] namespaces::Error),
     #[error("{0}")]
@@ -94,7 +96,7 @@ impl Hashes {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct Key {
+struct Key {
     mnt_namespace: u32,
     path: PathBuf,
     size: u64,
@@ -117,8 +119,8 @@ impl Default for Key {
 }
 
 impl Key {
-    pub fn from_ebpf_path_ref_with_ns(
-        ns: &MntNamespace,
+    fn from_ebpf_path_ref_with_ns(
+        ns: &Namespace,
         path: &kunai_common::path::Path,
     ) -> Result<Self, Error> {
         let pb = path.to_path_buf();
@@ -163,43 +165,51 @@ impl Key {
 unsafe impl Send for Key {}
 unsafe impl Sync for Key {}
 
-struct NsEntry {
-    ns: MntNamespace,
+struct CachedNs {
+    switcher: namespaces::Switcher,
     hostname: Option<String>,
 }
 
 pub struct Cache {
-    ns: HashMap<u32, NsEntry>,
-    hcache: LruHashMap<Key, Hashes>,
+    namespaces: HashMap<Namespace, CachedNs>,
+    hashes: LruHashMap<Key, Hashes>,
 }
 
 impl Cache {
     // Constructs a new Hcache
     pub fn with_max_entries(cap: usize) -> Self {
         Cache {
-            ns: HashMap::new(),
-            hcache: LruHashMap::with_max_entries(cap),
+            namespaces: HashMap::new(),
+            hashes: LruHashMap::with_max_entries(cap),
         }
     }
 
     #[inline]
-    pub fn cache_ns(&mut self, pid: i32, ns_inum: u32) -> Result<(), Error> {
-        self.ns.entry(ns_inum).or_insert(NsEntry {
-            ns: MntNamespace::open_with_procfs(pid, ns_inum).map_err(Error::Namespace)?,
+    pub fn cache_ns(&mut self, pid: i32, ns: Namespace) -> Result<(), Error> {
+        self.namespaces.entry(ns).or_insert(CachedNs {
+            switcher: Switcher::new(ns, pid as u32).map_err(Error::Namespace)?,
             hostname: None,
         });
         Ok(())
     }
 
     #[inline]
-    pub fn get_hostname(&mut self, ns_inum: u32) -> Result<String, Error> {
-        let entry = self.ns.get_mut(&ns_inum).ok_or(Error::UnknownNs(ns_inum))?;
+    pub fn get_hostname(&mut self, ns: Namespace) -> Result<String, Error> {
+        // check that the namespace is a mount namespace
+        if !ns.is_kind(Kind::Mnt) {
+            return Err(Error::WrongNsKind {
+                exp: Kind::Mnt,
+                got: ns.kind,
+            });
+        }
+
+        let entry = self.namespaces.get_mut(&ns).ok_or(Error::UnknownNs(ns))?;
 
         if entry.hostname.is_none() {
-            entry.ns.enter()?;
+            entry.switcher.enter()?;
             let hostname = fs::read_to_string("/etc/hostname").unwrap_or("?".into());
             entry.hostname = Some(hostname.trim_end().into());
-            entry.ns.exit().expect("failed to restore namespace");
+            entry.switcher.exit().expect("failed to restore namespace");
         }
 
         Ok(entry.hostname.as_ref().unwrap().clone())
@@ -208,29 +218,37 @@ impl Cache {
     #[inline]
     pub fn get_or_cache_in_ns(
         &mut self,
-        ns_inum: u32,
+        ns: Namespace,
         path: &kunai_common::path::Path,
     ) -> Result<Hashes, Error> {
-        let Some(entry) = self.ns.get(&ns_inum) else {
-            return Err(Error::UnknownNs(ns_inum));
+        // check that the namespace is a mount namespace
+        if !ns.is_kind(Kind::Mnt) {
+            return Err(Error::WrongNsKind {
+                exp: Kind::Mnt,
+                got: ns.kind,
+            });
+        }
+
+        let Some(entry) = self.namespaces.get(&ns) else {
+            return Err(Error::UnknownNs(ns));
         };
 
         // we switch to namespace
-        entry.ns.enter()?;
+        entry.switcher.enter()?;
         let pb = path.to_path_buf();
 
-        let key = Key::from_ebpf_path_ref_with_ns(&entry.ns, path)?;
+        let key = Key::from_ebpf_path_ref_with_ns(&ns, path)?;
 
-        if !self.hcache.contains_key(&key) {
+        if !self.hashes.contains_key(&key) {
             let h = Hashes::from_path_ref(pb);
-            self.hcache.insert(key.clone(), h);
+            self.hashes.insert(key.clone(), h);
         }
 
         // we cannot panic here as we are sure the cache contains value
-        let res = Ok(self.hcache.get(&key).unwrap().clone());
+        let res = Ok(self.hashes.get(&key).unwrap().clone());
 
         // we must be sure that we restore our namespace
-        entry.ns.exit().expect("failed to restore namespace");
+        entry.switcher.exit().expect("failed to restore namespace");
 
         res
     }
