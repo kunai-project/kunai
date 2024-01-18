@@ -61,17 +61,26 @@ use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
 
 const PAGE_SIZE: usize = 4096;
+const KERNEL_IMAGE: &'static str = "kernel";
 
 #[derive(Debug, Clone)]
 struct CorrelationData {
     image: PathBuf,
     command_line: Vec<String>,
+    // process flags PF_* defined in sched.h
+    flags: u32,
     resolved: HashMap<IpAddr, String>,
     container: Option<Container>,
     info: CorrInfo,
 }
 
 impl CorrelationData {
+    #[inline(always)]
+    fn is_kthread(&self) -> bool {
+        // check if flag contains PF_KTHREAD
+        self.flags & 0x00200000 == 0x00200000
+    }
+
     #[inline(always)]
     fn command_line_string(&self) -> String {
         self.command_line.join(" ")
@@ -216,7 +225,8 @@ impl EventProcessor {
     fn set_correlation_from_procfs(&mut self, p: &procfs::process::Process) -> anyhow::Result<()> {
         let mut ppi: Option<ProcFsTaskInfo> = None;
 
-        let pi = ProcFsTaskInfo::new(p.stat()?.starttime, self.random, p.pid);
+        let stat = p.stat()?;
+        let pi = ProcFsTaskInfo::new(stat.starttime, self.random, p.pid);
 
         let parent_pid = p.status()?.ppid;
 
@@ -238,9 +248,18 @@ impl EventProcessor {
             return Ok(());
         }
 
+        let image = {
+            if stat.flags & 0x200000 == 0x200000 {
+                KERNEL_IMAGE.into()
+            } else {
+                p.exe().unwrap_or("?".into())
+            }
+        };
+
         let cor = CorrelationData {
-            image: p.exe().unwrap_or("?".into()),
+            image: image,
             command_line: p.cmdline().unwrap_or(vec!["?".into()]),
+            flags: stat.flags,
             resolved: HashMap::new(),
             container: None,
             info: ci,
@@ -279,20 +298,23 @@ impl EventProcessor {
     fn get_ancestors(&self, i: &StdEventInfo) -> Vec<String> {
         let mut ck = i.parent_correlation_key();
         let mut ancestors = vec![];
-        let mut last_pid = -1;
-        while let Some(cor) = self.correlations.get(&ck) {
-            last_pid = cor.info.pid();
+        let mut last = None;
 
+        while let Some(cor) = self.correlations.get(&ck) {
+            last = Some(cor);
             ancestors.insert(0, cor.image.to_string_lossy().to_string());
             ck = match cor.info.parent_correlation_key() {
                 Some(v) => v,
                 None => break,
             };
         }
-        // it means we did not manage to get ancestors until init
-        if last_pid != 1 {
-            ancestors.insert(0, "?".into());
+
+        if let Some(last) = last {
+            if last.info.pid() != 1 && !last.is_kthread() {
+                ancestors.insert(0, "?".into());
+            }
         }
+
         ancestors
     }
 
@@ -798,10 +820,19 @@ impl EventProcessor {
             container_type = Container::from_ancestors(ancestors);
         }
 
+        let image = {
+            if info.info.process.is_kernel_thread() {
+                KERNEL_IMAGE.into()
+            } else {
+                event.data.exe.to_path_buf()
+            }
+        };
+
         // we insert only if not existing
         self.correlations.entry(ck).or_insert(CorrelationData {
-            image: event.data.exe.to_path_buf(),
+            image,
             command_line: event.data.argv.to_argv(),
+            flags: info.info.process.flags,
             resolved: HashMap::new(),
             container: container_type,
             info: CorrInfo::Event(info),
