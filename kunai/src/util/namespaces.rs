@@ -227,7 +227,7 @@ mod test {
 
     #[test]
     fn test_open() {
-        let pid = process::id() as i32;
+        let pid = process::id();
         for kind in [
             Kind::Cgroup,
             Kind::Ipc,
@@ -244,7 +244,7 @@ mod test {
 
     #[test]
     fn test_read() {
-        let pid = process::id() as i32;
+        let pid = process::id();
         for kind in [
             Kind::Cgroup,
             Kind::Ipc,
@@ -264,7 +264,7 @@ mod test {
 
     #[test]
     fn test_eq() {
-        let pid = process::id() as i32;
+        let pid = process::id();
         let ns = Namespace::from_pid(Kind::Pid, pid).unwrap();
         let other = Namespace::from_pid(Kind::Pid, pid).unwrap();
         assert_eq!(ns, other)
