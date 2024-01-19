@@ -12,7 +12,7 @@ use kunai::events::{
     MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
     UserEvent,
 };
-use kunai::info::{AdditionalInfo, CorrInfo, ProcFsInfo, ProcFsTaskInfo, StdEventInfo};
+use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
@@ -64,17 +64,18 @@ const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &'static str = "kernel";
 
 #[derive(Debug, Clone)]
-struct CorrelationData {
+struct Task {
     image: PathBuf,
     command_line: Vec<String>,
+    pid: i32,
     // process flags PF_* defined in sched.h
     flags: u32,
     resolved: HashMap<IpAddr, String>,
     container: Option<Container>,
-    info: CorrInfo,
+    parent_key: Option<TaskKey>,
 }
 
-impl CorrelationData {
+impl Task {
     #[inline(always)]
     fn is_kthread(&self) -> bool {
         // check if flag contains PF_KTHREAD
@@ -120,7 +121,7 @@ struct EventProcessor {
     random: u32,
     cache: cache::Cache,
     receiver: Receiver<EncodedEvent>,
-    correlations: HashMap<u128, CorrelationData>,
+    tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
     output: std::fs::File,
 }
@@ -146,7 +147,7 @@ impl EventProcessor {
             iocs: HashSet::new(),
             random: util::getrandom::<u32>().unwrap(),
             cache: Cache::with_max_entries(10000),
-            correlations: HashMap::new(),
+            tasks: HashMap::new(),
             resolved: HashMap::new(),
             receiver,
             output: std::fs::OpenOptions::new()
@@ -181,8 +182,8 @@ impl EventProcessor {
 
         // should not raise any error, we just print it
         inspect_err! {
-            ep.init_correlations_from_procfs(),
-            |e: anyhow::Error| warn!("failed to initialize correlations with procfs: {}", e)
+            ep.init_tasks_from_procfs(),
+            |e: anyhow::Error| warn!("failed to initialize tasks with procfs: {}", e)
         };
 
         thread::spawn(move || {
@@ -209,10 +210,10 @@ impl EventProcessor {
         Ok(())
     }
 
-    fn init_correlations_from_procfs(&mut self) -> anyhow::Result<()> {
+    fn init_tasks_from_procfs(&mut self) -> anyhow::Result<()> {
         for p in (procfs::process::all_processes()?).flatten() {
             // flatten takes only the Ok() values of processes
-            if let Err(e) = self.set_correlation_from_procfs(&p) {
+            if let Err(e) = self.set_task_from_procfs(&p) {
                 warn!(
                     "failed to initialize correlation for procfs process PID={}: {e}",
                     p.pid
@@ -222,29 +223,22 @@ impl EventProcessor {
         Ok(())
     }
 
-    fn set_correlation_from_procfs(&mut self, p: &procfs::process::Process) -> anyhow::Result<()> {
-        let mut ppi: Option<ProcFsTaskInfo> = None;
-
+    fn set_task_from_procfs(&mut self, p: &procfs::process::Process) -> anyhow::Result<()> {
         let stat = p.stat()?;
-        let pi = ProcFsTaskInfo::new(stat.starttime, self.random, p.pid);
 
         let parent_pid = p.status()?.ppid;
+        let parent_key = {
+            if parent_pid != 0 {
+                let parent = procfs::process::Process::new(parent_pid)?;
+                Some(TaskKey::try_from(&parent)?)
+            } else {
+                None
+            }
+        };
 
-        if parent_pid != 0 {
-            let parent = procfs::process::Process::new(parent_pid)?;
+        let tk = TaskKey::try_from(p)?;
 
-            ppi = Some(ProcFsTaskInfo::new(
-                parent.stat()?.starttime,
-                self.random,
-                parent_pid,
-            ));
-        }
-
-        let ci = CorrInfo::from(ProcFsInfo::new(pi, ppi));
-
-        let ck = ci.correlation_key();
-
-        if self.correlations.contains_key(&ck) {
+        if self.tasks.contains_key(&tk) {
             return Ok(());
         }
 
@@ -256,61 +250,64 @@ impl EventProcessor {
             }
         };
 
-        let cor = CorrelationData {
+        let task = Task {
             image: image,
             command_line: p.cmdline().unwrap_or(vec!["?".into()]),
+            pid: p.pid,
             flags: stat.flags,
             resolved: HashMap::new(),
             container: None,
-            info: ci,
+            parent_key,
         };
 
-        self.correlations.insert(ck, cor);
+        self.tasks.insert(tk, task);
 
         Ok(())
     }
 
     #[inline]
-    fn get_exe(&self, key: u128) -> PathBuf {
+    fn get_exe(&self, key: TaskKey) -> PathBuf {
         let mut exe = PathBuf::from("?");
-        if let Some(corr) = self.correlations.get(&key) {
-            exe = corr.image.clone();
+        if let Some(task) = self.tasks.get(&key) {
+            exe = task.image.clone();
         }
         exe
     }
 
     #[inline]
-    fn get_command_line(&self, key: u128) -> String {
+    fn get_command_line(&self, key: TaskKey) -> String {
         let mut cl = String::from("?");
-        if let Some(corr) = self.correlations.get(&key) {
-            cl = corr.command_line_string();
+        if let Some(t) = self.tasks.get(&key) {
+            cl = t.command_line_string();
         }
         cl
     }
 
     #[inline]
     fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
-        let ck = i.correlation_key();
+        let ck = i.task_key();
         (self.get_exe(ck), self.get_command_line(ck))
     }
 
     #[inline]
     fn get_ancestors(&self, i: &StdEventInfo) -> Vec<String> {
-        let mut ck = i.parent_correlation_key();
+        let mut tk = i.parent_key();
         let mut ancestors = vec![];
         let mut last = None;
 
-        while let Some(cor) = self.correlations.get(&ck) {
-            last = Some(cor);
-            ancestors.insert(0, cor.image.to_string_lossy().to_string());
-            ck = match cor.info.parent_correlation_key() {
+        while let Some(task) = self.tasks.get(&tk) {
+            last = Some(task);
+            ancestors.insert(0, task.image.to_string_lossy().to_string());
+            tk = match task.parent_key {
                 Some(v) => v,
-                None => break,
+                None => {
+                    break;
+                }
             };
         }
 
         if let Some(last) = last {
-            if last.info.pid() != 1 && !last.is_kthread() {
+            if last.pid != 1 && !last.is_kthread() {
                 ancestors.insert(0, "?".into());
             }
         }
@@ -325,8 +322,8 @@ impl EventProcessor {
 
     #[inline]
     fn get_parent_image(&self, i: &StdEventInfo) -> String {
-        let ck = i.parent_correlation_key();
-        self.correlations
+        let ck = i.parent_key();
+        self.tasks
             .get(&ck)
             .map(|c| c.image.to_string_lossy().to_string())
             .unwrap_or("?".into())
@@ -334,10 +331,10 @@ impl EventProcessor {
 
     #[inline]
     fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
-        let ck = i.correlation_key();
+        let ck = i.task_key();
 
         // update local resolve table
-        self.correlations.get_mut(&ck).map(|c| {
+        self.tasks.get_mut(&ck).map(|c| {
             c.resolved
                 .entry(ip)
                 .and_modify(|r| *r = resolved.to_owned())
@@ -353,11 +350,11 @@ impl EventProcessor {
 
     #[inline]
     fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> Cow<'_, str> {
-        let ck = i.correlation_key();
+        let ck = i.task_key();
 
         // we lookup in the local table
         if let Some(domain) = self
-            .correlations
+            .tasks
             .get(&ck)
             .map(|c| c.resolved.get(&ip).map(|s| Cow::from(s)))
             .flatten()
@@ -462,7 +459,7 @@ impl EventProcessor {
         let mnt_ns = Namespace::mnt(event.info.process.namespaces.mnt);
         let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename);
 
-        let ck = info.correlation_key();
+        let ck = info.task_key();
 
         let exe = self.get_exe(ck);
 
@@ -482,7 +479,7 @@ impl EventProcessor {
         event: &bpf_events::DnsQueryEvent,
     ) -> Vec<UserEvent<DnsQueryData>> {
         let mut out = vec![];
-        let ck = info.correlation_key();
+        let ck = info.task_key();
         let exe = self.get_exe(ck);
         let command_line = self.get_command_line(ck);
 
@@ -777,16 +774,16 @@ impl EventProcessor {
         };
 
         let etype = event.ty();
-        // cleanup correlations when process exits
+        // cleanup tasks when process exits
         if (matches!(etype, Type::Exit) && info.info.process.pid == info.info.process.tgid)
             || matches!(etype, Type::ExitGroup)
         {
             // find a more elaborated way to save space
             // we need to keep some minimal correlations
             // maybe through cached ancestors and parent_image
-            self.correlations
-                .entry(info.correlation_key())
-                .and_modify(|c| c.free_memory());
+            self.tasks
+                .entry(info.task_key())
+                .and_modify(|t| t.free_memory());
         }
 
         UserEvent::new(data, info)
@@ -798,16 +795,16 @@ impl EventProcessor {
         info: StdEventInfo,
         event: &bpf_events::CorrelationEvent,
     ) {
-        let ck = info.correlation_key();
+        let ck = info.task_key();
 
-        // Execve must remove any previous correlation (i.e. coming from
+        // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
         if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
-            self.correlations.remove(&ck);
+            self.tasks.remove(&ck);
         }
 
-        // early return if correlation key exists
-        if self.correlations.contains_key(&ck) {
+        // early return if task key exists
+        if self.tasks.contains_key(&ck) {
             return;
         }
 
@@ -829,13 +826,14 @@ impl EventProcessor {
         };
 
         // we insert only if not existing
-        self.correlations.entry(ck).or_insert(CorrelationData {
+        self.tasks.entry(ck).or_insert(Task {
             image,
             command_line: event.data.argv.to_argv(),
+            pid: info.info.process.tgid,
             flags: info.info.process.flags,
             resolved: HashMap::new(),
             container: container_type,
-            info: CorrInfo::Event(info),
+            parent_key: Some(info.parent_key()),
         });
     }
 
@@ -850,7 +848,7 @@ impl EventProcessor {
 
         let std_info = StdEventInfo::from_bpf(i, self.random);
 
-        let cd = self.correlations.get(&std_info.correlation_key());
+        let cd = self.tasks.get(&std_info.task_key());
 
         let host = kunai::info::HostInfo {
             name: self.system_info.hostname.clone(),
