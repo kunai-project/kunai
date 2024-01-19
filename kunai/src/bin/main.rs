@@ -1519,7 +1519,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Handling any CLI argument not needing to run eBPF
     // setting log level according to the verbosity level
-    let mut log_level = LevelFilter::Error;
+    let mut log_level = LevelFilter::Warn;
     match cli.verbose {
         1 => log_level = LevelFilter::Info,
         2 => log_level = LevelFilter::Debug,
