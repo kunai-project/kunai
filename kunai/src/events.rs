@@ -18,6 +18,17 @@ use crate::{
     info::{ContainerInfo, StdEventInfo},
 };
 
+#[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
+pub struct File {
+    pub file: PathBuf,
+}
+
+impl From<PathBuf> for File {
+    fn from(value: PathBuf) -> Self {
+        Self { file: value }
+    }
+}
+
 #[derive(FieldGetter, Serialize, Deserialize)]
 pub struct ContainerSection {
     pub name: String,
@@ -202,7 +213,7 @@ macro_rules! impl_std_iocs {
     ($ty:ty) => {
         impl IocGetter for $ty {
             fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-                vec![self.exe.to_string_lossy()]
+                vec![self.exe.file.to_string_lossy()]
             }
         }
     };
@@ -338,7 +349,7 @@ macro_rules! def_user_data {
                 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
                 $struct_vis struct $struct_name {
                     pub command_line: String,
-                    pub exe: PathBuf,
+                    pub exe: File,
                     $(
                         $(#[$struct_meta])*
                         $vis $field_name: $field_type
@@ -408,7 +419,7 @@ def_user_data!(
 
 impl IocGetter for MmapExecData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.exe.to_string_lossy()];
+        let mut v = vec![self.exe.file.to_string_lossy()];
         v.extend(self.mapped.iocs());
         v
     }
@@ -517,7 +528,7 @@ impl IocGetter for DnsQueryData {
         self.cache_responses();
 
         // set executable
-        let mut v = vec![self.exe.to_string_lossy()];
+        let mut v = vec![self.exe.file.to_string_lossy()];
         // the ip addresses in the response
         v.extend(
             self.responses
@@ -543,7 +554,7 @@ def_user_data!(
 
 impl IocGetter for SendDataData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.exe.to_string_lossy()];
+        let mut v = vec![self.exe.file.to_string_lossy()];
         v.extend(self.dst.iocs());
         v
     }
@@ -575,7 +586,7 @@ def_user_data!(
 
 impl IocGetter for RWData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.to_string_lossy(), self.path.to_string_lossy()]
+        vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
     }
 }
 
@@ -588,7 +599,7 @@ def_user_data!(
 
 impl IocGetter for UnlinkData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.to_string_lossy(), self.path.to_string_lossy()]
+        vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
     }
 }
 
@@ -604,7 +615,7 @@ def_user_data!(
 
 impl IocGetter for MountData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.to_string_lossy(), self.path.to_string_lossy()]
+        vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
     }
 }
 
@@ -618,7 +629,7 @@ def_user_data!(
 impl IocGetter for FileRenameData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.to_string_lossy(),
+            self.exe.file.to_string_lossy(),
             self.old.to_string_lossy(),
             self.new.to_string_lossy(),
         ]
@@ -657,7 +668,7 @@ def_user_data!(
 impl IocGetter for BpfProgLoadData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.to_string_lossy(),
+            self.exe.file.to_string_lossy(),
             self.bpf_prog.md5.as_str().into(),
             self.bpf_prog.sha1.as_str().into(),
             self.bpf_prog.sha256.as_str().into(),
@@ -694,7 +705,7 @@ def_user_data!(
 impl IocGetter for BpfSocketFilterData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.to_string_lossy(),
+            self.exe.file.to_string_lossy(),
             self.filter.md5.as_str().into(),
             self.filter.sha1.as_str().into(),
             self.filter.sha256.as_str().into(),
