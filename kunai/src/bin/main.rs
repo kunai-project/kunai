@@ -415,7 +415,7 @@ impl EventProcessor {
         event: &bpf_events::CloneEvent,
     ) -> UserEvent<CloneData> {
         let data = CloneData {
-            exe: event.data.executable.to_path_buf(),
+            exe: event.data.executable.to_path_buf().into(),
             command_line: event.data.argv.to_command_line(),
             flags: event.data.flags,
         };
@@ -436,7 +436,7 @@ impl EventProcessor {
             .to_string();
 
         let data = PrctlData {
-            exe,
+            exe: exe.into(),
             command_line,
             option,
             arg2: event.data.arg2,
@@ -465,7 +465,7 @@ impl EventProcessor {
 
         let data = kunai::events::MmapExecData {
             command_line: self.get_command_line(ck),
-            exe: exe,
+            exe: exe.into(),
             mapped: mmapped_hashes,
         };
 
@@ -503,7 +503,7 @@ impl EventProcessor {
         for r in responses {
             let mut data = DnsQueryData::new().with_responses(r.answers);
             data.command_line = command_line.clone();
-            data.exe = exe.clone();
+            data.exe = exe.clone().into();
             data.query = r.question.clone();
             data.proto = proto.clone().into();
             data.dns_server = NetworkInfo {
@@ -534,7 +534,7 @@ impl EventProcessor {
 
         let data = RWData {
             command_line,
-            exe,
+            exe: exe.into(),
             path: event.data.path.to_path_buf(),
         };
 
@@ -551,7 +551,7 @@ impl EventProcessor {
 
         let data = UnlinkData {
             command_line,
-            exe,
+            exe: exe.into(),
             path: event.data.path.into(),
             success: event.data.success,
         };
@@ -569,7 +569,7 @@ impl EventProcessor {
 
         let data = MountData {
             command_line,
-            exe,
+            exe: exe.into(),
             dev_name: event.data.dev_name.into(),
             path: event.data.path.into(),
             ty: event.data.ty.into(),
@@ -589,7 +589,7 @@ impl EventProcessor {
 
         let mut data = BpfProgLoadData {
             command_line,
-            exe,
+            exe: exe.into(),
             id: event.data.id,
             prog_type: BpfProgTypeInfo {
                 id: event.data.prog_type,
@@ -631,7 +631,7 @@ impl EventProcessor {
 
         let data = BpfSocketFilterData {
             command_line,
-            exe,
+            exe: exe.into(),
             socket: SocketInfo {
                 domain: event.data.socket_info.domain_to_string(),
                 ty: event.data.socket_info.type_to_string().into(),
@@ -661,7 +661,7 @@ impl EventProcessor {
 
         let data = MprotectData {
             command_line: cmd_line,
-            exe: exe,
+            exe: exe.into(),
             addr: event.data.start,
             prot: event.data.prot,
         };
@@ -680,7 +680,7 @@ impl EventProcessor {
 
         let data = ConnectData {
             command_line,
-            exe,
+            exe: exe.into(),
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst_ip, &info).into()),
                 ip: dst_ip,
@@ -704,7 +704,7 @@ impl EventProcessor {
         let dst_ip: IpAddr = event.data.ip_port.into();
 
         let data = SendDataData {
-            exe,
+            exe: exe.into(),
             command_line,
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst_ip, &info).into()),
@@ -751,7 +751,7 @@ impl EventProcessor {
 
         let data = FileRenameData {
             command_line,
-            exe,
+            exe: exe.into(),
             old: event.data.old_name.into(),
             new: event.data.new_name.into(),
         };
@@ -769,7 +769,7 @@ impl EventProcessor {
 
         let data = ExitData {
             command_line,
-            exe,
+            exe: exe.into(),
             error_code: event.data.error_code,
         };
 
