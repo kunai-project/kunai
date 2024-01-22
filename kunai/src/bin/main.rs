@@ -975,7 +975,7 @@ impl EventProcessor {
                         );
                         // we have to rebuild std_info as it has it is uses correlation
                         // information
-                        let std_info = self.build_std_event_info(*i);
+                        let std_info = self.build_std_event_info(std_info.info);
                         let mut e = self.to_execve(std_info, e);
 
                         self.scan_and_print(&mut e);
@@ -994,7 +994,7 @@ impl EventProcessor {
                     );
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
-                    let std_info = self.build_std_event_info(*i);
+                    let std_info = self.build_std_event_info(std_info.info);
                     let mut e = self.to_clone(std_info, e);
                     self.scan_and_print(&mut e);
                 }
