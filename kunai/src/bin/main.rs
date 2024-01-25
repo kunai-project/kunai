@@ -1278,7 +1278,14 @@ impl EventReader {
                     }
 
                     Err(e) => {
-                        error!("failed to retrieve bpf_prog instructions: {:?}", e)
+                        if e.is_io_error_not_found() {
+                            // It may happen that we do not manage to get program's metadata. This happens
+                            // when programs gets loaded and very quickly unloaded. It seems a common
+                            // practice to load a few eBPF instructions (Aya, Docker ...) to test eBPF features.
+                            warn!("couldn't retrieve bpf program's metadata for event={}, it probably got unloaded too quickly", event.info.uuid.into_uuid().as_hyphenated());
+                        } else {
+                            error!("failed to retrieve bpf_prog instructions: {}", e);
+                        }
                     }
                 }
             }

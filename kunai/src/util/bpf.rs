@@ -2,6 +2,7 @@ use aya_obj::generated::{bpf_attr, bpf_cmd, bpf_prog_info, bpf_prog_type};
 use core::ffi::c_long;
 use std::io;
 use std::os::fd::RawFd;
+use thiserror::Error;
 
 pub(crate) type SysResult = Result<c_long, io::Error>;
 
@@ -44,26 +45,35 @@ pub(crate) fn bpf_prog_get_info_by_fd(prog_fd: RawFd) -> Result<bpf_prog_info, i
     Ok(info)
 }
 
-#[derive(Debug)]
-pub enum BpfError {
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("wrong tag")]
     WrongTag,
-    IoError(io::Error),
+    #[error("{0}")]
+    IoError(#[from] io::Error),
 }
 
-impl From<io::Error> for BpfError {
-    fn from(value: io::Error) -> Self {
-        Self::IoError(value)
+impl Error {
+    pub fn is_io_error_not_found(&self) -> bool {
+        match self {
+            Error::IoError(e) => match e.kind() {
+                io::ErrorKind::NotFound => return true,
+                _ => {}
+            },
+            _ => {}
+        }
+        false
     }
 }
 
-pub fn bpf_dump_xlated_by_id_and_tag(prog_id: u32, prog_tag: [u8; 8]) -> Result<Vec<u8>, BpfError> {
+pub fn bpf_dump_xlated_by_id_and_tag(prog_id: u32, prog_tag: [u8; 8]) -> Result<Vec<u8>, Error> {
     let raw_fd = bpf_prog_get_fd_by_id(prog_id)?;
     // we first issue a call to get information about program
     let info = bpf_prog_get_info_by_fd(raw_fd)?;
 
     // verifying that tag is correct
     if info.tag != prog_tag {
-        return Err(BpfError::WrongTag);
+        return Err(Error::WrongTag);
     }
 
     // we allocate a vector to hold instructions
