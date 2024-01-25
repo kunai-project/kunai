@@ -175,12 +175,7 @@ impl<'a> Programs<'a> {
         let m = bpf
             .programs_mut()
             .map(|(name, p)| {
-                let mut prog = Program::from_program(name.to_string(), p);
-                // disable debug probes by default
-                if name.starts_with("debug.") {
-                    prog.disable();
-                }
-
+                let prog = Program::from_program(name.to_string(), p);
                 (name.to_string(), prog)
             })
             .collect();
