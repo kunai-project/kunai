@@ -70,9 +70,9 @@ macro_rules! log_err {
     };
     ($ctx:expr, $msg:expr, $err:expr) => {
         if $msg.is_empty() {
-            aya_log_ebpf::error!($ctx, "{}", $err.name())
+            aya_log_ebpf::error!($ctx, "line:{} {}", line!(), $err.name())
         } else {
-            aya_log_ebpf::error!($ctx, "{}: {}", $msg, $err.name())
+            aya_log_ebpf::error!($ctx, "line:{} {}: {}", line!(), $msg, $err.name())
         }
     };
 }
