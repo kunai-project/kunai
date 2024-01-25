@@ -43,23 +43,23 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
 
         // parsing executable
         let exe_file = core_read_kernel!(mm, exe_file)?;
-        inspect_err!(
+        ignore_result!(inspect_err!(
             event
                 .data
                 .executable
                 .core_resolve_file(&exe_file, MAX_PATH_DEPTH),
-            |e: path::Error| error!(ctx, "failed to resolve exe: {}", e.description())
-        );
+            |e: &path::Error| error!(ctx, "failed to resolve exe: {}", e.description())
+        ));
 
         // we check that arg_start is not a null pointer
         if arg_start != 0 && arg_len != 0 {
-            inspect_err!(
+            ignore_result!(inspect_err!(
                 event
                     .data
                     .argv
                     .read_user_at(arg_start as *const u8, arg_len as u32),
                 |_| error!(ctx, "failed to read argv")
-            );
+            ));
         }
 
         // cgroup parsing

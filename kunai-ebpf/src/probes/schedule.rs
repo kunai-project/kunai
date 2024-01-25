@@ -59,20 +59,20 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // we check that arg_start is not a null pointer
     if arg_start != 0 && arg_len != 0 {
-        inspect_err!(
+        ignore_result!(inspect_err!(
             event
                 .data
                 .argv
                 .read_user_at(arg_start as *const u8, arg_len as u32),
             |_| error!(ctx, "failed to read argv")
-        );
+        ));
     }
 
     let exe_file = core_read_kernel!(mm, exe_file)?;
-    inspect_err!(
+    ignore_result!(inspect_err!(
         event.data.exe.core_resolve_file(&exe_file, MAX_PATH_DEPTH),
-        |e: path::Error| error!(ctx, "failed to resolve exe: {}", e.description())
-    );
+        |e: &path::Error| error!(ctx, "failed to resolve exe: {}", e.description())
+    ));
 
     if event.data.exe.is_empty() && event.data.argv.is_empty() {
         return Ok(());
@@ -85,9 +85,9 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
     event.init_from_current_task(Type::TaskSched)?;
 
     // we do not really care if that is failing
-    inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {
+    ignore_result!(inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {
         error!(ctx, "failed to track task")
-    });
+    }));
 
     // we send event to userland
     pipe_event(ctx, event);

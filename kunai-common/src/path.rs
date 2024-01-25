@@ -113,6 +113,7 @@ pub struct Metadata {
 #[derive(Debug, Clone, Copy, Eq)]
 pub struct Path {
     buffer: [u8; MAX_PATH_LEN],
+    null: u8, // easy str break
     len: u32,
     depth: u16,
     real: bool, // flag if path is a realpath
@@ -155,6 +156,7 @@ impl Default for Path {
     fn default() -> Self {
         Path {
             buffer: [0; MAX_PATH_LEN],
+            null: 0,
             len: 0,
             depth: 0,
             real: false,
@@ -558,6 +560,12 @@ impl Path {
             // len cannot be 0 so it is Ok to substract 1
             self.len = (len - 1) as u32;
             Ok(())
+        }
+
+        #[inline]
+        /// function aiming at being used in bpf_printk
+        pub unsafe fn as_str_ptr(&self) -> *const u8{
+            self.as_slice().as_ptr()
         }
 
         pub unsafe fn to_aya_debug_str(&self) -> &str {

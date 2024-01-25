@@ -67,10 +67,10 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     alloc::init()?;
     let event = alloc::alloc_zero::<ConfigEvent>()?;
 
-    inspect_err!(
+    ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
-        |e: path::Error| error!(ctx, "failed to resolve filename: {}", e.description())
-    );
+        |e: &path::Error| error!(ctx, "failed to resolve filename: {}", e.description())
+    ));
 
     if event.data.path.starts_with("/etc/") {
         event.init_from_current_task(Type::ReadConfig)?;
@@ -83,7 +83,10 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    inspect_err!(track(&file), |_| error!(ctx, "failed to track file"));
+    ignore_result!(inspect_err!(track(&file), |_| error!(
+        ctx,
+        "failed to track file"
+    )));
     Ok(())
 }
 
@@ -121,10 +124,10 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
     alloc::init()?;
     let event = alloc::alloc_zero::<ConfigEvent>()?;
 
-    inspect_err!(
+    ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
-        |e: path::Error| error!(ctx, "failed to resolve filename: {}", e.description())
-    );
+        |e: &path::Error| error!(ctx, "failed to resolve filename: {}", e.description())
+    ));
 
     if event.data.path.starts_with("/etc/") {
         event.init_from_current_task(Type::WriteConfig)?;
@@ -165,28 +168,61 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
     event.init_from_current_task(Type::FileRename)?;
 
     // parsing old_name
-    inspect_err!(
+    ignore_result!(inspect_err!(
         event.data.old_name.prepend_dentry(&old_dentry),
-        |e: path::Error| error!(ctx, "failed to parse old_name dentry: {}", e.description())
-    );
+        |e: &path::Error| error!(ctx, "failed to parse old_name dentry: {}", e.description())
+    ));
 
-    inspect_err!(
+    ignore_result!(inspect_err!(
         event.data.old_name.core_resolve(&old_dir, MAX_PATH_DEPTH),
-        |e: path::Error| error!(ctx, "failed to old_dir: {}", e.description())
-    );
+        |e: &path::Error| error!(ctx, "failed to old_dir: {}", e.description())
+    ));
 
     // parsing new_name
-    inspect_err!(
+    ignore_result!(inspect_err!(
         event.data.new_name.prepend_dentry(&new_dentry),
-        |e: path::Error| error!(ctx, "failed to parse new_name dentry: {}", e.description())
-    );
+        |e: &path::Error| error!(ctx, "failed to parse new_name dentry: {}", e.description())
+    ));
 
-    inspect_err!(
+    ignore_result!(inspect_err!(
         event.data.new_name.core_resolve(&new_dir, MAX_PATH_DEPTH),
-        |e: path::Error| error!(ctx, "failed to resolve new_dir: {}", e.description())
-    );
+        |e: &path::Error| error!(ctx, "failed to resolve new_dir: {}", e.description())
+    ));
 
     pipe_event(ctx, event);
+
+    Ok(())
+}
+
+#[map]
+static mut PATHS: LruHashMap<u128, Path> = LruHashMap::with_max_entries(4096, 0);
+
+#[kprobe(name = "fs.security_path_unlink")]
+pub fn security_path_unlink(ctx: ProbeContext) -> u32 {
+    match unsafe { try_security_path_unlink(&ctx) } {
+        Ok(_) => error::BPF_PROG_SUCCESS,
+        Err(s) => {
+            log_err!(&ctx, s);
+            error::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
+    let dir = co_re::path::from_ptr(kprobe_arg!(ctx, 0)?);
+    let entry = co_re::dentry::from_ptr(kprobe_arg!(ctx, 1)?);
+
+    alloc::init()?;
+    let p = alloc::alloc_zero::<Path>()?;
+
+    p.prepend_dentry(&entry)?;
+    p.core_resolve(&dir, MAX_PATH_DEPTH)?;
+
+    // as vfs_unlink can be reached without security_path_unlink being called
+    // we report error when insertion is failing
+    PATHS
+        .insert(&ProbeFn::security_path_unlink.uuid(), &p, 0)
+        .map_err(|_| MapError::InsertFailure)?;
 
     Ok(())
 }
@@ -207,13 +243,6 @@ pub fn vfs_unlink(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
-    let entry_ctx = match restore_entry_ctx(ProbeFn::security_path_unlink) {
-        Some(e) => e.probe_context(),
-        None => return Ok(()),
-    };
-
-    let dir = co_re::path::from_ptr(kprobe_arg!(entry_ctx, 0)?);
-    let entry = co_re::dentry::from_ptr(kprobe_arg!(entry_ctx, 1)?);
     let rc: c_int = ctx.ret().unwrap_or(-1);
 
     alloc::init()?;
@@ -221,8 +250,19 @@ unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 
     e.init_from_current_task(Type::FileUnlink)?;
 
-    e.data.path.prepend_dentry(&entry)?;
-    e.data.path.core_resolve(&dir, MAX_PATH_DEPTH)?;
+    let path_key = ProbeFn::security_path_unlink.uuid();
+    if let Some(p) = PATHS.get(&path_key) {
+        e.data.path.copy_from(&p);
+        // make some room in the cache
+        ignore_result!(PATHS.remove(&path_key));
+    } else {
+        // it seems there are very few code paths where vfs_unlink
+        // can be called without a prior call to security_path_unlink
+        // in this case we return so that we don't end up with an event
+        // with an empty path
+        return Ok(());
+    }
+
     e.data.success = rc == 0;
 
     pipe_event(ctx, e);

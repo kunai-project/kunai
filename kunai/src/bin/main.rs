@@ -181,9 +181,9 @@ impl EventProcessor {
             .ok_or(anyhow!("failed to read host_uuid"))?;
 
         // should not raise any error, we just print it
-        inspect_err! {
+        let _ = inspect_err! {
             ep.init_tasks_from_procfs(),
-            |e: anyhow::Error| warn!("failed to initialize tasks with procfs: {}", e)
+            |e: &anyhow::Error| warn!("failed to initialize tasks with procfs: {}", e)
         };
 
         thread::spawn(move || {
