@@ -64,7 +64,10 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
                 .data
                 .argv
                 .read_user_at(arg_start as *const u8, arg_len as u32),
-            |_| error!(ctx, "failed to read argv")
+            |_| error!(
+                ctx,
+                "failed to read argv: arg_start=0x{:x} arg_len={}", arg_start, arg_len
+            )
         ));
     }
 
