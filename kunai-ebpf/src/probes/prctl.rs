@@ -4,7 +4,7 @@ use aya_bpf::{maps::LruHashMap, programs::TracePointContext};
 
 #[map]
 static mut PRCTL_ARGS: LruHashMap<u64, SysEnterArgs<PrctlArgs>> =
-    LruHashMap::with_max_entries(256, 0);
+    LruHashMap::with_max_entries(1024, 0);
 
 #[repr(C)]
 struct PrctlArgs {
@@ -30,7 +30,7 @@ pub fn sys_enter_prctl(ctx: TracePointContext) -> u32 {
 unsafe fn try_enter_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
     let args = SysEnterArgs::<PrctlArgs>::from_context(ctx)?;
 
-    // we ignore result as we can check something went wrong when we try to get argument
+    // we ignore result as we can check something went wrong when we try to insert argument
     ignore_result!(PRCTL_ARGS.insert(&bpf_task_tracking_id(), &args, 0));
 
     return Ok(());
@@ -50,10 +50,9 @@ pub fn sys_exit_prctl(ctx: TracePointContext) -> u32 {
 #[inline(always)]
 unsafe fn try_exit_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
     let exit_args = SysExitArgs::from_context(ctx)?;
+    let key = bpf_task_tracking_id();
 
-    let entry_args = PRCTL_ARGS
-        .get(&bpf_task_tracking_id())
-        .ok_or(error::MapError::GetFailure)?;
+    let entry_args = PRCTL_ARGS.get(&key).ok_or(error::MapError::GetFailure)?;
 
     alloc::init()?;
     let event = alloc::alloc_zero::<PrctlEvent>()?;
@@ -69,6 +68,9 @@ unsafe fn try_exit_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
     event.data.success = exit_args.ret != -1;
 
     pipe_event(ctx, event);
+
+    // cleanup prctl arguments no need to handle failure
+    ignore_result!(PRCTL_ARGS.remove(&key));
 
     return Ok(());
 }
