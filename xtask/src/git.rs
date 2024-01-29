@@ -1,7 +1,9 @@
 use anyhow::anyhow;
 use std::path::Path;
 
-pub fn last_commit_id(repo: &str, branch: &str) -> Result<String, anyhow::Error> {
+pub fn last_commit_id<S: AsRef<str>>(repo: S, branch: S) -> Result<String, anyhow::Error> {
+    let repo = repo.as_ref();
+    let branch = branch.as_ref();
     let output = std::process::Command::new("git")
         .arg("ls-remote")
         .arg(repo)
@@ -17,7 +19,8 @@ pub fn last_commit_id(repo: &str, branch: &str) -> Result<String, anyhow::Error>
     Ok(s.split_whitespace().collect::<Vec<&str>>()[0].into())
 }
 
-pub fn reset<P: AsRef<Path>>(repo: &str, outdir: P) -> Result<(), anyhow::Error> {
+pub fn reset<S: AsRef<str>, P: AsRef<Path>>(repo: S, outdir: P) -> Result<(), anyhow::Error> {
+    let repo = repo.as_ref();
     let status = std::process::Command::new("git")
         .current_dir(outdir)
         .arg("reset")

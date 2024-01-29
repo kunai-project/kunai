@@ -83,13 +83,16 @@ fn main() -> Result<(), anyhow::Error> {
 
             // bpf-linker related variables
             let linker_dir = bt_root.join("bpf-linker");
-            // linker branch supporting Debug Information (DI)
-            // it is here a fork of Aya's bpf-linker, it is the only way to be sure
-            // commit id is valid as Aya's repos are often rebased
-            let linker_repo = "https://github.com/0xrawsec/bpf-linker";
-            let linker_branch = "feature/fix-di";
-            // be carefull of rebased repository while taking commits
-            let linker_commit = "ef91ad89c0ce8a66d998bde1e97526eb46501e36";
+
+            // handling specific linker commit
+            let linker_commit = {
+                // if bpf_linker_commit == last we fetch last commit
+                if opts.bpf_linker_commit.as_str() == "last" {
+                    git::last_commit_id(&opts.bpf_linker_repo, &opts.bpf_linker_branch)?
+                } else {
+                    opts.bpf_linker_commit.clone()
+                }
+            };
 
             if opts.action_cache_key {
                 print!(
@@ -131,12 +134,20 @@ fn main() -> Result<(), anyhow::Error> {
             if linker_dir.is_dir() {
                 println!("Resetting linker directory");
                 // we hacked Cargo.toml so we don't want this to block our git command
-                git::reset(linker_repo, &linker_dir)?;
+                git::reset(&opts.bpf_linker_repo, &linker_dir)?;
             }
 
-            println!("Synchronizing repo:{linker_repo} branch:{linker_branch}");
+            println!(
+                "Synchronizing repo:{} branch:{}",
+                &opts.bpf_linker_repo, &opts.bpf_linker_branch
+            );
             // we should rarely need more than 10 commits back
-            git::sync(linker_branch, linker_repo, &linker_dir, 10)?;
+            git::sync(
+                &opts.bpf_linker_branch,
+                &opts.bpf_linker_repo,
+                &linker_dir,
+                10,
+            )?;
 
             println!("Checking out to commit: {linker_commit}");
             git::checkout(&linker_dir, linker_commit)?;
