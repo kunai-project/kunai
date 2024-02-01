@@ -372,14 +372,39 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn get_hashes_with_ns(&mut self, ns: Namespace, p: &kunai_common::path::Path) -> Hashes {
-        match self.cache.get_or_cache_in_ns(ns, p) {
-            Ok(h) => h,
-            Err(e) => Hashes {
+    fn get_hashes_with_ns(
+        &mut self,
+        ns: Option<Namespace>,
+        p: &kunai_common::path::Path,
+    ) -> Hashes {
+        if let Some(ns) = ns {
+            match self.cache.get_or_cache_in_ns(ns, p) {
+                Ok(h) => h,
+                Err(e) => Hashes {
+                    file: p.to_path_buf(),
+                    error: Some(format!("{e}")),
+                    ..Default::default()
+                },
+            }
+        } else {
+            Hashes {
                 file: p.to_path_buf(),
-                error: Some(format!("{e}")),
+                error: Some("unknown namespace".into()),
                 ..Default::default()
-            },
+            }
+        }
+    }
+
+    #[inline(always)]
+    /// method acting as a central place to get the mnt namespace of a
+    /// task and printing out an error if not found
+    fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Namespace> {
+        match ei.process.namespaces {
+            Some(ns) => Some(Namespace::mnt(ns.mnt)),
+            None => {
+                error!("task namespace must be known");
+                None
+            }
         }
     }
 
@@ -391,18 +416,18 @@ impl EventProcessor {
     ) -> UserEvent<ExecveData> {
         let ancestors = self.get_ancestors(&info);
 
-        let mnt_ns = Namespace::mnt(event.info.process.namespaces.mnt);
+        let opt_mnt_ns = Self::task_mnt_ns(&event.info);
 
         let mut data = ExecveData {
             ancestors: ancestors.join("|"),
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
-            exe: self.get_hashes_with_ns(mnt_ns, &event.data.executable),
+            exe: self.get_hashes_with_ns(opt_mnt_ns, &event.data.executable),
             interpreter: None,
         };
 
         if event.data.executable != event.data.interpreter {
-            data.interpreter = Some(self.get_hashes_with_ns(mnt_ns, &event.data.interpreter))
+            data.interpreter = Some(self.get_hashes_with_ns(opt_mnt_ns, &event.data.interpreter))
         }
 
         UserEvent::new(data, info)
@@ -456,8 +481,8 @@ impl EventProcessor {
         event: &bpf_events::MmapExecEvent,
     ) -> UserEvent<kunai::events::MmapExecData> {
         let filename = event.data.filename;
-        let mnt_ns = Namespace::mnt(event.info.process.namespaces.mnt);
-        let mmapped_hashes = self.get_hashes_with_ns(mnt_ns, &filename);
+        let opt_mnt_ns = Self::task_mnt_ns(&event.info);
+        let mmapped_hashes = self.get_hashes_with_ns(opt_mnt_ns, &filename);
 
         let ck = info.task_key();
 
@@ -839,12 +864,12 @@ impl EventProcessor {
 
     #[inline]
     fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
-        let mnt_ns = Namespace::mnt(info.info.process.namespaces.mnt);
-        self.get_hashes_with_ns(mnt_ns, &event.data.path);
+        let opt_mnt_ns = Self::task_mnt_ns(&info.info);
+        self.get_hashes_with_ns(opt_mnt_ns, &event.data.path);
     }
 
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
-        let mnt_ns = Namespace::mnt(i.process.namespaces.mnt);
+        let opt_mnt_ns = Self::task_mnt_ns(&i);
 
         let std_info = StdEventInfo::from_bpf(i, self.random);
 
@@ -857,11 +882,13 @@ impl EventProcessor {
 
         let mut container = None;
 
-        if mnt_ns != self.system_info.mount_ns {
-            container = Some(kunai::info::ContainerInfo {
-                name: self.cache.get_hostname(mnt_ns).unwrap_or("?".into()),
-                ty: cd.and_then(|cd| cd.container),
-            });
+        if let Some(mnt_ns) = opt_mnt_ns {
+            if mnt_ns != self.system_info.mount_ns {
+                container = Some(kunai::info::ContainerInfo {
+                    name: self.cache.get_hostname(mnt_ns).unwrap_or("?".into()),
+                    ty: cd.and_then(|cd| cd.container),
+                });
+            }
         }
 
         std_info.with_additional_info(AdditionalInfo { host, container })
@@ -949,10 +976,16 @@ impl EventProcessor {
         }
 
         let pid = i.process.tgid;
-        let ns = Namespace::mnt(i.process.namespaces.mnt);
 
-        if let Err(e) = self.cache.cache_ns(pid, ns) {
-            debug!("failed to cache namespace pid={pid} ns={ns}: {e}");
+        if let Some(ns) = i.process.namespaces {
+            let mnt = Namespace::mnt(ns.mnt);
+            if let Err(e) = self.cache.cache_ns(pid, mnt) {
+                debug!("failed to cache namespace pid={pid} ns={mnt}: {e}");
+            }
+        } else {
+            // the few cases where we expect namespaces to be unknown
+            // is for parent's task
+            error!("namespaces are supposed to be known for task")
         }
 
         let std_info = self.build_std_event_info(*i);

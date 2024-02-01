@@ -93,7 +93,7 @@ pub struct TaskSection {
     guuid: String,
     uid: u32,
     gid: u32,
-    namespaces: NamespaceInfo,
+    namespaces: Option<NamespaceInfo>,
     #[serde(serialize_with = "serialize_to_hex")]
     flags: u32,
 }
@@ -107,7 +107,10 @@ impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
             guuid: value.tg_uuid.into_uuid().hyphenated().to_string(),
             uid: value.uid,
             gid: value.gid,
-            namespaces: value.namespaces.into(),
+            namespaces: match value.namespaces {
+                Some(ns) => Some(ns.into()),
+                _ => None,
+            },
             flags: value.flags,
         }
     }
