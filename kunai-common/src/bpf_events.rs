@@ -186,7 +186,7 @@ pub struct TaskInfo {
     pub pid: i32,
     // task group uuid -> used to group tasks
     pub tg_uuid: TaskUuid,
-    pub namespaces: Namespaces,
+    pub namespaces: Option<Namespaces>,
     pub start_time: u64,
 }
 
@@ -226,7 +226,7 @@ bpf_target_code! {
         GroupLeaderMissing,
         #[error("comm field is missing")]
         CommMissing,
-        #[error("mnt_namespace")]
+        #[error("failed to get mnt_namespace")]
         MntNamespaceFailure,
     }
 
@@ -263,7 +263,15 @@ bpf_target_code! {
             self.uid = task.cred().ok_or(Error::CredFieldMissing)?.uid();
             self.gid = task.cred().ok_or(Error::CredFieldMissing)?.gid();
 
-            self.namespaces.mnt = core_read_kernel!(task, nsproxy, mnt_ns, ns, inum).ok_or(Error::MntNamespaceFailure)?;
+            if let Some(nsproxy) = core_read_kernel!(task, nsproxy){
+                // it may happen that under some very specific conditions nsproxy
+                // gets null (see https://github.com/kunai-project/kunai/issues/34)
+                if !nsproxy.is_null(){
+                    self.namespaces = Some(
+                        Namespaces { mnt: core_read_kernel!(nsproxy, mnt_ns, ns, inum).ok_or(Error::MntNamespaceFailure)? }
+                    );
+                }
+            }
 
             Ok(())
         }
