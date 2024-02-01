@@ -81,6 +81,9 @@ impl BuildOptions {
             .iter()
             .for_each(|link_arg| rustflags.push(format!("-C link-arg={link_arg}")));
 
+        // enable BTF emission
+        rustflags.push("-C link-arg=--btf".into());
+
         rustflags
     }
 

@@ -19,7 +19,7 @@ pub struct Options {
     #[clap(long)]
     pub update: bool,
     /// fetch bpf-linker from this repo
-    #[clap(default_value = "https://github.com/0xrawsec/bpf-linker", long)]
+    #[clap(default_value = "https://github.com/kunai-project/bpf-linker", long)]
     pub bpf_linker_repo: String,
     /// fetch this branch of bpf-linker repo
     // linker branch supporting Debug Information (DI)
@@ -28,7 +28,7 @@ pub struct Options {
     /// fetch this commit of bpf-linker, specify "last" to fetch
     /// the last commit
     // be carefull of rebased repository while taking commits
-    #[clap(default_value = "ef91ad89c0ce8a66d998bde1e97526eb46501e36", long)]
+    #[clap(default_value = "c421e588883eae057dc147728a7bdcc38bf087b1", long)]
     pub bpf_linker_commit: String,
 
     /// target to build the build-tools for
