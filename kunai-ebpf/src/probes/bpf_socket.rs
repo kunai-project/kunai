@@ -3,11 +3,18 @@ use kunai_common::{co_re::sock_fprog_kern, net::SocketInfo};
 
 use super::*;
 
+#[kprobe(name = "sk.enter.__sk_attach_prog")]
+pub fn enter_sk_attach_prog(ctx: ProbeContext) -> u32 {
+    unsafe { ignore_result!(ProbeFn::sk_sk_attach_prog.save_ctx(&ctx)) }
+    0
+}
+
 #[kretprobe(name = "sk.exit.__sk_attach_prog")]
 pub fn exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
-    match unsafe {
-        restore_entry_ctx(ProbeFn::__sk_attach_prog)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
+    let rc = match unsafe {
+        ProbeFn::sk_sk_attach_prog
+            .restore_ctx()
+            .map_err(ProbeError::from)
             .and_then(|entry_ctx| {
                 let entry_ctx = &entry_ctx.probe_context();
 
@@ -22,14 +29,24 @@ pub fn exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
             log_err!(&exit_ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    // we cleanup entry context
+    ignore_result!(unsafe { ProbeFn::sk_sk_attach_prog.clean_ctx() });
+    rc
+}
+
+#[kprobe(name = "sk.enter.reuseport_attach_prog")]
+pub fn enter_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
+    unsafe { ignore_result!(ProbeFn::sk_reuseport_attach_prog.save_ctx(&ctx)) }
+    0
 }
 
 #[kretprobe(name = "sk.exit.reuseport_attach_prog")]
 pub fn exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
-    match unsafe {
-        restore_entry_ctx(ProbeFn::reuseport_attach_prog)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
+    let rc = match unsafe {
+        ProbeFn::sk_reuseport_attach_prog
+            .restore_ctx()
+            .map_err(ProbeError::from)
             .and_then(|entry_ctx| {
                 let entry_ctx = &entry_ctx.probe_context();
 
@@ -44,7 +61,10 @@ pub fn exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
             log_err!(&exit_ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    // we cleanup entry context
+    ignore_result!(unsafe { ProbeFn::sk_reuseport_attach_prog.clean_ctx() });
+    rc
 }
 
 #[inline(always)]

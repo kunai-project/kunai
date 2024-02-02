@@ -1,67 +1,112 @@
-use aya_bpf::{
-    bindings::pt_regs, helpers::gen::bpf_probe_read_kernel, macros::*, maps::LruHashMap,
-    programs::ProbeContext,
-};
-use core::mem::MaybeUninit;
+use aya_bpf::{bindings::pt_regs, macros::*, maps::LruHashMap, programs::ProbeContext};
+
 use kunai_common::bpf_utils::bpf_task_tracking_id;
+use kunai_macros::{BpfError, StrEnum};
 
 #[map]
-static mut SAVED_CTX: LruHashMap<u128, KProbeEntryContext> = LruHashMap::with_max_entries(4096, 0);
+static mut SAVED_CTX: LruHashMap<CtxKey, KProbeEntryContext> =
+    LruHashMap::with_max_entries(4096, 0);
 
-pub unsafe fn save_context(pfn: ProbeFn, ts: u64, ctx: &ProbeContext) -> Result<(), i64> {
-    SAVED_CTX.insert(&pfn.uuid(), &KProbeEntryContext::new(pfn, ts, ctx.regs), 0)
-}
-
-#[allow(dead_code)]
-/// this function can be used to save context when using kprobe to hook into syscalls
-pub unsafe fn save_syscall_context(pfn: ProbeFn, ts: u64, ctx: &ProbeContext) -> Result<(), i64> {
-    let p_regs: *mut pt_regs = ctx.arg(0).ok_or(-1)?;
-
-    let mut reg: MaybeUninit<pt_regs> = MaybeUninit::uninit();
-
-    let ret = bpf_probe_read_kernel(
-        reg.as_mut_ptr() as *mut _,
-        core::mem::size_of::<pt_regs>() as u32,
-        p_regs as *const _,
-    );
-
-    if ret == 0 {
-        return SAVED_CTX.insert(
-            &pfn.uuid(),
-            &KProbeEntryContext::new(pfn, ts, reg.as_mut_ptr()),
-            0,
-        );
-    }
-
-    Err(-1)
-}
-
-pub unsafe fn restore_entry_ctx(pfn: ProbeFn) -> Option<&'static mut KProbeEntryContext> {
-    let ctx = SAVED_CTX.get_ptr_mut(&pfn.uuid())?;
-    Some(&mut (*ctx))
-}
+#[map]
+// u8 limits the maximum depth, we decide to support (here 255) after that we will reuse old entries
+// it should not be a big deal as anyway old saved ctx will be reused because SAVED_CTX is a LruHashMap
+static mut FN_DEPTH: LruHashMap<u128, u8> = LruHashMap::with_max_entries(8192, 0);
 
 // in order to save ctx in the same map for several kinds of probes
 // we need to have a fix id between kprobe and kretprobes. The
-// only way (I found) to do that is to set a enum that must be used
+// only way (I found) to do that is to set an enum that must be used
 // in the two kinds of probes
-#[repr(u64)]
-#[derive(Clone, Copy)]
+#[repr(u32)]
+#[derive(Clone, Copy, StrEnum)]
 #[allow(non_camel_case_types)]
 pub enum ProbeFn {
-    vfs_read,
-    __sys_recvfrom,
-    __sys_recvmsg,
-    __sys_connect,
-    security_sb_mount,
-    __sk_attach_prog,
-    reuseport_attach_prog,
-    kernel_clone,
+    dns_vfs_read,
+    dns_sys_recv_from,
+    net_dns_sys_recvmsg,
+    net_sys_connect,
+    fs_security_sb_mount,
+    sk_sk_attach_prog,
+    sk_reuseport_attach_prog,
+    clone_kernel_clone,
     security_path_unlink,
 }
 
+#[derive(BpfError)]
+pub enum Error {
+    #[error("failed to insert ctx")]
+    CtxInsert,
+    #[error("failed to get ctx")]
+    CtxGet,
+    #[error("failed to insert fn depth")]
+    DepthInsert,
+    #[error("failed to get fn depth")]
+    DepthGet,
+}
+
+#[repr(C)]
+struct CtxKey {
+    func: ProbeFn,
+    depth: u32,
+    task_tracking_id: u64,
+}
+
 impl ProbeFn {
-    pub unsafe fn uuid(&self) -> u128 {
+    #[inline(always)]
+    unsafe fn ctx_key(&self, depth: u8) -> CtxKey {
+        CtxKey {
+            func: *self,
+            task_tracking_id: bpf_task_tracking_id(),
+            depth: depth as u32,
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn get_depth(&self) -> Option<u8> {
+        if let Some(d) = FN_DEPTH.get(&self.depth_key()) {
+            return Some(*d);
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub unsafe fn save_ctx(&self, ctx: &ProbeContext) -> Result<(), Error> {
+        let depth = self.get_depth().unwrap_or(0).wrapping_add(1);
+
+        let k = self.ctx_key(depth);
+        SAVED_CTX
+            .insert(&k, &KProbeEntryContext::new(*self, ctx.regs), 0)
+            .map_err(|_| Error::CtxInsert)?;
+
+        self.update_depth(depth)
+    }
+
+    #[inline(always)]
+    pub unsafe fn restore_ctx(&self) -> Result<&'static mut KProbeEntryContext, Error> {
+        let depth = self.get_depth().ok_or(Error::DepthGet)?;
+        let k = self.ctx_key(depth);
+        let ctx = SAVED_CTX.get_ptr_mut(&k).ok_or(Error::CtxGet)?;
+        Ok(&mut (*ctx))
+    }
+
+    #[inline(always)]
+    pub unsafe fn clean_ctx(&self) -> Result<(), Error> {
+        let depth = self.get_depth().ok_or(Error::DepthGet)?;
+        // this is not a big deal if we fail at removing the context
+        // as it probably means it's already been replaced by a newer entry
+        let _ = SAVED_CTX.remove(&self.ctx_key(depth));
+        // we decrement depth and update map
+        self.update_depth(depth.wrapping_sub(1))
+    }
+
+    #[inline(always)]
+    unsafe fn update_depth(&self, depth: u8) -> Result<(), Error> {
+        FN_DEPTH
+            .insert(&self.depth_key(), &depth, 0)
+            .map_err(|_| Error::DepthInsert)
+    }
+
+    #[inline(always)]
+    pub unsafe fn depth_key(&self) -> u128 {
         core::mem::transmute([bpf_task_tracking_id(), *self as u64])
     }
 }
@@ -70,22 +115,17 @@ impl ProbeFn {
 pub struct KProbeEntryContext {
     pub ty: ProbeFn,
     pub regs: pt_regs,
-    pub timestamp: u64,
 }
 
 impl KProbeEntryContext {
     #[inline(always)]
-    pub unsafe fn new(ty: ProbeFn, timestamp: u64, regs: *mut pt_regs) -> Self {
-        Self {
-            ty,
-            regs: *regs,
-            timestamp,
-        }
+    pub unsafe fn new(ty: ProbeFn, regs: *mut pt_regs) -> Self {
+        Self { ty, regs: *regs }
     }
 
     #[inline(always)]
     pub unsafe fn uuid(&self) -> u128 {
-        self.ty.uuid()
+        self.ty.depth_key()
     }
 
     #[inline(always)]

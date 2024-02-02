@@ -1,17 +1,27 @@
 use super::*;
 
 use aya_bpf::cty::c_int;
+
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::ProbeContext;
 
 #[map]
 static mut MOUNT_EVENTS: LruHashMap<u128, MountEvent> = LruHashMap::with_max_entries(1024, 0);
 
+#[kprobe(name = "fs.enter.security_sb_mount")]
+pub fn enter_path_mount(ctx: ProbeContext) -> u32 {
+    unsafe {
+        ignore_result!(ProbeFn::fs_security_sb_mount.save_ctx(&ctx));
+    }
+    0
+}
+
 #[kretprobe(name = "fs.exit.security_sb_mount")]
 pub fn exit_security_sb_mount(ctx: ProbeContext) -> u32 {
     match unsafe {
-        restore_entry_ctx(ProbeFn::security_sb_mount)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
+        ProbeFn::fs_security_sb_mount
+            .restore_ctx()
+            .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_security_sb_mount(ent_ctx, &ctx))
     } {
         Ok(_) => error::BPF_PROG_SUCCESS,
@@ -60,9 +70,10 @@ unsafe fn try_exit_security_sb_mount(
 // path_mount is available only since 5.9 before that do_mount must be hooked
 #[kretprobe(name = "fs.exit.path_mount")]
 pub fn exit_path_mount(ctx: ProbeContext) -> u32 {
-    match unsafe {
-        restore_entry_ctx(ProbeFn::security_sb_mount)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
+    let rc = match unsafe {
+        ProbeFn::fs_security_sb_mount
+            .restore_ctx()
+            .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_path_mount(ent_ctx, &ctx))
     } {
         Ok(_) => error::BPF_PROG_SUCCESS,
@@ -70,7 +81,11 @@ pub fn exit_path_mount(ctx: ProbeContext) -> u32 {
             log_err!(&ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    // we cleanup only at the end of path_mount to let security_sb_mount available
+    // for exit_path_mount probe
+    ignore_result!(unsafe { ProbeFn::fs_security_sb_mount.clean_ctx() });
+    rc
 }
 
 #[inline(always)]

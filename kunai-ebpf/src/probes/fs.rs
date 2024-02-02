@@ -221,7 +221,7 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
     // as vfs_unlink can be reached without security_path_unlink being called
     // we report error when insertion is failing
     PATHS
-        .insert(&ProbeFn::security_path_unlink.uuid(), &p, 0)
+        .insert(&ProbeFn::security_path_unlink.depth_key(), &p, 0)
         .map_err(|_| MapError::InsertFailure)?;
 
     Ok(())
@@ -250,7 +250,7 @@ unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 
     e.init_from_current_task(Type::FileUnlink)?;
 
-    let path_key = ProbeFn::security_path_unlink.uuid();
+    let path_key = ProbeFn::security_path_unlink.depth_key();
     if let Some(p) = PATHS.get(&path_key) {
         e.data.path.copy_from(&p);
         // make some room in the cache

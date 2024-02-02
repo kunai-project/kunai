@@ -79,23 +79,33 @@ impl SockHelper {
     }
 }
 
+#[kprobe(name = "net.dns.enter.vfs_read")]
+pub fn enter_vfs_read(ctx: ProbeContext) -> u32 {
+    unsafe { ignore_result!(ProbeFn::dns_vfs_read.save_ctx(&ctx)) };
+    0
+}
+
 #[kretprobe(name = "net.dns.exit.vfs_read")]
 pub fn exit_vfs_read(ctx: ProbeContext) -> u32 {
-    match unsafe { try_exit_vfs_read(&ctx) } {
+    let rc = match unsafe { try_exit_vfs_read(&ctx) } {
         Ok(_) => error::BPF_PROG_SUCCESS,
         Err(s) => {
             log_err!(&ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    // we cleanup saved entry context
+    ignore_result!(unsafe { ProbeFn::dns_vfs_read.clean_ctx() });
+    rc
 }
 
 #[inline(always)]
 unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     let rc = ctx.ret().unwrap_or(-1);
 
-    let entry_ctx =
-        restore_entry_ctx(ProbeFn::vfs_read).ok_or(ProbeError::KProbeCtxRestoreFailure)?;
+    let entry_ctx = ProbeFn::dns_vfs_read
+        .restore_ctx()
+        .map_err(ProbeError::from)?;
     let saved_ctx = entry_ctx.probe_context();
 
     let file = co_re::file::from_ptr(kprobe_arg!(&saved_ctx, 0)?);
@@ -116,11 +126,18 @@ unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+#[kprobe(name = "net.dns.enter.__sys_recvfrom")]
+pub fn enter_recv(ctx: ProbeContext) -> u32 {
+    unsafe { ignore_result!(ProbeFn::dns_sys_recv_from.save_ctx(&ctx)) }
+    0
+}
+
 #[kretprobe(name = "net.dns.exit.__sys_recvfrom")]
 pub fn exit_recv(ctx: ProbeContext) -> u32 {
-    match unsafe {
-        restore_entry_ctx(ProbeFn::__sys_recvfrom)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
+    let rc = match unsafe {
+        ProbeFn::dns_sys_recv_from
+            .restore_ctx()
+            .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_recv(ent_ctx, &ctx))
     } {
         Ok(_) => error::BPF_PROG_SUCCESS,
@@ -128,7 +145,9 @@ pub fn exit_recv(ctx: ProbeContext) -> u32 {
             log_err!(&ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    ignore_result!(unsafe { ProbeFn::dns_sys_recv_from.clean_ctx() });
+    rc
 }
 
 #[inline(always)]
@@ -164,11 +183,18 @@ unsafe fn try_exit_recv(
     Ok(())
 }
 
+#[kprobe(name = "net.dns.enter.__sys_recvmsg")]
+pub fn enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
+    unsafe { ignore_result!(ProbeFn::net_dns_sys_recvmsg.save_ctx(&ctx)) }
+    0
+}
+
 #[kretprobe(name = "net.dns.exit.__sys_recvmsg")]
 pub fn exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
-    match unsafe {
-        restore_entry_ctx(ProbeFn::__sys_recvmsg)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
+    let rc = match unsafe {
+        ProbeFn::net_dns_sys_recvmsg
+            .restore_ctx()
+            .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_recvmsg(ent_ctx, &ctx))
     } {
         Ok(_) => error::BPF_PROG_SUCCESS,
@@ -176,7 +202,10 @@ pub fn exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
             log_err!(&ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    // we cleanup saved entry context
+    ignore_result!(unsafe { ProbeFn::net_dns_sys_recvmsg.clean_ctx() });
+    rc
 }
 
 #[inline(always)]

@@ -42,8 +42,8 @@ pub fn configure_probes(programs: &mut Programs, target: KernelVersion) {
     // kernel function name changed above 5.9
     // kernel_clone -> _do_fork
     programs
-        .expect_mut("kprobe.enter.kernel_clone")
-        .rename_if(target < kernel!(5, 9), "kprobe.enter._do_fork");
+        .expect_mut("clone.enter.kernel_clone")
+        .rename_if(target < kernel!(5, 9), "clone.enter._do_fork");
 
     // path_mount -> do_mount
     programs

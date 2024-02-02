@@ -3,21 +3,33 @@ use kunai_common::co_re::{kernel_clone_args, task_struct};
 
 use super::*;
 
-#[kprobe(name = "enter.wake_up_new_task")]
+#[kprobe(name = "clone.enter.kernel_clone")]
+pub fn enter_kernel_clone(ctx: ProbeContext) -> u32 {
+    unsafe {
+        ignore_result!(ProbeFn::clone_kernel_clone.save_ctx(&ctx));
+    }
+    0
+}
+
+#[kprobe(name = "clone.enter.wake_up_new_task")]
 pub fn enter_wake_up_new_task(ctx: ProbeContext) -> u32 {
-    match unsafe { try_enter_wake_up_new_task(&ctx) } {
+    let rc = match unsafe { try_enter_wake_up_new_task(&ctx) } {
         Ok(_) => error::BPF_PROG_SUCCESS,
         Err(s) => {
             log_err!(&ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    // we cleanup saved context
+    ignore_result!(unsafe { ProbeFn::clone_kernel_clone.clean_ctx() });
+    rc
 }
 
 unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
     // makes sure we are inside kernel_clone
-    if let Ok(entry_ctx) = restore_entry_ctx(ProbeFn::kernel_clone)
-        .ok_or(ProbeError::KProbeCtxRestoreFailure)
+    if let Ok(entry_ctx) = ProbeFn::clone_kernel_clone
+        .restore_ctx()
+        .map_err(ProbeError::from)
         .and_then(|c| Ok(c.probe_context()))
     {
         let clone_args = kernel_clone_args::from_ptr(kprobe_arg!(&entry_ctx, 0)?);
