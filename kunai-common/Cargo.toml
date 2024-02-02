@@ -18,7 +18,7 @@ user = [
 ]
 
 [build-dependencies]
-bindgen = "0.66"
+bindgen = "0.69.2"
 
 [dependencies]
 # Non Aya deps
