@@ -1,5 +1,6 @@
 use crate::alloc;
 use crate::maps;
+use crate::util;
 
 use aya_log_ebpf::error;
 use kunai_common::bpf_events;
@@ -39,8 +40,6 @@ pub enum ProbeError {
     CoReFieldMissing,
     #[error("failed to get kprobe arg")]
     KProbeArgFailure,
-    #[error("failed to restore kprobe context")]
-    KProbeCtxRestoreFailure,
     #[wrap]
     BpfMapError(MapError),
     #[wrap]
@@ -61,6 +60,8 @@ pub enum ProbeError {
     EventError(bpf_events::Error),
     #[wrap]
     CgroupError(cgroup::Error),
+    #[wrap]
+    KprobeCtxError(util::Error),
 }
 
 /// log a ProbeError using Aya log
@@ -138,6 +139,12 @@ impl From<bpf_events::Error> for ProbeError {
 impl From<cgroup::Error> for ProbeError {
     fn from(value: cgroup::Error) -> Self {
         Self::CgroupError(value)
+    }
+}
+
+impl From<util::Error> for ProbeError {
+    fn from(value: util::Error) -> Self {
+        Self::KprobeCtxError(value)
     }
 }
 

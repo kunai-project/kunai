@@ -184,7 +184,9 @@ impl<'a> Programs<'a> {
     }
 
     pub fn expect_mut<S: AsRef<str>>(&mut self, name: S) -> &mut Program<'a> {
-        self.m.get_mut(name.as_ref()).expect("missing probe")
+        self.m
+            .get_mut(name.as_ref())
+            .expect(&format!("missing probe {}", name.as_ref()))
     }
 
     pub fn into_vec_sorted_by_prio(self) -> Vec<(String, Program<'a>)> {

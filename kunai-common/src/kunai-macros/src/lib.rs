@@ -117,6 +117,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
     };
 
     let mut as_str_arms = vec![];
+    let mut c_str_arms = vec![];
     let mut from_str_arms = vec![];
     let mut try_from_uint_arms = vec![];
     let mut variants = vec![];
@@ -143,6 +144,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
         // we generate a match arm delivering the good error name
         if v.fields.is_empty() {
             as_str_arms.push(quote!(Self::#name => #args,));
+            c_str_arms.push(quote!(Self::#name => concat!(#args, '\0'),));
             from_str_arms.push(quote!(#args => Ok(Self::#name),));
             variants.push(quote!(Self::#name));
             try_from_uint_arms.push(quote!(ty if Self::#name as u64 == ty => Ok(Self::#name),));
@@ -193,6 +195,13 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
             pub const fn as_str(&self) -> &'static str{
                 match self {
                     #(#as_str_arms)*
+                }
+            }
+
+            #[inline(always)]
+            pub const fn as_str_with_null(&self) -> &'static str{
+                match self {
+                    #(#c_str_arms)*
                 }
             }
         }

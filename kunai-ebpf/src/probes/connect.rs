@@ -1,25 +1,20 @@
 use super::*;
 
-use aya_bpf::{helpers::bpf_ktime_get_ns, programs::ProbeContext};
+use aya_bpf::programs::ProbeContext;
 use kunai_common::net::IpPort;
 
 #[kprobe(name = "net.enter.__sys_connect")]
 pub fn enter_sys_connect(ctx: ProbeContext) -> u32 {
-    unsafe {
-        ignore_result!(save_context(
-            ProbeFn::__sys_connect,
-            bpf_ktime_get_ns(),
-            &ctx
-        ))
-    }
+    unsafe { ignore_result!(ProbeFn::net_sys_connect.save_ctx(&ctx)) }
     0
 }
 
 #[kretprobe(name = "net.exit.__sys_connect")]
 pub fn exit_sys_connect(ctx: ProbeContext) -> u32 {
-    match unsafe {
-        restore_entry_ctx(ProbeFn::__sys_connect)
-            .ok_or(ProbeError::KProbeCtxRestoreFailure)
+    let rc = match unsafe {
+        ProbeFn::net_sys_connect
+            .restore_ctx()
+            .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_connect(ent_ctx, &ctx))
     } {
         Ok(_) => error::BPF_PROG_SUCCESS,
@@ -27,7 +22,9 @@ pub fn exit_sys_connect(ctx: ProbeContext) -> u32 {
             log_err!(&ctx, s);
             error::BPF_PROG_FAILURE
         }
-    }
+    };
+    ignore_result!(unsafe { ProbeFn::net_sys_connect.clean_ctx() });
+    rc
 }
 
 const EINPROGRESS: i32 = 115;
