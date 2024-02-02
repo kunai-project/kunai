@@ -3,6 +3,7 @@ use gene::FieldGetter;
 use kunai_common::cgroup::Cgroup;
 use kunai_macros::StrEnum;
 use serde::{Deserialize, Serialize};
+use std::path::{self};
 
 #[derive(StrEnum, Debug, PartialEq, Clone, Copy)]
 pub enum Container {
@@ -65,18 +66,15 @@ impl FieldGetter for Container {
 }
 
 impl Container {
-    #[inline]
-    pub fn from_cgroup(cgrp: &Cgroup) -> Option<Container> {
-        let s: Vec<String> = cgrp.to_vec();
-
-        if let Some(last) = s.last() {
-            if last.starts_with("docker-") {
+    fn from_split_cgroup<S: AsRef<str>>(cgroup: Vec<S>) -> Option<Container> {
+        if let Some(last) = cgroup.last() {
+            if last.as_ref().starts_with("docker-") {
                 return Some(Container::Docker);
             }
         }
 
-        if let Some(first) = s.get(1) {
-            if first.starts_with("lxc.payload.") {
+        if let Some(first) = cgroup.get(1) {
+            if first.as_ref().starts_with("lxc.payload.") {
                 return Some(Container::Lxc);
             }
         }
@@ -85,7 +83,22 @@ impl Container {
     }
 
     #[inline]
-    pub fn from_ancestors(ancestors: Vec<String>) -> Option<Container> {
+    pub fn from_cgroup(cgrp: &Cgroup) -> Option<Container> {
+        Self::from_split_cgroup(cgrp.to_vec())
+    }
+
+    #[inline]
+    pub fn from_cgroups(cgroups: &Vec<String>) -> Option<Container> {
+        for c in cgroups {
+            if let Some(c) = Self::from_split_cgroup(c.split(path::MAIN_SEPARATOR).collect()) {
+                return Some(c);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    pub fn from_ancestors(ancestors: &Vec<String>) -> Option<Container> {
         for a in ancestors {
             match a.as_str() {
                 "/usr/bin/firejail" => return Some(Container::Firejail),
