@@ -72,6 +72,8 @@ struct Task {
     flags: u32,
     resolved: HashMap<IpAddr, String>,
     container: Option<Container>,
+    // needs to be vec because of procfs
+    cgroups: Vec<String>,
     parent_key: Option<TaskKey>,
 }
 
@@ -220,6 +222,34 @@ impl EventProcessor {
                 )
             }
         }
+
+        // we try to resolve containers from tasks found in procfs
+        for (tk, pk) in self
+            .tasks
+            .iter()
+            .map(|(&k, v)| (k, v.parent_key))
+            .collect::<Vec<(TaskKey, Option<TaskKey>)>>()
+        {
+            if let Some(parent) = pk {
+                if let Some(t) = self.tasks.get_mut(&tk) {
+                    // trying to find container type in cgroups
+                    t.container = Container::from_cgroups(&t.cgroups);
+                    if t.container.is_some() {
+                        // we don't need to do the ancestor's lookup
+                        continue;
+                    }
+                }
+
+                // lookup in ancestors
+                let ancestors = self.get_ancestors(parent);
+                if let Some(c) = Container::from_ancestors(&ancestors) {
+                    self.tasks
+                        .entry(tk)
+                        .and_modify(|task| task.container = Some(c));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -250,6 +280,14 @@ impl EventProcessor {
             }
         };
 
+        // we gather cgroups
+        let cgroups = p
+            .cgroups()?
+            .0
+            .into_iter()
+            .map(|cg| cg.pathname)
+            .collect::<Vec<String>>();
+
         let task = Task {
             image: image,
             command_line: p.cmdline().unwrap_or(vec!["?".into()]),
@@ -257,6 +295,7 @@ impl EventProcessor {
             flags: stat.flags,
             resolved: HashMap::new(),
             container: None,
+            cgroups,
             parent_key,
         };
 
@@ -290,15 +329,14 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn get_ancestors(&self, i: &StdEventInfo) -> Vec<String> {
-        let mut tk = i.parent_key();
+    fn get_ancestors(&self, mut parent: TaskKey) -> Vec<String> {
         let mut ancestors = vec![];
         let mut last = None;
 
-        while let Some(task) = self.tasks.get(&tk) {
+        while let Some(task) = self.tasks.get(&parent) {
             last = Some(task);
             ancestors.insert(0, task.image.to_string_lossy().to_string());
-            tk = match task.parent_key {
+            parent = match task.parent_key {
                 Some(v) => v,
                 None => {
                     break;
@@ -317,7 +355,7 @@ impl EventProcessor {
 
     #[inline]
     fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
-        self.get_ancestors(i).join("|")
+        self.get_ancestors(i.parent_key()).join("|")
     }
 
     #[inline]
@@ -414,7 +452,7 @@ impl EventProcessor {
         info: StdEventInfo,
         event: &bpf_events::ExecveEvent,
     ) -> UserEvent<ExecveData> {
-        let ancestors = self.get_ancestors(&info);
+        let ancestors = self.get_ancestors(info.parent_key());
 
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
 
@@ -838,8 +876,8 @@ impl EventProcessor {
         let mut container_type = Container::from_cgroup(&cgroup);
 
         if container_type.is_none() {
-            let ancestors = self.get_ancestors(&info);
-            container_type = Container::from_ancestors(ancestors);
+            let ancestors = self.get_ancestors(info.parent_key());
+            container_type = Container::from_ancestors(&ancestors);
         }
 
         let image = {
@@ -858,6 +896,7 @@ impl EventProcessor {
             flags: info.info.process.flags,
             resolved: HashMap::new(),
             container: container_type,
+            cgroups: vec![cgroup.to_string()],
             parent_key: Some(info.parent_key()),
         });
     }
