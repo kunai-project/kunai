@@ -69,7 +69,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 
     ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
-        |e: &path::Error| error!(ctx, "failed to resolve filename: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve filename: {}", e.description())
     ));
 
     if event.data.path.starts_with("/etc/") {
@@ -83,10 +83,11 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    ignore_result!(inspect_err!(track(&file), |_| error!(
+    ignore_result!(inspect_err!(track(&file), |_| warn!(
         ctx,
         "failed to track file"
     )));
+
     Ok(())
 }
 
@@ -126,7 +127,7 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
 
     ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
-        |e: &path::Error| error!(ctx, "failed to resolve filename: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve filename: {}", e.description())
     ));
 
     if event.data.path.starts_with("/etc/") {
@@ -170,23 +171,23 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
     // parsing old_name
     ignore_result!(inspect_err!(
         event.data.old_name.prepend_dentry(&old_dentry),
-        |e: &path::Error| error!(ctx, "failed to parse old_name dentry: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to parse old_name dentry: {}", e.description())
     ));
 
     ignore_result!(inspect_err!(
         event.data.old_name.core_resolve(&old_dir, MAX_PATH_DEPTH),
-        |e: &path::Error| error!(ctx, "failed to old_dir: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to old_dir: {}", e.description())
     ));
 
     // parsing new_name
     ignore_result!(inspect_err!(
         event.data.new_name.prepend_dentry(&new_dentry),
-        |e: &path::Error| error!(ctx, "failed to parse new_name dentry: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to parse new_name dentry: {}", e.description())
     ));
 
     ignore_result!(inspect_err!(
         event.data.new_name.core_resolve(&new_dir, MAX_PATH_DEPTH),
-        |e: &path::Error| error!(ctx, "failed to resolve new_dir: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve new_dir: {}", e.description())
     ));
 
     pipe_event(ctx, event);

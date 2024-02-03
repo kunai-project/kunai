@@ -60,7 +60,7 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
                 .data
                 .executable
                 .core_resolve_file(&exe_file, MAX_PATH_DEPTH),
-            |e: &path::Error| error!(ctx, "failed to resolve exe: {}", e.description())
+            |e: &path::Error| warn!(ctx, "failed to resolve exe: {}", e.description())
         ));
 
         // we check that arg_start is not a null pointer
@@ -70,14 +70,14 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
                     .data
                     .argv
                     .read_user_at(arg_start as *const u8, arg_len as u32),
-                |_| error!(ctx, "failed to read argv")
+                |_| warn!(ctx, "failed to read argv")
             ));
         }
 
         // cgroup parsing
         let cgroup = core_read_kernel!(new_task, sched_task_group, css, cgroup)?;
         if let Err(e) = event.data.cgroup.resolve(cgroup) {
-            error!(ctx, "failed to resolve cgroup: {}", e.description());
+            warn!(ctx, "failed to resolve cgroup: {}", e.description());
         }
 
         pipe_event(ctx, event)
