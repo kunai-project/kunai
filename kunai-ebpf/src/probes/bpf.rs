@@ -59,10 +59,10 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
         event.data.tag = core_read_kernel!(bpf_prog, tag_array)?;
 
         if let Some(p_name) = bpf_prog_aux.name() {
-            if !p_name.is_null() {
-                // for unclear reason program name sometime fails to be read
-                ignore_result!(event.data.name.read_kernel_str_bytes(p_name));
-            }
+            ignore_result!(inspect_err!(
+                event.data.name.read_kernel_str_bytes(p_name),
+                |_| warn!(ctx, "failed to read program name")
+            ));
         }
 
         event.data.prog_type = bpf_prog.ty().unwrap_or_default();
@@ -79,7 +79,7 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
         if let Some(afn) = bpf_prog_aux.attach_func_name() {
             ignore_result!(inspect_err!(
                 event.data.attached_func_name.read_kernel_str_bytes(afn),
-                |_| error!(ctx, "failed to read attach_func_name")
+                |_| warn!(ctx, "failed to read attach_func_name")
             ));
         }
 

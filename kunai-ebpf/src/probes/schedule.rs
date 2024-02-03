@@ -64,7 +64,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
                 .data
                 .argv
                 .read_user_at(arg_start as *const u8, arg_len as u32),
-            |_| error!(
+            |_| warn!(
                 ctx,
                 "failed to read argv: arg_start=0x{:x} arg_len={}", arg_start, arg_len
             )
@@ -74,7 +74,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
     let exe_file = core_read_kernel!(mm, exe_file)?;
     ignore_result!(inspect_err!(
         event.data.exe.core_resolve_file(&exe_file, MAX_PATH_DEPTH),
-        |e: &path::Error| error!(ctx, "failed to resolve exe: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve exe: {}", e.description())
     ));
 
     if event.data.exe.is_empty() && event.data.argv.is_empty() {
@@ -89,7 +89,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // we do not really care if that is failing
     ignore_result!(inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {
-        error!(ctx, "failed to track task")
+        warn!(ctx, "failed to track task")
     }));
 
     // we send event to userland

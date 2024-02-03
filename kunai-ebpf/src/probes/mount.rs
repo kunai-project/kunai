@@ -51,11 +51,11 @@ unsafe fn try_exit_security_sb_mount(
     event.data.path.core_resolve(&path, MAX_PATH_DEPTH)?;
 
     if let Err(e) = event.data.dev_name.read_kernel_str_bytes(dev_name) {
-        error!(exit, "failed to read dev_name: {} ", e.description());
+        warn!(exit, "failed to read dev_name: {} ", e.description());
     }
 
     if let Err(e) = event.data.ty.read_kernel_str_bytes(typ) {
-        error!(exit, "failed to read dev type: {}", e.description())
+        warn!(exit, "failed to read dev type: {}", e.description())
     }
 
     event.data.rc = rc;
