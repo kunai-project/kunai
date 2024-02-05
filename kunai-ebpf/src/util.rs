@@ -27,7 +27,6 @@ pub enum ProbeFn {
     fs_security_sb_mount,
     sk_sk_attach_prog,
     sk_reuseport_attach_prog,
-    clone_kernel_clone,
     security_path_unlink,
 }
 
