@@ -10,7 +10,7 @@ static mut SAVED_CTX: LruHashMap<CtxKey, KProbeEntryContext> =
 #[map]
 // u8 limits the maximum depth, we decide to support (here 255) after that we will reuse old entries
 // it should not be a big deal as anyway old saved ctx will be reused because SAVED_CTX is a LruHashMap
-static mut FN_DEPTH: LruHashMap<u128, u8> = LruHashMap::with_max_entries(8192, 0);
+static mut FN_DEPTH: LruHashMap<u128, u8> = LruHashMap::with_max_entries(0x1ffff, 0);
 
 // in order to save ctx in the same map for several kinds of probes
 // we need to have a fix id between kprobe and kretprobes. The
