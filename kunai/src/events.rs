@@ -567,17 +567,15 @@ impl IocGetter for SendDataData {
 pub struct InitModuleData {
     pub ancestors: String,
     pub command_line: String,
-    pub exe: PathBuf,
+    pub exe: File,
     pub module_name: String,
     pub args: String,
-    #[serde(serialize_with = "serialize_to_hex")]
-    pub userspace_addr: u64,
     pub loaded: bool,
 }
 
 impl IocGetter for InitModuleData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.to_string_lossy()]
+        vec![self.exe.file.to_string_lossy()]
     }
 }
 

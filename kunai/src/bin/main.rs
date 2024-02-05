@@ -794,10 +794,9 @@ impl EventProcessor {
         let data = InitModuleData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
-            exe,
+            exe: exe.into(),
             module_name: event.data.name.to_string(),
             args: event.data.uargs.to_string(),
-            userspace_addr: event.data.umod,
             loaded: event.data.loaded,
         };
 
