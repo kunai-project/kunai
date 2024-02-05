@@ -39,12 +39,6 @@ pub fn configure_probes(programs: &mut Programs, target: KernelVersion) {
     programs.expect_mut("fd.entry.__fdget").prio = 0;
     programs.expect_mut("fd.exit.__fdget").prio = 10;
 
-    // kernel function name changed above 5.9
-    // kernel_clone -> _do_fork
-    programs
-        .expect_mut("clone.enter.kernel_clone")
-        .rename_if(target < kernel!(5, 9), "clone.enter._do_fork");
-
     // path_mount -> do_mount
     programs
         .expect_mut("fs.exit.path_mount")
