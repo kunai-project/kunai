@@ -35,13 +35,6 @@ unsafe fn try_mod_sysfs_setup(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[repr(C)]
-pub struct InitModuleArgs {
-    pub umod: u64,
-    pub len: u64,
-    pub uargs: u64,
-}
-
 #[tracepoint(name = "lkm.syscalls.sys_enter_init_module")]
 pub fn sys_enter_init_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_init_module(&ctx) } {
@@ -54,17 +47,34 @@ pub fn sys_enter_init_module(ctx: TracePointContext) -> u32 {
 }
 
 unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> {
+    let args = SysEnterArgs::<Init>::from_context(ctx)?.args;
+    handle_init_module(ctx, args.into())
+}
+
+#[tracepoint(name = "lkm.syscalls.sys_enter_finit_module")]
+pub fn sys_enter_finit_module(ctx: TracePointContext) -> u32 {
+    match unsafe { try_sys_enter_finit_module(&ctx) } {
+        Ok(_) => error::BPF_PROG_SUCCESS,
+        Err(s) => {
+            log_err!(&ctx, s);
+            error::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_sys_enter_finit_module(ctx: &TracePointContext) -> ProbeResult<()> {
+    let args = SysEnterArgs::<FInit>::from_context(ctx)?.args;
+    handle_init_module(ctx, args.into())
+}
+
+unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> ProbeResult<()> {
     // initialize allocator
     alloc::init()?;
     let key = bpf_task_tracking_id();
-    let args = SysEnterArgs::<InitModuleArgs>::from_context(ctx)?.args;
+
     let event = alloc::alloc_zero::<InitModuleEvent>()?;
 
     event.init_from_current_task(Type::InitModule)?;
-
-    // setting event data
-    event.data.umod = args.umod;
-    event.data.len = args.len;
 
     // Aya currently reports an error on empty string being read
     // so until Aya is upgraded some errors might pop up while there
@@ -75,8 +85,11 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
         event
             .data
             .uargs
-            .read_user_str_bytes(args.uargs as *const u8)
+            .read_user_str_bytes(args.uargs() as *const u8)
     );
+
+    // setting event data
+    event.data.args = args;
 
     INIT_MODULE_TRACKING
         .insert(&key, event, 0)
@@ -87,6 +100,17 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
 
 #[tracepoint(name = "lkm.syscalls.sys_exit_init_module")]
 pub fn sys_exit_init_module(ctx: TracePointContext) -> u32 {
+    match unsafe { try_sys_exit_init_module(&ctx) } {
+        Ok(_) => error::BPF_PROG_SUCCESS,
+        Err(s) => {
+            log_err!(&ctx, s);
+            error::BPF_PROG_FAILURE
+        }
+    }
+}
+
+#[tracepoint(name = "lkm.syscalls.sys_exit_finit_module")]
+pub fn sys_exit_finit_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_init_module(&ctx) } {
         Ok(_) => error::BPF_PROG_SUCCESS,
         Err(s) => {
