@@ -26,7 +26,9 @@ impl bpf_prog {
     pub unsafe fn tag_array(&self) -> Option<[u8; 8]> {
         let mut out = [0; 8];
         if let Some(tag) = self.tag() {
-            bpf_probe_read_kernel_buf(tag, out.as_mut_slice()).ok()?;
+            if !tag.is_null() {
+                bpf_probe_read_kernel_buf(tag, out.as_mut_slice()).ok()?;
+            }
         }
         Some(out)
     }

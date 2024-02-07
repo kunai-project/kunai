@@ -1,5 +1,6 @@
 use super::*;
 use aya_bpf::programs::TracePointContext;
+use kunai_common::syscalls::SysEnterArgs;
 
 // print fmt: "0x%lx", REC->ret
 // name: sys_enter_mprotect
@@ -25,10 +26,10 @@ pub struct MprotectArgs {
 #[tracepoint(name = "syscalls.sys_enter_mprotect")]
 pub fn mprotect(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_mprotect(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }

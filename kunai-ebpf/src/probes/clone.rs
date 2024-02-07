@@ -4,12 +4,12 @@ use kunai_common::co_re::task_struct;
 use super::*;
 
 #[kprobe(name = "clone.enter.security_task_alloc")]
-pub fn enter_wake_up_new_task(ctx: ProbeContext) -> u32 {
+pub fn security_task_alloc(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_enter_wake_up_new_task(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     rc
@@ -45,7 +45,7 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
             .data
             .executable
             .core_resolve_file(&exe_file, MAX_PATH_DEPTH),
-        |e: &path::Error| warn!(ctx, "failed to resolve exe: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve exe", (*e).into())
     ));
 
     // we check that arg_start is not a null pointer
@@ -55,14 +55,14 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
                 .data
                 .argv
                 .read_user_at(arg_start as *const u8, arg_len as u32),
-            |_| warn!(ctx, "failed to read argv")
+            |_| warn_msg!(ctx, "failed to read argv")
         ));
     }
 
     // cgroup parsing
     let cgroup = core_read_kernel!(new_task, sched_task_group, css, cgroup)?;
     if let Err(e) = event.data.cgroup.resolve(cgroup) {
-        warn!(ctx, "failed to resolve cgroup: {}", e.description());
+        warn!(ctx, "failed to resolve cgroup", e.into());
     }
 
     pipe_event(ctx, event);

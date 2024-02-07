@@ -1,4 +1,4 @@
-use crate::{bpf_target_code, not_bpf_target_code};
+use crate::macros::{bpf_target_code, not_bpf_target_code};
 
 #[repr(C)]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]

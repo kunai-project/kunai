@@ -1,7 +1,10 @@
 use super::*;
 
 use aya_bpf::programs::ProbeContext;
-use kunai_common::net::IpPort;
+use kunai_common::{
+    kprobe::{KProbeEntryContext, ProbeFn},
+    net::IpPort,
+};
 
 #[kprobe(name = "net.enter.__sys_connect")]
 pub fn enter_sys_connect(ctx: ProbeContext) -> u32 {
@@ -17,10 +20,10 @@ pub fn exit_sys_connect(ctx: ProbeContext) -> u32 {
             .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_connect(ent_ctx, &ctx))
     } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     ignore_result!(unsafe { ProbeFn::net_sys_connect.clean_ctx() });

@@ -1,6 +1,6 @@
 use super::*;
-use crate::maps::FdMap;
 use aya_bpf::programs::TracePointContext;
+use kunai_common::{maps::FdMap, syscalls::SysEnterArgs};
 
 // print fmt: "unshare_flags: 0x%08lx", ((unsigned long)(REC->unshare_flags))
 // name: sys_enter_mmap
@@ -32,10 +32,10 @@ pub struct MmapArgs {
 #[tracepoint(name = "syscalls.sys_enter_mmap")]
 pub fn mmap(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_mmap(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -65,7 +65,7 @@ unsafe fn try_sys_enter_mmap(ctx: &TracePointContext) -> ProbeResult<()> {
                 pipe_event(ctx, event);
             }
             None => {
-                error!(ctx, "failed to retrieve path for mmapped fd={}", fd);
+                error_msg!(ctx, "failed to retrieve path for mmapped");
             }
         }
     }

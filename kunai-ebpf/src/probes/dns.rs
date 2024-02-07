@@ -1,12 +1,14 @@
-use crate::maps::FdMap;
-
 use super::*;
 use aya_bpf::{
     cty::{c_int, c_void},
     programs::ProbeContext,
 };
 
-use kunai_common::net::IpPort;
+use kunai_common::{
+    maps::FdMap,
+    net::IpPort,
+    kprobe::{KProbeEntryContext, ProbeFn},
+};
 
 enum Udata {
     Buf(*const c_void, usize),
@@ -88,10 +90,10 @@ pub fn enter_vfs_read(ctx: ProbeContext) -> u32 {
 #[kretprobe(name = "net.dns.exit.vfs_read")]
 pub fn exit_vfs_read(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_exit_vfs_read(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     // we cleanup saved entry context
@@ -140,10 +142,10 @@ pub fn exit_recv(ctx: ProbeContext) -> u32 {
             .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_recv(ent_ctx, &ctx))
     } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     ignore_result!(unsafe { ProbeFn::dns_sys_recv_from.clean_ctx() });
@@ -197,10 +199,10 @@ pub fn exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
             .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_recvmsg(ent_ctx, &ctx))
     } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     // we cleanup saved entry context

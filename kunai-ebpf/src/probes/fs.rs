@@ -4,6 +4,7 @@ use aya_bpf::cty::c_int;
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::ProbeContext;
 use kunai_common::inspect_err;
+use kunai_common::kprobe::ProbeFn;
 
 #[map]
 static mut FILE_TRACKING: LruHashMap<u128, bool> = LruHashMap::with_max_entries(0x1ffff, 0);
@@ -31,10 +32,10 @@ unsafe fn file_id(file: &co_re::file) -> ProbeResult<u128> {
 #[kprobe(name = "fs.vfs_read")]
 pub fn vfs_read(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_read(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -42,10 +43,10 @@ pub fn vfs_read(ctx: ProbeContext) -> u32 {
 #[kprobe(name = "fs.vfs_readv")]
 pub fn vfs_readv(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_read(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -69,7 +70,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 
     ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
-        |e: &path::Error| warn!(ctx, "failed to resolve filename: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve filename", (*e).into())
     ));
 
     if event.data.path.starts_with("/etc/") {
@@ -83,7 +84,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    ignore_result!(inspect_err!(track(&file), |_| warn!(
+    ignore_result!(inspect_err!(track(&file), |_| warn_msg!(
         ctx,
         "failed to track file"
     )));
@@ -94,10 +95,10 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kprobe(name = "fs.vfs_write")]
 pub fn vfs_write(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_write(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -105,10 +106,10 @@ pub fn vfs_write(ctx: ProbeContext) -> u32 {
 #[kprobe(name = "fs.vfs_writev")]
 pub fn vfs_writev(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_write(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -127,7 +128,7 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
 
     ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
-        |e: &path::Error| warn!(ctx, "failed to resolve filename: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve filename", (*e).into())
     ));
 
     if event.data.path.starts_with("/etc/") {
@@ -144,10 +145,10 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kprobe(name = "fs.security_path_rename")]
 pub fn security_path_rename(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_path_rename(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -171,23 +172,23 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
     // parsing old_name
     ignore_result!(inspect_err!(
         event.data.old_name.prepend_dentry(&old_dentry),
-        |e: &path::Error| warn!(ctx, "failed to parse old_name dentry: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to parse old_name dentry", (*e).into())
     ));
 
     ignore_result!(inspect_err!(
         event.data.old_name.core_resolve(&old_dir, MAX_PATH_DEPTH),
-        |e: &path::Error| warn!(ctx, "failed to old_dir: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to old_dir", (*e).into())
     ));
 
     // parsing new_name
     ignore_result!(inspect_err!(
         event.data.new_name.prepend_dentry(&new_dentry),
-        |e: &path::Error| warn!(ctx, "failed to parse new_name dentry: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to parse new_name dentry", (*e).into())
     ));
 
     ignore_result!(inspect_err!(
         event.data.new_name.core_resolve(&new_dir, MAX_PATH_DEPTH),
-        |e: &path::Error| warn!(ctx, "failed to resolve new_dir: {}", e.description())
+        |e: &path::Error| warn!(ctx, "failed to resolve new_dir", (*e).into())
     ));
 
     pipe_event(ctx, event);
@@ -201,10 +202,10 @@ static mut PATHS: LruHashMap<u128, Path> = LruHashMap::with_max_entries(4096, 0)
 #[kprobe(name = "fs.security_path_unlink")]
 pub fn security_path_unlink(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_path_unlink(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -235,10 +236,10 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(name = "kprobe.exit.vfs_unlink")]
 pub fn vfs_unlink(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_unlink(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }

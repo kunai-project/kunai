@@ -1,14 +1,20 @@
 #![cfg_attr(target_arch = "bpf", no_std)]
 
+use macros::bpf_target_code;
+
 pub mod macros;
 
 pub mod string;
 
-pub mod bpf_utils;
 pub mod utils;
 
+pub mod alloc;
+pub mod errors;
+pub mod kprobe;
+pub mod maps;
+pub mod syscalls;
+
 bpf_target_code! {
-    pub mod syscalls;
     pub mod co_re;
     pub mod helpers {
         // this is a temporary fix to benefit from fixed helpers

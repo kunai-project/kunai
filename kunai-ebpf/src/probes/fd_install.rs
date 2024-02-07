@@ -1,18 +1,18 @@
 use super::*;
-use crate::maps::FdMap;
 use aya_bpf::{
     cty::{c_uint, c_ulong},
     maps::LruHashMap,
     programs::ProbeContext,
 };
+use kunai_common::maps::FdMap;
 
 #[kprobe(name = "fd.entry.__fdget")]
 pub fn entry_fd_get(ctx: ProbeContext) -> u32 {
     match unsafe { try_entry_fd_get(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -31,56 +31,10 @@ unsafe fn try_entry_fd_get(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(name = "fd.exit.__fdget")]
 pub fn exit_fd_get(ctx: ProbeContext) -> u32 {
     match unsafe { try_exit_fd_get(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            //let b = s.name().as_bytes().iter().copied();
-
-            log_err!(&ctx, s);
-            /*{
-                ::aya_log_ebpf::macro_support::check_impl_default(s.name());
-                if let Some(buf_ptr) = unsafe { ::aya_log_ebpf::AYA_LOG_BUF.get_ptr_mut(0) } {
-                    let buf = unsafe { &mut *buf_ptr };
-                    if let Ok(header_len) = ::aya_log_ebpf::write_record_header(
-                        &mut buf.buf,
-                        "module::path",
-                        ::aya_log_ebpf::macro_support::Level::Error,
-                        "module::path",
-                        "",
-                        0 as u32,
-                        2usize,
-                    ) {
-                        let record_len = header_len;
-                        if let Ok(record_len) = {
-                            Ok::<_, ()>(record_len)
-                                .and_then(|record_len| {
-                                    if record_len >= buf.buf.len() {
-                                        return Err(());
-                                    }
-                                    aya_log_ebpf::WriteToBuf::write(
-                                        { ::aya_log_ebpf::macro_support::DisplayHint::Default },
-                                        &mut buf.buf[record_len..],
-                                    )
-                                    .map(|len| record_len + len)
-                                })
-                                .and_then(|record_len| {
-                                    if record_len >= buf.buf.len() {
-                                        return Err(());
-                                    }
-                                    aya_log_ebpf::WriteToBuf::write(
-                                        { s.name().as_bytes() },
-                                        &mut buf.buf[record_len..],
-                                    )
-                                    .map(|len| record_len + len)
-                                })
-                        } {
-                            unsafe {
-                                ::aya_log_ebpf::AYA_LOGS.output((&ctx), &buf.buf[..record_len], 0)
-                            }
-                        }
-                    }
-                }
-            };*/
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -103,10 +57,10 @@ unsafe fn try_exit_fd_get(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kprobe(name = "fd.fd_install")]
 pub fn fd_install(ctx: ProbeContext) -> u32 {
     match unsafe { try_track_fd(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }

@@ -1,4 +1,14 @@
-use crate::{bpf_events, bpf_target_code, not_bpf_target_code};
+use crate::{bpf_events, macros::bpf_target_code, macros::not_bpf_target_code};
+
+not_bpf_target_code! {
+    mod user;
+    pub use user::*;
+}
+
+bpf_target_code! {
+    mod bpf;
+    pub use bpf::*;
+}
 
 // analyzer does not see both target so we can allow dead code
 // to prevent warnings to happen
@@ -9,18 +19,6 @@ const CONFIG_MAP_NAME: &str = "KUNAI_CONFIG_ARRAY";
 #[derive(Debug, Clone, Copy)]
 pub struct Loader {
     pub tgid: u32,
-}
-
-not_bpf_target_code! {
-    impl Loader {
-        pub fn from_own_pid() -> Self {
-            // std::process::id returns the process ID which
-            // turns to be the equivalent of the tgid
-            Loader{
-                tgid: std::process::id(),
-            }
-        }
-    }
 }
 
 const FILTER_SIZE: usize = bpf_events::Type::Max as usize;
@@ -57,58 +55,9 @@ impl Filter {
     }
 }
 
-not_bpf_target_code! {}
-
 /// Structure holding configuration to use in eBPF programs
-//#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct BpfConfig {
     pub loader: Loader,
     pub filter: Filter,
-}
-
-// specific structure implementation to be used in eBPF
-bpf_target_code! {
-    use aya_bpf::maps::Array;
-    use aya_bpf::macros::map;
-    use crate::helpers::bpf_get_current_pid_tgid;
-
-    #[map]
-    static mut KUNAI_CONFIG_ARRAY: Array<BpfConfig> = Array::with_max_entries(1, 0);
-
-    /// Function to retrieve configuration into eBPF code
-    pub unsafe fn config() -> Option<&'static BpfConfig> {
-        KUNAI_CONFIG_ARRAY.get(0)
-    }
-
-    impl BpfConfig {
-        pub unsafe fn current_is_loader(&self) -> bool {
-            bpf_get_current_pid_tgid() as u32 == self.loader.tgid
-        }
-
-        pub fn is_event_enabled(&self, ty: bpf_events::Type) -> bool {
-            self.filter.is_enabled(ty)
-        }
-    }
-}
-
-not_bpf_target_code! {
-    use aya::{
-        Bpf,
-        maps::{MapError,Array},
-        Pod,
-    };
-
-    unsafe impl Pod for BpfConfig{}
-
-    impl BpfConfig {
-        pub fn init_config_in_bpf(bpf: &mut Bpf, conf: Self) -> Result<(), MapError> {
-            let mut bpf_config = Array::try_from(bpf.map_mut(CONFIG_MAP_NAME).expect(
-                &(CONFIG_MAP_NAME.to_owned() + "map should not be missing, maybe you forgot using it your eBPF code"),
-            ))
-            .expect(&(CONFIG_MAP_NAME.to_owned() + "should be a valid Array"));
-            bpf_config.set(0, conf, 0)
-        }
-    }
-
 }

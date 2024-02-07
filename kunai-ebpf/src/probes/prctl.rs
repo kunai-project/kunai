@@ -1,6 +1,7 @@
 use super::*;
 
 use aya_bpf::{maps::LruHashMap, programs::TracePointContext};
+use kunai_common::syscalls::{SysEnterArgs, SysExitArgs};
 
 #[map]
 static mut PRCTL_ARGS: LruHashMap<u64, SysEnterArgs<PrctlArgs>> =
@@ -18,10 +19,10 @@ struct PrctlArgs {
 #[tracepoint(name = "syscalls.sys_enter_prctl")]
 pub fn sys_enter_prctl(ctx: TracePointContext) -> u32 {
     match unsafe { try_enter_prctl(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -39,10 +40,10 @@ unsafe fn try_enter_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
 #[tracepoint(name = "syscalls.sys_exit_prctl")]
 pub fn sys_exit_prctl(ctx: TracePointContext) -> u32 {
     match unsafe { try_exit_prctl(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -52,7 +53,7 @@ unsafe fn try_exit_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
     let exit_args = SysExitArgs::from_context(ctx)?;
     let key = bpf_task_tracking_id();
 
-    let entry_args = PRCTL_ARGS.get(&key).ok_or(error::MapError::GetFailure)?;
+    let entry_args = PRCTL_ARGS.get(&key).ok_or(errors::MapError::GetFailure)?;
 
     alloc::init()?;
     let event = alloc::alloc_zero::<PrctlEvent>()?;
