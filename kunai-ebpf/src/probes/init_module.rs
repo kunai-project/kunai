@@ -2,6 +2,7 @@ use super::*;
 
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::{ProbeContext, TracePointContext};
+use kunai_common::syscalls::{SysEnterArgs, SysExitArgs};
 
 #[map]
 static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
@@ -10,10 +11,10 @@ static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
 #[kprobe(name = "lkm.mod_sysfs_setup")]
 pub fn mod_sysfs_setup(ctx: ProbeContext) -> u32 {
     match unsafe { try_mod_sysfs_setup(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -38,10 +39,10 @@ unsafe fn try_mod_sysfs_setup(ctx: &ProbeContext) -> ProbeResult<()> {
 #[tracepoint(name = "lkm.syscalls.sys_enter_init_module")]
 pub fn sys_enter_init_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_init_module(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -54,10 +55,10 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
 #[tracepoint(name = "lkm.syscalls.sys_enter_finit_module")]
 pub fn sys_enter_finit_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_finit_module(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -79,14 +80,13 @@ unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> P
     // Aya currently reports an error on empty string being read
     // so until Aya is upgraded some errors might pop up while there
     // is none.
-    log_result_err!(
-        ctx,
-        "failed to read uargs",
+    ignore_result!(inspect_err!(
         event
             .data
             .uargs
-            .read_user_str_bytes(args.uargs() as *const u8)
-    );
+            .read_user_str_bytes(args.uargs() as *const u8),
+        |_| warn_msg!(ctx, "failed to read uargs")
+    ));
 
     // setting event data
     event.data.args = args;
@@ -101,10 +101,10 @@ unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> P
 #[tracepoint(name = "lkm.syscalls.sys_exit_init_module")]
 pub fn sys_exit_init_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_init_module(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -112,10 +112,10 @@ pub fn sys_exit_init_module(ctx: TracePointContext) -> u32 {
 #[tracepoint(name = "lkm.syscalls.sys_exit_finit_module")]
 pub fn sys_exit_finit_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_init_module(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }

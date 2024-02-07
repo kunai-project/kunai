@@ -16,7 +16,7 @@ use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
+    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::{BpfConfig, Filter};
 use kunai_common::inspect_err;
@@ -1200,6 +1200,8 @@ impl EventProcessor {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
+
+            Type::Error => panic!("error events should be processed earlier"),
         }
     }
 }
@@ -1319,8 +1321,10 @@ impl EventReader {
 
     /// function used to pre-process some targetted events where time is critical and for which
     /// processing can be done in EventReader
+    /// this function must return true if main processing loop has to pass to the next event
+    /// after the call.
     #[inline]
-    fn pre_process_events(&self, e: &mut EncodedEvent) {
+    fn process_time_critical(&self, e: &mut EncodedEvent) -> bool {
         let i = unsafe { e.info() }.expect("info should not fail here");
 
         #[allow(clippy::single_match)]
@@ -1360,8 +1364,18 @@ impl EventReader {
                     }
                 }
             }
+            Type::Error => {
+                let e = event!(e, bpf_events::ErrorEvent).unwrap();
+                match e.data.level {
+                    error::Level::Warn => warn!("{}", e),
+                    error::Level::Error => error!("{}", e),
+                }
+                return true;
+            }
             _ => {}
         }
+
+        false
     }
 
     /// this method pass through some events directly to the event processor
@@ -1485,7 +1499,11 @@ impl EventReader {
                         // pre-processing events
                         // we eventually change event type in this function
                         // example: Execve -> ExecveScript if necessary
-                        er.pre_process_events(&mut dec);
+                        // when the function returns true event doesn't need to go further
+                        if er.process_time_critical(&mut dec) {
+                            continue;
+                        }
+
                         // passing through some events used for correlation
                         er.pass_through_events(&dec);
 
@@ -1720,9 +1738,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 "../../../target/bpfel-unknown-none/release/kunai-ebpf"
             ))?;
 
-    if let Err(e) = BpfLogger::init(&mut bpf) {
-        // This can happen if you remove all log statements from your eBPF program.
-        warn!("failed to initialize eBPF logger: {}", e);
+    if BpfLogger::init(&mut bpf).is_ok() {
+        return Err(anyhow!("kunai is not supposed to use Aya BPF logger"));
     }
 
     BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)

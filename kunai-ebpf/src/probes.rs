@@ -1,18 +1,16 @@
-use crate::alloc;
-use crate::error::{self, *};
-use crate::util::*;
-
 use aya_bpf::macros::*;
-use aya_log_ebpf::*;
 
 use kunai_common::{
+    alloc,
     bpf_events::*,
-    bpf_utils::*,
     co_re,
     consts::*,
+    error, error_msg,
+    errors::{self, *},
     inspect_err,
     path::{self, *},
-    syscalls::*,
+    utils::*,
+    warn, warn_msg,
 };
 
 #[cfg(feature = "debug")]
@@ -54,7 +52,7 @@ use ignore_result;
 macro_rules! kprobe_arg {
     ($ctx: expr, $i: literal) => {
         $ctx.arg($i)
-            .ok_or($crate::error::ProbeError::KProbeArgFailure)
+            .ok_or(kunai_common::errors::ProbeError::KProbeArgFailure)
     };
 }
 
@@ -73,7 +71,7 @@ macro_rules! core_read_kernel {
     ($struc:expr, $field:ident) => {
         $struc
             .$field()
-            .ok_or($crate::error::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
     };
 
     ($struc:expr, $first:ident, $($rest: ident),*) => {
@@ -82,7 +80,7 @@ macro_rules! core_read_kernel {
             $(
             .and_then(|r| r.$rest())
             )*
-            .ok_or($crate::error::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
     };
 }
 
@@ -94,7 +92,7 @@ macro_rules! core_read_user {
         paste::item!{
         $struc
             .[<$field _user>]()
-            .ok_or($crate::error::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
         }
     };
 
@@ -105,7 +103,7 @@ macro_rules! core_read_user {
             $(
             .and_then(|r| r.[<$rest _user>]())
             )*
-            .ok_or($crate::error::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
         }
     };
 }

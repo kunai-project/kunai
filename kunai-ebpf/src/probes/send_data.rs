@@ -14,10 +14,10 @@ such as the shannon entropy, of the data sent over the network.
 #[kprobe(name = "net.security_socket_sendmsg")]
 pub fn sock_sendmsg(ctx: ProbeContext) -> u32 {
     match unsafe { try_sock_send_data(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }

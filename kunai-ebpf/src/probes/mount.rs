@@ -4,6 +4,7 @@ use aya_bpf::cty::c_int;
 
 use aya_bpf::maps::LruHashMap;
 use aya_bpf::programs::ProbeContext;
+use kunai_common::kprobe::{KProbeEntryContext, ProbeFn};
 
 #[map]
 static mut MOUNT_EVENTS: LruHashMap<u128, MountEvent> = LruHashMap::with_max_entries(1024, 0);
@@ -24,10 +25,10 @@ pub fn exit_security_sb_mount(ctx: ProbeContext) -> u32 {
             .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_security_sb_mount(ent_ctx, &ctx))
     } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -51,11 +52,11 @@ unsafe fn try_exit_security_sb_mount(
     event.data.path.core_resolve(&path, MAX_PATH_DEPTH)?;
 
     if let Err(e) = event.data.dev_name.read_kernel_str_bytes(dev_name) {
-        warn!(exit, "failed to read dev_name: {} ", e.description());
+        warn!(exit, "failed to read dev_name", e.into());
     }
 
     if let Err(e) = event.data.ty.read_kernel_str_bytes(typ) {
-        warn!(exit, "failed to read dev type: {}", e.description())
+        warn!(exit, "failed to read dev type", e.into())
     }
 
     event.data.rc = rc;
@@ -76,10 +77,10 @@ pub fn exit_path_mount(ctx: ProbeContext) -> u32 {
             .map_err(ProbeError::from)
             .and_then(|ent_ctx| try_exit_path_mount(ent_ctx, &ctx))
     } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     // we cleanup only at the end of path_mount to let security_sb_mount available

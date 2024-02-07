@@ -145,7 +145,6 @@ macro_rules! core_read_kernel {
     ($struc:expr, $field:ident) => {
         $struc
             .$field()
-            //.ok_or($crate::error::ProbeError::CoReFieldMissing)
     };
 
     ($struc:expr, $first:ident, $($rest: ident),*) => {
@@ -154,7 +153,6 @@ macro_rules! core_read_kernel {
             $(
             .and_then(|r| r.$rest())
             )*
-            //.ok_or($crate::error::ProbeError::CoReFieldMissing)
     };
 }
 

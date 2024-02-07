@@ -1,6 +1,41 @@
-use kunai_macros::StrEnum;
+use kunai_macros::{BpfError, StrEnum};
 
-use crate::{bpf_target_code, not_bpf_target_code};
+use crate::{errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code};
+
+not_bpf_target_code! {
+    mod user;
+    pub use user::*;
+}
+
+bpf_target_code! {
+    mod bpf;
+    pub use bpf::*;
+}
+
+#[repr(C)]
+#[derive(BpfError, Debug, Clone, Copy)]
+pub enum Error {
+    #[error("unknown socket type")]
+    UnknownSocketType,
+    #[error("sk_type member not found")]
+    SkTypeMissing,
+    #[error("sk_protocol member not found")]
+    SkProtocolMissing,
+    #[error("skc_family member not found")]
+    SkcFamilyMissing,
+    #[error("skc_addrpair member not found")]
+    SkcAddrPairMissing,
+    #[error("skc_portpair member not found")]
+    SkcPortPairMissing,
+    #[error("skc_v6_daddr member not found")]
+    SkcV6daddrMissing,
+}
+
+impl From<Error> for ProbeError {
+    fn from(value: Error) -> Self {
+        Self::IpError(value)
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -70,70 +105,6 @@ impl IpPort {
             && self.data[2] == 0
             && self.data[3] == 0
             && self.port == 0
-    }
-}
-
-not_bpf_target_code! {
-
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-    impl From<IpPort> for IpAddr {
-        fn from(value: IpPort) -> Self {
-            match value.ty {
-                IpType::V4 => IpAddr::V4(Ipv4Addr::from(value.data[0])),
-                IpType::V6 => IpAddr::V6(Ipv6Addr::from(value.ip())),
-            }
-        }
-    }
-
-}
-
-bpf_target_code! {
-
-    use crate::consts::*;
-    use kunai_macros::BpfError;
-    use crate::co_re::sock_common;
-
-    #[repr(C)]
-    #[derive(BpfError, Debug, Clone)]
-    pub enum Error {
-        #[error("unknown socket type")]
-        UnknownSocketType,
-        #[error("sk_type member not found")]
-        SkTypeMissing,
-        #[error("sk_protocol member not found")]
-        SkProtocolMissing,
-        #[error("skc_family member not found")]
-        SkcFamilyMissing,
-        #[error("skc_addrpair member not found")]
-        SkcAddrPairMissing,
-        #[error("skc_portpair member not found")]
-        SkcPortPairMissing,
-        #[error("skc_v6_daddr member not found")]
-        SkcV6daddrMissing,
-    }
-
-
-
-    impl IpPort {
-        #[inline(always)]
-        pub unsafe fn from_sock_common_foreign_ip(sk: &sock_common) -> Result<Self, Error> {
-            let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
-            let dport = sk.skc_dport().ok_or(Error::SkcPortPairMissing)?.to_be();
-
-            if sa_family == AF_INET as u16 {
-                return Ok(IpPort::new_v4_from_be(
-                    sk.skc_daddr().ok_or(Error::SkcAddrPairMissing)?.to_be(),
-                    dport,
-                ));
-            } else if sa_family == AF_INET6 as u16 {
-                return Ok(IpPort::new_v6_from_be(
-                    sk.skc_v6_daddr().and_then(|in6| in6.addr32()).ok_or(Error::SkcV6daddrMissing)?,dport
-                ));
-            }
-
-            return Err(Error::UnknownSocketType);
-        }
     }
 }
 
@@ -224,46 +195,4 @@ impl SockType {
 pub struct SocketInfo {
     pub domain: u16,
     pub ty: u16,
-}
-
-not_bpf_target_code! {
-    impl SocketInfo {
-        pub fn type_to_string(&self) -> String {
-            if SockType::is_valid_type(self.ty){
-                let d: SockType = unsafe{core::mem::transmute(self.ty)};
-                d.as_str().into()
-            }else{
-                format!("unknown({})", self.ty)
-            }
-        }
-
-        pub fn domain_to_string(&self) -> String {
-            if SaFamily::is_valid_sa_family(self.domain){
-                let t: SaFamily = unsafe{core::mem::transmute(self.domain)};
-                t.as_str().into()
-            } else {
-                format!("unknown({})", self.domain)
-            }
-        }
-    }
-}
-
-bpf_target_code! {
-    use crate::co_re::core_read_kernel;
-
-    impl TryFrom<crate::co_re::sock> for SocketInfo {
-        type Error = Error;
-
-        #[inline(always)]
-        fn try_from(s: crate::co_re::sock) -> Result<Self, Self::Error> {
-            unsafe{
-                let ty = core_read_kernel!(s, sk_type).ok_or(Error::SkTypeMissing)?;
-                let domain = core_read_kernel!(s, sk_common, skc_family).ok_or(Error::SkcFamilyMissing)?;
-                Ok(Self{
-                    domain,
-                    ty,
-                })
-            }
-        }
-    }
 }

@@ -1,5 +1,5 @@
 use aya_bpf::programs::ProbeContext;
-use kunai_common::{co_re::sock_fprog_kern, net::SocketInfo};
+use kunai_common::{co_re::sock_fprog_kern, kprobe::ProbeFn, net::SocketInfo};
 
 use super::*;
 
@@ -24,10 +24,10 @@ pub fn exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
                 handle_socket_attach_prog(&exit_ctx, prog, sk)
             })
     } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&exit_ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&exit_ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     // we cleanup entry context
@@ -56,10 +56,10 @@ pub fn exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
                 handle_socket_attach_prog(&exit_ctx, prog, sk)
             })
     } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&exit_ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&exit_ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     };
     // we cleanup entry context
@@ -106,7 +106,7 @@ unsafe fn handle_socket_attach_prog(
     }
 
     //handle loading of regular bpf program
-    warn!(exit_ctx, "bpf program attached to socket not yet supported");
+    warn_msg!(exit_ctx, "bpf program attached to socket not yet supported");
 
     Ok(())
 }

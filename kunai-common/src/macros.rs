@@ -11,7 +11,6 @@ macro_rules! inspect_err {
     }};
 }
 
-#[macro_export]
 macro_rules! bpf_target_code {
     ($($tokens:tt)*) => {
         cfg_if::cfg_if!{
@@ -22,7 +21,8 @@ macro_rules! bpf_target_code {
     };
 }
 
-#[macro_export]
+pub(crate) use bpf_target_code;
+
 macro_rules! not_bpf_target_code {
     ($($tokens:tt)*) => {
         cfg_if::cfg_if!{
@@ -34,6 +34,8 @@ macro_rules! not_bpf_target_code {
         }
     };
 }
+
+pub(crate) use not_bpf_target_code;
 
 macro_rules! test_flag {
     ($test:expr, $flag:literal) => {

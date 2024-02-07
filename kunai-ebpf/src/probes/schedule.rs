@@ -26,10 +26,10 @@ consistent ancestor/parent tracking.
 #[kprobe(name = "sched.schedule")]
 pub fn schedule(ctx: ProbeContext) -> u32 {
     match unsafe { try_schedule(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -64,17 +64,14 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
                 .data
                 .argv
                 .read_user_at(arg_start as *const u8, arg_len as u32),
-            |_| warn!(
-                ctx,
-                "failed to read argv: arg_start=0x{:x} arg_len={}", arg_start, arg_len
-            )
+            |_| warn_msg!(ctx, "failed to read argv")
         ));
     }
 
     let exe_file = core_read_kernel!(mm, exe_file)?;
     ignore_result!(inspect_err!(
         event.data.exe.core_resolve_file(&exe_file, MAX_PATH_DEPTH),
-        |e: &path::Error| warn!(ctx, "failed to resolve exe: {}", e.description())
+        |e: &path::Error| warn!(ctx, (*e).into())
     ));
 
     if event.data.exe.is_empty() && event.data.argv.is_empty() {
@@ -89,7 +86,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // we do not really care if that is failing
     ignore_result!(inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {
-        warn!(ctx, "failed to track task")
+        warn_msg!(ctx, "failed to track task")
     }));
 
     // we send event to userland

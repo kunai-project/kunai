@@ -10,10 +10,10 @@ static mut BPF_PROG_TRACK: LruHashMap<u64, co_re::bpf_prog> = LruHashMap::with_m
 #[kprobe(name = "entry.security_bpf_prog")]
 pub fn security_bpf_prog_alloc(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_bpf_prog(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -30,10 +30,10 @@ unsafe fn try_security_bpf_prog(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(name = "exit.bpf_prog_load")]
 pub fn bpf_prog_load(ctx: ProbeContext) -> u32 {
     match unsafe { try_bpf_prog_load(&ctx) } {
-        Ok(_) => error::BPF_PROG_SUCCESS,
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
-            log_err!(&ctx, s);
-            error::BPF_PROG_FAILURE
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
         }
     }
 }
@@ -61,7 +61,7 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
         if let Some(p_name) = bpf_prog_aux.name() {
             ignore_result!(inspect_err!(
                 event.data.name.read_kernel_str_bytes(p_name),
-                |_| warn!(ctx, "failed to read program name")
+                |_| warn_msg!(ctx, "failed to read program name")
             ));
         }
 
@@ -79,7 +79,7 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
         if let Some(afn) = bpf_prog_aux.attach_func_name() {
             ignore_result!(inspect_err!(
                 event.data.attached_func_name.read_kernel_str_bytes(afn),
-                |_| warn!(ctx, "failed to read attach_func_name")
+                |_| warn_msg!(ctx, "failed to read attach_func_name")
             ));
         }
 
@@ -91,7 +91,7 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
 
         pipe_event(ctx, event);
     } else {
-        error!(ctx, "failed to retrieve BPF program load event")
+        error_msg!(ctx, "failed to retrieve BPF program load event")
     }
 
     // we use a LruHashmap so we can safely ignore result
