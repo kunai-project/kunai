@@ -61,9 +61,7 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // cgroup parsing
     let cgroup = core_read_kernel!(new_task, sched_task_group, css, cgroup)?;
-    if let Err(e) = event.data.cgroup.resolve(cgroup) {
-        warn!(ctx, "failed to resolve cgroup", e.into());
-    }
+    ignore_result!(event.data.cgroup.resolve(cgroup));
 
     pipe_event(ctx, event);
 

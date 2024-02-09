@@ -872,7 +872,34 @@ impl EventProcessor {
 
         let cgroup = event.data.cgroup;
 
-        let mut container_type = Container::from_cgroup(&cgroup);
+        // we encountered some cgroup parsing error in eBPF
+        // so we need to resolve cgroup in userland
+        let cgroups = match cgroup.error {
+            None => vec![cgroup.to_string()],
+            Some(_) => {
+                if let Ok(cgroups) =
+                    procfs::process::Process::new(info.info.process.pid).and_then(|p| p.cgroups())
+                {
+                    // we return cgroup from procfs
+                    cgroups
+                        .0
+                        .into_iter()
+                        .map(|cg| cg.pathname)
+                        .collect::<Vec<String>>()
+                } else {
+                    // we report an error
+                    warn!(
+                        "failed to resolve cgroup for pid={} guuid={}",
+                        info.info.process.pid,
+                        info.info.process.tg_uuid.into_uuid().hyphenated()
+                    );
+                    // still get a chance to do something with cgroup
+                    vec![cgroup.to_string()]
+                }
+            }
+        };
+
+        let mut container_type = Container::from_cgroups(&cgroups);
 
         if container_type.is_none() {
             let ancestors = self.get_ancestors(info.parent_key());
@@ -895,7 +922,7 @@ impl EventProcessor {
             flags: info.info.process.flags,
             resolved: HashMap::new(),
             container: container_type,
-            cgroups: vec![cgroup.to_string()],
+            cgroups: cgroups,
             parent_key: Some(info.parent_key()),
         });
     }

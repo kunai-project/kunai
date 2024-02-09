@@ -104,17 +104,18 @@ impl<const N: usize> String<N> {
     }
 
     #[inline(always)]
-    fn push_byte_at(&mut self, b: u8, at: usize) {
+    fn push_byte_at(&mut self, b: u8, at: usize) -> Result<(), ()> {
         if self.is_full() {
-            return;
+            return Err(());
         }
         let k = bound_value_for_verifier(at as isize, 0, (self.cap() - 1) as isize);
         self.s.as_mut()[k as usize] = b;
         self.len += 1;
+        Ok(())
     }
 
     #[inline(always)]
-    pub fn push_byte(&mut self, b: u8) {
+    pub fn push_byte(&mut self, b: u8) -> Result<(), ()> {
         self.push_byte_at(b, self.len)
     }
 
@@ -126,36 +127,12 @@ impl<const N: usize> String<N> {
             if self.is_full() || i == src.len() {
                 return;
             }
-            self.push_byte(src[i]);
+            let _ = self.push_byte(src[i]);
         }
     }
 
     pub fn copy_from(&mut self, other: &Self) {
         unsafe { core::ptr::copy_nonoverlapping(other as *const _, self as *mut _, 1) }
-    }
-
-    #[inline(always)]
-    pub fn join<U: Sized + AsRef<[u8]>>(&mut self, s1: U, sep: u8, s2: U) {
-        let mut bytes = s1.as_ref();
-        let mut i = 0;
-        let mut flag_second_slice = false;
-
-        for j in 0..self.cap() {
-            if i == bytes.len() && !flag_second_slice {
-                i = 0;
-                bytes = s2.as_ref();
-                self.push_byte_at(sep, j);
-                flag_second_slice = true;
-                continue;
-            }
-
-            if self.is_full() || (flag_second_slice && i == bytes.len()) {
-                return;
-            }
-
-            self.push_byte_at(bytes[i], j);
-            i += 1
-        }
     }
 
     #[inline(always)]
@@ -200,25 +177,6 @@ mod test {
         s.reset();
         assert_eq!(s.len(), 0);
         assert_eq!(s.cap(), 256);
-        s.join("test", b' ', "toast");
-        assert_eq!(s.as_str(), "test toast");
-    }
-
-    #[test]
-    fn test_overflow() {
-        let mut s: String<6> = String::new();
-        assert_eq!(s.len(), 0);
-        assert_eq!(s.cap(), 6);
-        s.join("toaster", b' ', "is nice");
-        assert_eq!(s.as_str(), "toast");
-
-        s.reset();
-        s.join("h", b' ', "world");
-        assert_eq!(s.as_str(), "h wor");
-
-        s.reset();
-        s.join("hello", b' ', "world");
-        assert_eq!(s.as_str(), "hello");
     }
 
     #[test]

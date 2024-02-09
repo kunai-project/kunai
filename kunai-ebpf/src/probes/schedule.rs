@@ -80,7 +80,8 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let cgroup = core_read_kernel!(ts, sched_task_group, css, cgroup)?;
 
-    event.data.cgroup.resolve(cgroup)?;
+    // we do not raise any error on cgroup parsing, we let a chance to userland to solve it
+    ignore_result!(event.data.cgroup.resolve(cgroup));
 
     event.init_from_current_task(Type::TaskSched)?;
 

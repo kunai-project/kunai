@@ -11,20 +11,18 @@ bpf_target_code! {
     pub use bpf::*;
 }
 
-const MAX_CGROUP_TYPE_NAMELEN: usize = 32;
-const MAX_CFTYPE_NAME: usize = 64;
+const CGROUP_PATH_MAX: usize = 128;
 
-pub const CGROUP_FILE_NAME_MAX: usize = MAX_CGROUP_TYPE_NAMELEN + MAX_CFTYPE_NAME + 2;
-
-const CGROUP_STRING_LEN: usize = CGROUP_FILE_NAME_MAX * 2;
+const CGROUP_STRING_LEN: usize = CGROUP_PATH_MAX * 2;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Cgroup {
     path: crate::string::String<CGROUP_STRING_LEN>,
+    pub error: Option<Error>,
 }
 
-#[derive(BpfError, Clone, Copy)]
+#[derive(BpfError, Debug, Clone, Copy)]
 pub enum Error {
     #[error("failed to read cgroup.kn")]
     Kn,
