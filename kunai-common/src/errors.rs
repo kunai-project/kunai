@@ -16,7 +16,6 @@ use crate::path;
 use crate::string;
 use crate::syscalls;
 
-
 use kunai_macros::BpfError;
 
 pub const BPF_PROG_SUCCESS: u32 = 0;
@@ -62,6 +61,8 @@ pub enum ProbeError {
     CoReFieldMissing,
     #[error("failed to get kprobe arg")]
     KProbeArgFailure,
+    #[error("unexpected null pointer")]
+    NullPointer,
     #[wrap]
     BpfMapError(MapError),
     #[wrap]

@@ -1,13 +1,13 @@
 use super::*;
 use aya_bpf::{
-    cty::{c_int, c_void},
+    cty::{c_int, c_void, size_t},
     programs::ProbeContext,
 };
 
 use kunai_common::{
-    maps::FdMap,
-    net::IpPort,
-    kprobe::{KProbeEntryContext, ProbeFn},
+    co_re::task_struct,
+    kprobe::ProbeFn,
+    net::{IpPort, SaFamily, SocketInfo},
 };
 
 enum Udata {
@@ -81,10 +81,56 @@ impl SockHelper {
     }
 }
 
+unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
+    let si = SocketInfo::try_from(*sock)?;
+
+    // return if socket neither is INET nor INET6
+    if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
+        return Ok(false);
+    }
+
+    let sock_common = core_read_kernel!(sock, sk_common)?;
+    let ip_port = IpPort::from_sock_common_foreign_ip(&sock_common)?;
+
+    // filter on dst port
+    Ok(ip_port.port() == 53)
+}
+
 #[kprobe(name = "net.dns.enter.vfs_read")]
 pub fn enter_vfs_read(ctx: ProbeContext) -> u32 {
-    unsafe { ignore_result!(ProbeFn::dns_vfs_read.save_ctx(&ctx)) };
-    0
+    match unsafe { try_enter_vfs_read(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+// many vfs_read ar happening (not only on sockets) so this function
+// aims at filtering as much as we can to save only interesting contexts
+unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
+    let file = co_re::file::from_ptr(kprobe_arg!(&ctx, 0)?);
+    let ubuf: *const u8 = kprobe_arg!(&ctx, 1)?;
+    let count: size_t = kprobe_arg!(&ctx, 2)?;
+
+    if !file.is_sock().unwrap_or(false) || ubuf.is_null() || count == 0 {
+        return Ok(());
+    }
+
+    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+    let sock = core_read_kernel!(socket, sk)?;
+
+    // check if it looks like a connection to a DNS server
+    if !is_dns_sock(&sock)? {
+        return Ok(());
+    }
+
+    // we report saving error as we are going to
+    // miss entries later if that is the case
+    ProbeFn::dns_vfs_read.save_ctx(ctx)?;
+
+    Ok(())
 }
 
 #[kretprobe(name = "net.dns.exit.vfs_read")]
@@ -101,17 +147,20 @@ pub fn exit_vfs_read(ctx: ProbeContext) -> u32 {
     rc
 }
 
-#[inline(always)]
 unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
+    // we restore entry context
+    let saved_ctx = match ProbeFn::dns_vfs_read.restore_ctx() {
+        Ok(ctx) => ctx.probe_context(),
+        _ => return Ok(()),
+    };
+
     let rc = ctx.ret().unwrap_or(-1);
-
-    let entry_ctx = ProbeFn::dns_vfs_read
-        .restore_ctx()
-        .map_err(ProbeError::from)?;
-    let saved_ctx = entry_ctx.probe_context();
-
     let file = co_re::file::from_ptr(kprobe_arg!(&saved_ctx, 0)?);
     let ubuf: *const u8 = kprobe_arg!(&saved_ctx, 1)?;
+
+    if file.is_null() {
+        return Err(ProbeError::NullPointer);
+    }
 
     if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
         return Ok(());
@@ -129,19 +178,48 @@ unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kprobe(name = "net.dns.enter.__sys_recvfrom")]
-pub fn enter_recv(ctx: ProbeContext) -> u32 {
-    unsafe { ignore_result!(ProbeFn::dns_sys_recv_from.save_ctx(&ctx)) }
-    0
+pub fn enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
+    match unsafe { try_enter_sys_recvfrom(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
+    let fd: c_int = kprobe_arg!(ctx, 0)?;
+    let ubuf: *const u8 = kprobe_arg!(ctx, 1)?;
+
+    let current = task_struct::current();
+    let file = current
+        .get_fd(fd as usize)
+        .ok_or(ProbeError::CoReFieldMissing)?;
+
+    if file.is_null() {
+        return Err(ProbeError::NullPointer);
+    }
+
+    if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
+        return Ok(());
+    }
+
+    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+    let sock = core_read_kernel!(socket, sk)?;
+
+    if !is_dns_sock(&sock)? {
+        return Ok(());
+    }
+
+    ProbeFn::dns_sys_recv_from.save_ctx(&ctx)?;
+
+    Ok(())
 }
 
 #[kretprobe(name = "net.dns.exit.__sys_recvfrom")]
-pub fn exit_recv(ctx: ProbeContext) -> u32 {
-    let rc = match unsafe {
-        ProbeFn::dns_sys_recv_from
-            .restore_ctx()
-            .map_err(ProbeError::from)
-            .and_then(|ent_ctx| try_exit_recv(ent_ctx, &ctx))
-    } {
+pub fn exit_sys_recvfrom(ctx: ProbeContext) -> u32 {
+    let rc = match unsafe { try_exit_sys_recvfrom(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
@@ -153,22 +231,29 @@ pub fn exit_recv(ctx: ProbeContext) -> u32 {
 }
 
 #[inline(always)]
-unsafe fn try_exit_recv(
-    entry_ctx: &mut KProbeEntryContext,
-    exit_ctx: &ProbeContext,
-) -> ProbeResult<()> {
+unsafe fn try_exit_sys_recvfrom(exit_ctx: &ProbeContext) -> ProbeResult<()> {
+    // we restore entry context
+    let ent_probe_ctx = match ProbeFn::dns_sys_recv_from.restore_ctx() {
+        Ok(ctx) => ctx.probe_context(),
+        _ => return Ok(()),
+    };
+
     let rc = exit_ctx.ret().unwrap_or(-1);
 
     if rc < 0 {
         return Ok(());
     }
-    let ent_probe_ctx = &entry_ctx.probe_context();
-    let mut fd_map = FdMap::attach();
 
     let fd: c_int = kprobe_arg!(ent_probe_ctx, 0)?;
     let ubuf: *const u8 = kprobe_arg!(ent_probe_ctx, 1)?;
 
-    let file = fd_map.get(fd as i64).ok_or(MapError::GetFailure)?;
+    let file = task_struct::current()
+        .get_fd(fd as usize)
+        .ok_or(ProbeError::CoReFieldMissing)?;
+
+    if file.is_null() {
+        return Err(ProbeError::NullPointer);
+    }
 
     if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
         return Ok(());
@@ -187,18 +272,50 @@ unsafe fn try_exit_recv(
 
 #[kprobe(name = "net.dns.enter.__sys_recvmsg")]
 pub fn enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
-    unsafe { ignore_result!(ProbeFn::net_dns_sys_recvmsg.save_ctx(&ctx)) }
-    0
+    match unsafe { try_enter_sys_recvmsg(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
+    let fd: c_int = kprobe_arg!(ctx, 0)?;
+    let current = task_struct::current();
+
+    // here getting file from FdMap always fails
+    // so we need to lookup task_struct's files->fd_array
+    let file = current
+        .get_fd(fd as usize)
+        .ok_or(ProbeError::CoReFieldMissing)?;
+
+    // file should not be null
+    if file.is_null() {
+        return Err(ProbeError::NullPointer);
+    }
+
+    if !file.is_sock().unwrap_or(false) {
+        return Ok(());
+    }
+
+    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+    let sock = core_read_kernel!(socket, sk)?;
+
+    if !is_dns_sock(&sock)? {
+        return Ok(());
+    }
+
+    // we save context
+    ProbeFn::net_dns_sys_recvmsg.save_ctx(&ctx)?;
+
+    Ok(())
 }
 
 #[kretprobe(name = "net.dns.exit.__sys_recvmsg")]
 pub fn exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
-    let rc = match unsafe {
-        ProbeFn::net_dns_sys_recvmsg
-            .restore_ctx()
-            .map_err(ProbeError::from)
-            .and_then(|ent_ctx| try_exit_recvmsg(ent_ctx, &ctx))
-    } {
+    let rc = match unsafe { try_exit_recvmsg(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
@@ -211,21 +328,28 @@ pub fn exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
 }
 
 #[inline(always)]
-unsafe fn try_exit_recvmsg(
-    entry_ctx: &mut KProbeEntryContext,
-    exit_ctx: &ProbeContext,
-) -> ProbeResult<()> {
+unsafe fn try_exit_recvmsg(exit_ctx: &ProbeContext) -> ProbeResult<()> {
+    // we restore saved context
+    let saved_ctx = match ProbeFn::net_dns_sys_recvmsg.restore_ctx() {
+        Ok(ctx) => ctx.probe_context(),
+        _ => return Ok(()),
+    };
+
     let rc = exit_ctx.ret().unwrap_or(-1);
 
     if rc < 0 {
         return Ok(());
     }
 
-    let saved_ctx = &entry_ctx.probe_context();
-    let mut fd_map = FdMap::attach();
-
     let fd: c_int = kprobe_arg!(saved_ctx, 0)?;
-    let file = fd_map.get(fd as i64).ok_or(MapError::GetFailure)?;
+
+    let file = task_struct::current()
+        .get_fd(fd as usize)
+        .ok_or(ProbeError::CoReFieldMissing)?;
+
+    if file.is_null() {
+        return Err(ProbeError::NullPointer);
+    }
 
     if !file.is_sock().unwrap_or(false) {
         return Ok(());
