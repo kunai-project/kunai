@@ -128,7 +128,7 @@ unsafe fn try_sys_exit_init_module(ctx: &TracePointContext) -> ProbeResult<()> {
         let event = &mut (*event);
         // we set a default value for driver name
         if event.data.name.is_empty() {
-            event.data.name.push_byte(b'?');
+            event.data.name.push_bytes_unchecked("?");
         }
         event.data.loaded = args.ret == 0;
         pipe_event(ctx, event);
