@@ -64,7 +64,8 @@ not_bpf_target_code! {
             if let Some(e) = self.data.error.as_ref(){
                 write!(
                     f,
-                    " {}",
+                    " {}: {}",
+                    e.name(),
                     e.description()
                 )?;
             }
