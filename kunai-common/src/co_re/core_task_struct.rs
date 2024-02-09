@@ -6,7 +6,10 @@ use crate::helpers::{
 use crate::string::String;
 
 use super::gen::{self, *};
-use super::{cred, mm_struct, nsproxy, rust_shim_kernel_impl, task_group, CoRe};
+use super::{
+    core_read_kernel, cred, file, files_struct, mm_struct, nsproxy, rust_shim_kernel_impl,
+    task_group, CoRe,
+};
 
 #[allow(non_camel_case_types)]
 pub type task_struct = CoRe<gen::task_struct>;
@@ -75,7 +78,15 @@ impl task_struct {
     rust_shim_kernel_impl!(pub, task_struct, group_leader, Self);
     rust_shim_kernel_impl!(pub, task_struct, real_parent, Self);
 
+    rust_shim_kernel_impl!(task_struct, files, files_struct);
     rust_shim_kernel_impl!(pub, task_struct, nsproxy, nsproxy);
 
     rust_shim_kernel_impl!(task_struct, sched_task_group, task_group);
+
+    #[inline(always)]
+    /// this is a shortcut function to easily get a file from its fd
+    /// looking up the task_struct fdtable.
+    pub unsafe fn get_fd(&self, fd: usize) -> Option<file> {
+        core_read_kernel!(self, files)?.get_file(fd)
+    }
 }

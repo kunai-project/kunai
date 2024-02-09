@@ -46,6 +46,9 @@ pub use core_kernfs::*;
 mod core_clone_args;
 pub use core_clone_args::*;
 
+mod core_files_struct;
+pub use core_files_struct::*;
+
 #[derive(Clone, Copy)]
 pub struct CoRe<P> {
     ptr: *const P,
