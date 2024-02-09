@@ -193,6 +193,20 @@ impl SockType {
 #[repr(C)]
 #[derive(Default, Debug, Clone, Copy)]
 pub struct SocketInfo {
+    /// Must be [SaFamily] value
     pub domain: u16,
+    /// Must be [SockType] value
     pub ty: u16,
+}
+
+impl SocketInfo {
+    #[inline(always)]
+    pub fn is_family(&self, sa: SaFamily) -> bool {
+        self.domain == sa as u16
+    }
+
+    #[inline(always)]
+    pub fn is_type(&self, ty: SockType) -> bool {
+        self.ty == ty as u16
+    }
 }
