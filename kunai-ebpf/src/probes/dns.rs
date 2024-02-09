@@ -10,6 +10,8 @@ use kunai_common::{
     net::{IpPort, SaFamily, SocketInfo},
 };
 
+const DNS_HEADER_SIZE: usize = 12;
+
 enum Udata {
     Buf(*const c_void, usize),
 }
@@ -67,7 +69,7 @@ impl SockHelper {
 
         match self.udata {
             Udata::Buf(ubuf, size) => {
-                if size < 12 {
+                if size < DNS_HEADER_SIZE {
                     return Ok(());
                 }
                 event.data.data.read_user_at(ubuf, size as u32)?
@@ -155,6 +157,12 @@ unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     };
 
     let rc = ctx.ret().unwrap_or(-1);
+
+    // rc is also the size of the data read so we don't irrelevant cases
+    if rc < DNS_HEADER_SIZE as i32 {
+        return Ok(());
+    }
+
     let file = co_re::file::from_ptr(kprobe_arg!(&saved_ctx, 0)?);
     let ubuf: *const u8 = kprobe_arg!(&saved_ctx, 1)?;
 
@@ -240,7 +248,8 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &ProbeContext) -> ProbeResult<()> {
 
     let rc = exit_ctx.ret().unwrap_or(-1);
 
-    if rc < 0 {
+    // rc is also the size of the data read so we don't irrelevant cases
+    if rc < DNS_HEADER_SIZE as i32 {
         return Ok(());
     }
 
@@ -337,7 +346,8 @@ unsafe fn try_exit_recvmsg(exit_ctx: &ProbeContext) -> ProbeResult<()> {
 
     let rc = exit_ctx.ret().unwrap_or(-1);
 
-    if rc < 0 {
+    // rc is also the size of the data read so we don't irrelevant cases
+    if rc < DNS_HEADER_SIZE as i32 {
         return Ok(());
     }
 
