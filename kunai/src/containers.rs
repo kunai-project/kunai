@@ -13,6 +13,8 @@ pub enum Container {
     Docker,
     #[str("firejail")]
     Firejail,
+    #[str("podman")]
+    Podman,
 }
 
 impl Serialize for Container {
@@ -103,6 +105,7 @@ impl Container {
             match a.as_str() {
                 "/usr/bin/firejail" => return Some(Container::Firejail),
                 "/usr/bin/containerd-shim-runc-v2" => return Some(Container::Docker),
+                "/usr/bin/podman" => return Some(Container::Podman),
                 _ => {}
             };
 
