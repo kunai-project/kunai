@@ -118,9 +118,8 @@ unsafe fn execve_event<C: BpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
 
     // cgroup parsing
     let cgroup = core_read_kernel!(ts, sched_task_group, css, cgroup)?;
-    if let Err(e) = event.data.cgroup.resolve(cgroup) {
-        warn!(ctx, e.into());
-    }
+    // we do not raise any error on cgroup parsing, we let a chance to userland to solve it
+    ignore_result!(event.data.cgroup.resolve(cgroup));
 
     pipe_event(ctx, event);
 
