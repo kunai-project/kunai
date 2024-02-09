@@ -560,6 +560,54 @@ extern "C" {
     pub fn shim_task_group_css_exists(task_group: *mut task_group) -> bool;
 }
 #[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct fdtable {
+    pub max_fds: ::core::ffi::c_uint,
+    pub fd: *mut *mut file,
+}
+extern "C" {
+    pub fn shim_fdtable_max_fds(fdtable: *mut fdtable) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_fdtable_max_fds_user(fdtable: *mut fdtable) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_fdtable_max_fds_exists(fdtable: *mut fdtable) -> bool;
+}
+extern "C" {
+    pub fn shim_fdtable_fd(fdtable: *mut fdtable) -> *mut *mut file;
+}
+extern "C" {
+    pub fn shim_fdtable_fd_user(fdtable: *mut fdtable) -> *mut *mut file;
+}
+extern "C" {
+    pub fn shim_fdtable_fd_exists(fdtable: *mut fdtable) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct files_struct {
+    pub fdt: *mut fdtable,
+    pub fd_array: [*mut file; 1usize],
+}
+extern "C" {
+    pub fn shim_files_struct_fd_array(files_struct: *mut files_struct) -> *mut *mut file;
+}
+extern "C" {
+    pub fn shim_files_struct_fd_array_user(files_struct: *mut files_struct) -> *mut *mut file;
+}
+extern "C" {
+    pub fn shim_files_struct_fd_array_exists(files_struct: *mut files_struct) -> bool;
+}
+extern "C" {
+    pub fn shim_files_struct_fdt(files_struct: *mut files_struct) -> *mut fdtable;
+}
+extern "C" {
+    pub fn shim_files_struct_fdt_user(files_struct: *mut files_struct) -> *mut fdtable;
+}
+extern "C" {
+    pub fn shim_files_struct_fdt_exists(files_struct: *mut files_struct) -> bool;
+}
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct task_struct {
     pub flags: ::core::ffi::c_uint,
@@ -572,6 +620,7 @@ pub struct task_struct {
     pub real_parent: *mut task_struct,
     pub group_leader: *mut task_struct,
     pub mm: *mut mm_struct,
+    pub files: *mut files_struct,
     pub nsproxy: *mut nsproxy,
     pub sched_task_group: *mut task_group,
 }
@@ -689,6 +738,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_task_struct_mm_exists(task_struct: *mut task_struct) -> bool;
+}
+extern "C" {
+    pub fn shim_task_struct_files(task_struct: *mut task_struct) -> *mut files_struct;
+}
+extern "C" {
+    pub fn shim_task_struct_files_user(task_struct: *mut task_struct) -> *mut files_struct;
+}
+extern "C" {
+    pub fn shim_task_struct_files_exists(task_struct: *mut task_struct) -> bool;
 }
 extern "C" {
     pub fn shim_task_struct_nsproxy(task_struct: *mut task_struct) -> *mut nsproxy;

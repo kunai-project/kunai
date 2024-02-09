@@ -317,6 +317,24 @@ struct task_group
 
 SHIM_REF(task_group, css);
 
+struct fdtable
+{
+	unsigned int max_fds;
+	struct file **fd; /* current fd array */
+} __attribute__((preserve_access_index));
+
+SHIM(fdtable, max_fds);
+SHIM(fdtable, fd);
+
+struct files_struct
+{
+	struct fdtable *fdt;
+	struct file *fd_array[1];
+} __attribute__((preserve_access_index));
+
+ARRAY_SHIM(files_struct, fd_array);
+SHIM(files_struct, fdt);
+
 struct task_struct
 {
 	unsigned int flags;
@@ -334,6 +352,7 @@ struct task_struct
 	struct task_struct *real_parent;
 	struct task_struct *group_leader;
 	struct mm_struct *mm;
+	struct files_struct *files;
 	struct nsproxy *nsproxy;
 	struct task_group *sched_task_group;
 } __attribute__((preserve_access_index));
@@ -349,6 +368,7 @@ SHIM(task_struct, cred);
 SHIM(task_struct, group_leader);
 SHIM(task_struct, real_parent);
 SHIM(task_struct, mm);
+SHIM(task_struct, files);
 SHIM(task_struct, nsproxy);
 SHIM(task_struct, sched_task_group);
 
