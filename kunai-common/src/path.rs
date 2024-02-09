@@ -295,13 +295,6 @@ impl Path {
             }
             Mode::Prepend => {
                 let len = cap_size(self.len(), MAX_PATH_LEN - 255);
-                // this call is supposed to do nothing if not done from bpf code
-                /*let start = super::bpf_utils::bound_value_for_verifier(
-                    (self.buffer.len() - len) as isize,
-                    0,
-                    (self.buffer.len() - 1) as isize,
-                );*/
-
                 &self.buffer[(self.buffer.len() - len)..]
             }
         }
