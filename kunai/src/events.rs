@@ -216,7 +216,7 @@ macro_rules! impl_std_iocs {
     ($ty:ty) => {
         impl IocGetter for $ty {
             fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-                vec![self.exe.file.to_string_lossy()]
+                self._iocs()
             }
         }
     };
@@ -351,12 +351,20 @@ macro_rules! def_user_data {
                 $(#[$derive])*
                 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
                 $struct_vis struct $struct_name {
+                    pub ancestors: String,
                     pub command_line: String,
                     pub exe: File,
                     $(
                         $(#[$struct_meta])*
                         $vis $field_name: $field_type
                     ),*
+                }
+
+                impl $struct_name {
+                    #[inline(always)]
+                    fn _iocs(&self) -> Vec<Cow<'_,str>>{
+                        vec![self.exe.file.to_string_lossy()]
+                    }
                 }
             };
         }

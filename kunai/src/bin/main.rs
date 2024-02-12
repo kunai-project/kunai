@@ -89,7 +89,9 @@ impl Task {
         self.command_line.join(" ")
     }
 
+    #[inline(always)]
     fn free_memory(&mut self) {
+        // this does not allocate the new map
         self.resolved = HashMap::new();
     }
 }
@@ -478,6 +480,7 @@ impl EventProcessor {
         event: &bpf_events::CloneEvent,
     ) -> UserEvent<CloneData> {
         let data = CloneData {
+            ancestors: self.get_ancestors_string(&info),
             exe: event.data.executable.to_path_buf().into(),
             command_line: event.data.argv.to_command_line(),
             flags: event.data.flags,
@@ -499,6 +502,7 @@ impl EventProcessor {
             .to_string();
 
         let data = PrctlData {
+            ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
             option,
@@ -527,6 +531,7 @@ impl EventProcessor {
         let exe = self.get_exe(ck);
 
         let data = kunai::events::MmapExecData {
+            ancestors: self.get_ancestors_string(&info),
             command_line: self.get_command_line(ck),
             exe: exe.into(),
             mapped: mmapped_hashes,
@@ -562,9 +567,11 @@ impl EventProcessor {
         );
 
         let responses = event.data.answers().unwrap_or_default();
+        let ancestors = self.get_ancestors_string(&info);
 
         for r in responses {
             let mut data = DnsQueryData::new().with_responses(r.answers);
+            data.ancestors = ancestors.clone();
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
             data.query = r.question.clone();
@@ -596,6 +603,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = RWData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             path: event.data.path.to_path_buf(),
@@ -613,6 +621,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = UnlinkData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             path: event.data.path.into(),
@@ -631,6 +640,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = MountData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             dev_name: event.data.dev_name.into(),
@@ -651,6 +661,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let mut data = BpfProgLoadData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             id: event.data.id,
@@ -693,6 +704,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = BpfSocketFilterData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             socket: SocketInfo {
@@ -723,6 +735,7 @@ impl EventProcessor {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
 
         let data = MprotectData {
+            ancestors: self.get_ancestors_string(&info),
             command_line: cmd_line,
             exe: exe.into(),
             addr: event.data.start,
@@ -742,6 +755,7 @@ impl EventProcessor {
         let dst_ip: IpAddr = event.data.ip_port.into();
 
         let data = ConnectData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             dst: NetworkInfo {
@@ -767,6 +781,7 @@ impl EventProcessor {
         let dst_ip: IpAddr = event.data.ip_port.into();
 
         let data = SendDataData {
+            ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
             dst: NetworkInfo {
@@ -812,6 +827,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = FileRenameData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             old: event.data.old_name.into(),
@@ -830,6 +846,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = ExitData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             error_code: event.data.error_code,
