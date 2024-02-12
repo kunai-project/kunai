@@ -23,7 +23,6 @@ mod connect;
 mod dns;
 mod execve;
 mod exit;
-mod fd_install;
 mod fs;
 mod init_module;
 mod mmap;

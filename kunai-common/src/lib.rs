@@ -11,7 +11,6 @@ pub mod utils;
 pub mod alloc;
 pub mod errors;
 pub mod kprobe;
-pub mod maps;
 pub mod syscalls;
 
 bpf_target_code! {

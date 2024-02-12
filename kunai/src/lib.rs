@@ -34,11 +34,6 @@ pub fn configure_probes(programs: &mut Programs, target: KernelVersion) {
     programs.expect_mut("entry.security_bpf_prog").prio = 90;
     programs.expect_mut("exit.bpf_prog_load").prio = 100;
 
-    // fd_install
-    programs.expect_mut("fd.fd_install").prio = 0;
-    programs.expect_mut("fd.entry.__fdget").prio = 0;
-    programs.expect_mut("fd.exit.__fdget").prio = 10;
-
     // path_mount -> do_mount
     programs
         .expect_mut("fs.exit.path_mount")

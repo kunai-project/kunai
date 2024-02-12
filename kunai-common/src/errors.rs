@@ -10,7 +10,6 @@ use crate::alloc;
 use crate::bpf_events;
 use crate::buffer;
 use crate::cgroup;
-use crate::maps;
 use crate::net;
 use crate::path;
 use crate::string;
@@ -79,8 +78,6 @@ pub enum ProbeError {
     BufferError(buffer::Error),
     #[wrap]
     AllocError(alloc::Error),
-    #[wrap]
-    FdMapError(maps::Error),
     #[wrap]
     EventError(bpf_events::Error),
     #[wrap]
