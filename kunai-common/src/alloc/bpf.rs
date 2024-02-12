@@ -83,7 +83,7 @@ impl Allocator {
         }
     }
 
-    fn alloc<T>(&mut self) -> Result<&'static mut [u8]> {
+    fn alloc_slice<T>(&mut self) -> Result<&'static mut [u8]> {
         let sizeof = mem::size_of::<T>();
 
         if self.i_next == MAX_ALLOCS {
@@ -111,10 +111,8 @@ impl Allocator {
 
     fn zero_alloc<T>(&mut self) -> Result<&'static mut T> {
         unsafe {
-            let alloc = self.alloc::<T>()?;
-            // memsetting only the size we need
-            //alloc.iter_mut().for_each(|u| *u = 0);
-            Ok((alloc.as_mut_ptr() as *mut T).as_mut().unwrap())
+            let alloc = self.alloc_slice::<T>()?;
+            Ok(core::mem::transmute(alloc.as_mut_ptr()))
         }
     }
 }
