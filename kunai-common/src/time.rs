@@ -26,7 +26,7 @@ not_bpf_target_code! {
 }
 
 bpf_target_code! {
-    use crate::{co_re::gen::timespec64};
+    use crate::{co_re::timespec64};
 
     impl From<timespec64> for Time{
         fn from(value: timespec64) -> Self {
