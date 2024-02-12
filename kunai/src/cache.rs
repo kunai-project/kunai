@@ -212,6 +212,7 @@ impl Cache {
             entry.switcher.exit().expect("failed to restore namespace");
         }
 
+        // we cannot fail as entry.hostname cannot be None
         Ok(entry.hostname.as_ref().unwrap().clone())
     }
 
