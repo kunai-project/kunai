@@ -63,6 +63,8 @@ pub enum ProbeError {
     KProbeArgFailure,
     #[error("unexpected null pointer")]
     NullPointer,
+    #[error("file not found")]
+    FileNotFound,
     #[wrap]
     BpfMapError(MapError),
     #[wrap]
