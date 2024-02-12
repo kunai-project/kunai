@@ -4,13 +4,12 @@ use aya::{
 };
 use aya_obj::generated::bpf_prog_type;
 use libc::{uname, utsname};
-use std::convert::TryFrom;
-use std::ffi::CString;
 use std::fmt::Display;
-use std::mem;
+
 use std::num::ParseIntError;
 use std::str::FromStr;
 use std::{cmp::PartialEq, collections::HashMap};
+use std::{convert::TryFrom, mem::MaybeUninit};
 use thiserror::Error;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -77,14 +76,19 @@ impl KernelVersion {
     }
 
     pub fn from_sys() -> Result<Self, KernelVersionError> {
-        let mut utsname_struct: utsname = unsafe { mem::zeroed() };
-        let result = unsafe { uname(&mut utsname_struct as *mut utsname) };
+        let mut utsname_struct: MaybeUninit<utsname> = MaybeUninit::zeroed();
+        let result = unsafe { uname(utsname_struct.as_mut_ptr()) };
         if result == -1 {
             return Err(KernelVersionError::UnameFailed);
         }
-        let full = unsafe { CString::from_raw(&utsname_struct.release as *const _ as *mut _) }
-            .to_string_lossy()
-            .to_string();
+        let full = unsafe {
+            core::ffi::CStr::from_bytes_until_nul(core::mem::transmute(
+                utsname_struct.assume_init().release.as_slice(),
+            ))
+        }
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
         // we take only something looking like "[0-9]*?\.[0-9]*?\.[0-9]*?"
         let version = full
@@ -370,7 +374,10 @@ mod test {
         assert!(
             KernelVersion::from_str("5.2.1").unwrap() > KernelVersion::from_str("5.1.0").unwrap()
         );
+    }
 
+    #[test]
+    fn test_from_sys() {
         println!(
             "current kernel version: {}",
             KernelVersion::from_sys().unwrap()
