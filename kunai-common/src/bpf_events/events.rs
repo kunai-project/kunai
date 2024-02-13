@@ -69,7 +69,6 @@ const fn max_bpf_event_size() -> usize {
             Type::Connect => ConnectEvent::size_of(),
             Type::DnsQuery => DnsQueryEvent::size_of(),
             Type::SendData => SendEntropyEvent::size_of(),
-            Type::Mount => MountEvent::size_of(),
             Type::Read | Type::ReadConfig | Type::Write | Type::WriteConfig => {
                 ConfigEvent::size_of()
             }

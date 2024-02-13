@@ -8,7 +8,7 @@ use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MountData,
+    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent,
     MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
     UserEvent,
 };
@@ -632,27 +632,6 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_mount(
-        &mut self,
-        info: StdEventInfo,
-        event: &bpf_events::MountEvent,
-    ) -> UserEvent<MountData> {
-        let (exe, command_line) = self.get_exe_and_command_line(&info);
-
-        let data = MountData {
-            ancestors: self.get_ancestors_string(&info),
-            command_line,
-            exe: exe.into(),
-            dev_name: event.data.dev_name.into(),
-            path: event.data.path.into(),
-            ty: event.data.ty.into(),
-            success: event.data.rc == 0,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline]
     fn to_bpf_prog_load(
         &mut self,
         info: StdEventInfo,
@@ -1187,14 +1166,6 @@ impl EventProcessor {
             Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
                 Ok(e) => {
                     let mut e = self.to_unlink(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::Mount => match event!(enc_event, bpf_events::MountEvent) {
-                Ok(e) => {
-                    let mut e = self.to_mount(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),

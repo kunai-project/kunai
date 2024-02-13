@@ -26,7 +26,6 @@ mod exit;
 mod fs;
 mod init_module;
 mod mmap;
-mod mount;
 mod mprotect;
 mod prctl;
 mod schedule;

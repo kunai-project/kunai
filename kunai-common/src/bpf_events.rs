@@ -95,10 +95,9 @@ pub enum Type {
     SendData,
 
     // filesystem events
-    #[str("mount")]
-    Mount = 80,
+    // mount event was id=80
     #[str("read")]
-    Read,
+    Read = 81,
     #[str("read_config")]
     ReadConfig,
     #[str("write")]

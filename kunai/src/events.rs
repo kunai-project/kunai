@@ -614,22 +614,6 @@ impl IocGetter for UnlinkData {
 }
 
 def_user_data!(
-    pub struct MountData {
-        pub dev_name: String,
-        pub path: PathBuf,
-        #[serde(rename = "type")]
-        pub ty: String,
-        pub success: bool,
-    }
-);
-
-impl IocGetter for MountData {
-    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
-    }
-}
-
-def_user_data!(
     pub struct FileRenameData {
         pub old: PathBuf,
         pub new: PathBuf,
