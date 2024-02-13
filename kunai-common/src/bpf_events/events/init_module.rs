@@ -24,6 +24,15 @@ pub enum InitModuleArgs {
 }
 
 impl InitModuleArgs {
+    pub const fn syscall_name(&self) -> &'static str {
+        match self {
+            Self::Init(_) => "init_module",
+            Self::FInit(_) => "finit_module",
+        }
+    }
+}
+
+impl InitModuleArgs {
     pub fn uargs(&self) -> u64 {
         match self {
             Self::Init(a) => a.uargs,

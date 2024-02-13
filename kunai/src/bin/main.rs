@@ -810,6 +810,7 @@ impl EventProcessor {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
+            syscall: event.data.args.syscall_name().into(),
             module_name: event.data.name.to_string(),
             args: event.data.uargs.to_string(),
             loaded: event.data.loaded,

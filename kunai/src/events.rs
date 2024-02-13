@@ -576,6 +576,7 @@ pub struct InitModuleData {
     pub ancestors: String,
     pub command_line: String,
     pub exe: File,
+    pub syscall: String,
     pub module_name: String,
     pub args: String,
     pub loaded: bool,
