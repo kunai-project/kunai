@@ -1604,7 +1604,7 @@ struct Cli {
         short,
         long,
         value_name = "FILE",
-        help = "Specify a configuration file to use. Command line options superseed the ones specified in the configuration file."
+        help = "Specify a configuration file to use. Command line options supersede the ones specified in the configuration file."
     )]
     config: Option<PathBuf>,
 
@@ -1619,7 +1619,7 @@ struct Cli {
 
     #[arg(
         long,
-        help = "Include events by name (comma separated). Superseeds any exclude filter."
+        help = "Include events by name (comma separated). Supersedes any exclude filter."
     )]
     include: Option<String>,
 
@@ -1633,7 +1633,7 @@ struct Cli {
         short,
         long,
         value_name = "FILE",
-        help = "Detection/filtering rule file. Superseeds configuration file"
+        help = "Detection/filtering rule file. Supersedes configuration file"
     )]
     rule_file: Option<Vec<String>>,
 
@@ -1715,14 +1715,14 @@ async fn main() -> Result<(), anyhow::Error> {
         conf = Config::from_toml(std::fs::read_to_string(conf_file)?)?;
     }
 
-    // command line superseeds configuration
+    // command line supersedes configuration
 
-    // superseeds configuration
+    // supersedes configuration
     if let Some(rules) = cli.rule_file {
         conf.rules = rules;
     }
 
-    // superseeds configuration
+    // supersedes configuration
     if let Some(iocs) = cli.ioc_file {
         conf.iocs = iocs;
     }
