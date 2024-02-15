@@ -3,11 +3,11 @@ use aya::{
     Bpf, Btf,
 };
 use aya_obj::generated::bpf_prog_type;
-use libc::{uname, utsname};
-use std::convert::TryFrom;
-use std::ffi::CString;
+
+use core::ffi::FromBytesUntilNulError;
 use std::fmt::Display;
-use std::mem;
+
+use std::convert::TryFrom;
 use std::num::ParseIntError;
 use std::str::FromStr;
 use std::{cmp::PartialEq, collections::HashMap};
@@ -32,6 +32,8 @@ pub enum KernelVersionError {
     UnameFailed,
     #[error("version string is empty")]
     EmptyVersionString,
+    #[error("{0}")]
+    ByteUntilNull(#[from] FromBytesUntilNulError),
 }
 
 impl From<ParseIntError> for KernelVersionError {
@@ -55,6 +57,8 @@ macro_rules! kernel {
 
 pub use kernel;
 
+use crate::util::uname::Utsname;
+
 impl KernelVersion {
     const MAX_VERSION: KernelVersion = KernelVersion {
         major: u16::MAX,
@@ -77,25 +81,20 @@ impl KernelVersion {
     }
 
     pub fn from_sys() -> Result<Self, KernelVersionError> {
-        let mut utsname_struct: utsname = unsafe { mem::zeroed() };
-        let result = unsafe { uname(&mut utsname_struct as *mut utsname) };
-        if result == -1 {
-            return Err(KernelVersionError::UnameFailed);
-        }
-        let full = unsafe { CString::from_raw(&utsname_struct.release as *const _ as *mut _) }
-            .to_string_lossy()
-            .to_string();
+        let u = Utsname::from_sys().map_err(|_| KernelVersionError::UnameFailed)?;
+
+        let release = u.release()?;
 
         // we take only something looking like "[0-9]*?\.[0-9]*?\.[0-9]*?"
-        let version = full
+        let release = release
             .splitn(2, |c: char| !(c == '.' || c.is_numeric()))
             .collect::<Vec<&str>>();
 
-        if version.is_empty() {
+        if release.is_empty() {
             return Err(KernelVersionError::EmptyVersionString);
         }
 
-        Self::from_str(version[0])
+        Self::from_str(release[0])
     }
 }
 
@@ -370,7 +369,10 @@ mod test {
         assert!(
             KernelVersion::from_str("5.2.1").unwrap() > KernelVersion::from_str("5.1.0").unwrap()
         );
+    }
 
+    #[test]
+    fn test_from_sys() {
         println!(
             "current kernel version: {}",
             KernelVersion::from_sys().unwrap()

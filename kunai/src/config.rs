@@ -89,7 +89,7 @@ fn host_uuid() -> Option<uuid::Uuid> {
 
 impl Config {
     pub fn host_uuid(&self) -> Option<uuid::Uuid> {
-        // host_uuid in config superseeds system host_uuid
+        // host_uuid in config supersedes system host_uuid
         self.host_uuid.or(host_uuid())
     }
 

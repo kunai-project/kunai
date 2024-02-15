@@ -6,27 +6,64 @@ use aya_bpf::programs::ProbeContext;
 use kunai_common::inspect_err;
 use kunai_common::kprobe::ProbeFn;
 
+#[repr(C)]
+struct RW(bool, bool);
+
+#[repr(C)]
+struct FileKey(u64, u64);
+
 #[map]
-static mut FILE_TRACKING: LruHashMap<u128, bool> = LruHashMap::with_max_entries(0x1ffff, 0);
+static mut FILE_TRACKING: LruHashMap<FileKey, RW> = LruHashMap::with_max_entries(0x1ffff, 0);
 
 #[inline(always)]
-unsafe fn track(file: &co_re::file) -> ProbeResult<()> {
-    FILE_TRACKING
-        .insert(&file_id(file)?, &true, 0)
-        .map_err(|_| MapError::InsertFailure)?;
+unsafe fn track_read(file: &co_re::file) -> ProbeResult<()> {
+    let key = &file_key(file)?;
+    match FILE_TRACKING.get_ptr_mut(&key) {
+        Some(rw) => (*rw).0 = true,
+        None => {
+            FILE_TRACKING
+                .insert(&key, &RW(true, false), 0)
+                .map_err(|_| MapError::InsertFailure)?;
+        }
+    }
     Ok(())
 }
 
 #[inline(always)]
-unsafe fn already_tracked(file: &co_re::file) -> ProbeResult<bool> {
-    Ok(*(FILE_TRACKING.get(&file_id(file)?).unwrap_or(&false)))
+unsafe fn track_write(file: &co_re::file) -> ProbeResult<()> {
+    let key = &file_key(file)?;
+    match FILE_TRACKING.get_ptr_mut(&key) {
+        Some(rw) => (*rw).1 = true,
+        None => {
+            FILE_TRACKING
+                .insert(&key, &RW(false, true), 0)
+                .map_err(|_| MapError::InsertFailure)?;
+        }
+    }
+    Ok(())
 }
 
 #[inline(always)]
-unsafe fn file_id(file: &co_re::file) -> ProbeResult<u128> {
+unsafe fn already_read(file: &co_re::file) -> ProbeResult<bool> {
+    Ok(FILE_TRACKING
+        .get(&file_key(file)?)
+        .unwrap_or(&RW(false, false))
+        .0)
+}
+
+#[inline(always)]
+unsafe fn already_written(file: &co_re::file) -> ProbeResult<bool> {
+    Ok(FILE_TRACKING
+        .get(&file_key(file)?)
+        .unwrap_or(&RW(false, false))
+        .1)
+}
+
+#[inline(always)]
+unsafe fn file_key(file: &co_re::file) -> ProbeResult<FileKey> {
     let ino = core_read_kernel!(file, f_inode, i_ino)?;
     let task_id = bpf_task_tracking_id();
-    Ok((task_id as u128) << 64 | ino as u128)
+    Ok(FileKey(task_id, ino))
 }
 
 #[kprobe(name = "fs.vfs_read")]
@@ -61,7 +98,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // if file has already been tracked
-    if already_tracked(&file)? {
+    if already_read(&file)? {
         return Ok(());
     }
 
@@ -84,9 +121,9 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    ignore_result!(inspect_err!(track(&file), |_| warn_msg!(
+    ignore_result!(inspect_err!(track_read(&file), |_| warn_msg!(
         ctx,
-        "failed to track file"
+        "failed to track file read"
     )));
 
     Ok(())
@@ -123,6 +160,11 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
+    // if file has already been tracked
+    if already_written(&file)? {
+        return Ok(());
+    }
+
     alloc::init()?;
     let event = alloc::alloc_zero::<ConfigEvent>()?;
 
@@ -138,6 +180,12 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
         event.init_from_current_task(Type::Write)?;
         pipe_event(ctx, event);
     }
+
+    // we mark file as being tracked
+    ignore_result!(inspect_err!(track_write(&file), |_| warn_msg!(
+        ctx,
+        "failed to track file write"
+    )));
 
     Ok(())
 }

@@ -216,7 +216,7 @@ macro_rules! impl_std_iocs {
     ($ty:ty) => {
         impl IocGetter for $ty {
             fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-                vec![self.exe.file.to_string_lossy()]
+                self._iocs()
             }
         }
     };
@@ -351,12 +351,20 @@ macro_rules! def_user_data {
                 $(#[$derive])*
                 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
                 $struct_vis struct $struct_name {
+                    pub ancestors: String,
                     pub command_line: String,
                     pub exe: File,
                     $(
                         $(#[$struct_meta])*
                         $vis $field_name: $field_type
                     ),*
+                }
+
+                impl $struct_name {
+                    #[inline(always)]
+                    fn _iocs(&self) -> Vec<Cow<'_,str>>{
+                        vec![self.exe.file.to_string_lossy()]
+                    }
                 }
             };
         }
@@ -568,6 +576,7 @@ pub struct InitModuleData {
     pub ancestors: String,
     pub command_line: String,
     pub exe: File,
+    pub syscall: String,
     pub module_name: String,
     pub args: String,
     pub loaded: bool,
@@ -599,22 +608,6 @@ def_user_data!(
 );
 
 impl IocGetter for UnlinkData {
-    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
-    }
-}
-
-def_user_data!(
-    pub struct MountData {
-        pub dev_name: String,
-        pub path: PathBuf,
-        #[serde(rename = "type")]
-        pub ty: String,
-        pub success: bool,
-    }
-);
-
-impl IocGetter for MountData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
     }

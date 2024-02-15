@@ -11,6 +11,7 @@ pub mod util;
 
 /// function that responsible of probe priorities and compatibily across kernels
 /// panic: if a given probe name is not found
+#[allow(unused_variables)]
 pub fn configure_probes(programs: &mut Programs, target: KernelVersion) {
     programs.expect_mut("execve.security_bprm_check").prio = 0;
 
@@ -33,16 +34,6 @@ pub fn configure_probes(programs: &mut Programs, target: KernelVersion) {
     // bpf probes
     programs.expect_mut("entry.security_bpf_prog").prio = 90;
     programs.expect_mut("exit.bpf_prog_load").prio = 100;
-
-    // fd_install
-    programs.expect_mut("fd.fd_install").prio = 0;
-    programs.expect_mut("fd.entry.__fdget").prio = 0;
-    programs.expect_mut("fd.exit.__fdget").prio = 10;
-
-    // path_mount -> do_mount
-    programs
-        .expect_mut("fs.exit.path_mount")
-        .rename_if(target < kernel!(5, 9), "fs.exit.do_mount");
 
     // mmap probe
     programs.expect_mut("syscalls.sys_enter_mmap").prio = 90;

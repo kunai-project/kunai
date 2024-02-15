@@ -1,5 +1,6 @@
 use event_derive::FieldGetter;
 use gene::{FieldGetter, FieldValue};
+
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,7 @@ use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
     collections::HashMap,
-    fs::{self, File},
+    fs::File,
     io::{self, BufReader, Read},
     os::unix::prelude::MetadataExt,
     path::{Path, PathBuf},
@@ -167,7 +168,6 @@ unsafe impl Sync for Key {}
 
 struct CachedNs {
     switcher: namespaces::Switcher,
-    hostname: Option<String>,
 }
 
 pub struct Cache {
@@ -187,32 +187,9 @@ impl Cache {
     #[inline]
     pub fn cache_ns(&mut self, pid: i32, ns: Namespace) -> Result<(), Error> {
         self.namespaces.entry(ns).or_insert(CachedNs {
-            switcher: Switcher::new(ns, pid as u32).map_err(Error::Namespace)?,
-            hostname: None,
+            switcher: Switcher::new(ns.kind, pid as u32).map_err(Error::Namespace)?,
         });
         Ok(())
-    }
-
-    #[inline]
-    pub fn get_hostname(&mut self, ns: Namespace) -> Result<String, Error> {
-        // check that the namespace is a mount namespace
-        if !ns.is_kind(Kind::Mnt) {
-            return Err(Error::WrongNsKind {
-                exp: Kind::Mnt,
-                got: ns.kind,
-            });
-        }
-
-        let entry = self.namespaces.get_mut(&ns).ok_or(Error::UnknownNs(ns))?;
-
-        if entry.hostname.is_none() {
-            entry.switcher.enter()?;
-            let hostname = fs::read_to_string("/etc/hostname").unwrap_or("?".into());
-            entry.hostname = Some(hostname.trim_end().into());
-            entry.switcher.exit().expect("failed to restore namespace");
-        }
-
-        Ok(entry.hostname.as_ref().unwrap().clone())
     }
 
     #[inline]

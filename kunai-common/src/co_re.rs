@@ -1,8 +1,8 @@
 #[allow(non_camel_case_types)]
 #[allow(non_upper_case_globals)]
 #[allow(dead_code)]
-// todo: remove pub
-pub mod gen;
+mod gen;
+pub use gen::timespec64;
 
 mod core_task_struct;
 pub use core_task_struct::*;

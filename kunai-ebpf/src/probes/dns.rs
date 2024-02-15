@@ -203,7 +203,7 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
     let current = task_struct::current();
     let file = current
         .get_fd(fd as usize)
-        .ok_or(ProbeError::CoReFieldMissing)?;
+        .ok_or(ProbeError::FileNotFound)?;
 
     if file.is_null() {
         return Err(ProbeError::NullPointer);
@@ -258,7 +258,7 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &ProbeContext) -> ProbeResult<()> {
 
     let file = task_struct::current()
         .get_fd(fd as usize)
-        .ok_or(ProbeError::CoReFieldMissing)?;
+        .ok_or(ProbeError::FileNotFound)?;
 
     if file.is_null() {
         return Err(ProbeError::NullPointer);
@@ -298,7 +298,7 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
     // so we need to lookup task_struct's files->fd_array
     let file = current
         .get_fd(fd as usize)
-        .ok_or(ProbeError::CoReFieldMissing)?;
+        .ok_or(ProbeError::FileNotFound)?;
 
     // file should not be null
     if file.is_null() {
@@ -355,7 +355,7 @@ unsafe fn try_exit_recvmsg(exit_ctx: &ProbeContext) -> ProbeResult<()> {
 
     let file = task_struct::current()
         .get_fd(fd as usize)
-        .ok_or(ProbeError::CoReFieldMissing)?;
+        .ok_or(ProbeError::FileNotFound)?;
 
     if file.is_null() {
         return Err(ProbeError::NullPointer);

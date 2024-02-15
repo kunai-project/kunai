@@ -8,9 +8,8 @@ use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MountData,
-    MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
-    UserEvent,
+    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MprotectData,
+    NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
@@ -74,6 +73,7 @@ struct Task {
     container: Option<Container>,
     // needs to be vec because of procfs
     cgroups: Vec<String>,
+    nodename: Option<String>,
     parent_key: Option<TaskKey>,
 }
 
@@ -89,7 +89,9 @@ impl Task {
         self.command_line.join(" ")
     }
 
+    #[inline(always)]
     fn free_memory(&mut self) {
+        // this does not allocate the new map
         self.resolved = HashMap::new();
     }
 }
@@ -296,6 +298,7 @@ impl EventProcessor {
             resolved: HashMap::new(),
             container: None,
             cgroups,
+            nodename: None,
             parent_key,
         };
 
@@ -478,6 +481,7 @@ impl EventProcessor {
         event: &bpf_events::CloneEvent,
     ) -> UserEvent<CloneData> {
         let data = CloneData {
+            ancestors: self.get_ancestors_string(&info),
             exe: event.data.executable.to_path_buf().into(),
             command_line: event.data.argv.to_command_line(),
             flags: event.data.flags,
@@ -499,6 +503,7 @@ impl EventProcessor {
             .to_string();
 
         let data = PrctlData {
+            ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
             option,
@@ -527,6 +532,7 @@ impl EventProcessor {
         let exe = self.get_exe(ck);
 
         let data = kunai::events::MmapExecData {
+            ancestors: self.get_ancestors_string(&info),
             command_line: self.get_command_line(ck),
             exe: exe.into(),
             mapped: mmapped_hashes,
@@ -562,9 +568,11 @@ impl EventProcessor {
         );
 
         let responses = event.data.answers().unwrap_or_default();
+        let ancestors = self.get_ancestors_string(&info);
 
         for r in responses {
             let mut data = DnsQueryData::new().with_responses(r.answers);
+            data.ancestors = ancestors.clone();
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
             data.query = r.question.clone();
@@ -596,6 +604,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = RWData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             path: event.data.path.to_path_buf(),
@@ -613,30 +622,11 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = UnlinkData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             path: event.data.path.into(),
             success: event.data.success,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline]
-    fn to_mount(
-        &mut self,
-        info: StdEventInfo,
-        event: &bpf_events::MountEvent,
-    ) -> UserEvent<MountData> {
-        let (exe, command_line) = self.get_exe_and_command_line(&info);
-
-        let data = MountData {
-            command_line,
-            exe: exe.into(),
-            dev_name: event.data.dev_name.into(),
-            path: event.data.path.into(),
-            ty: event.data.ty.into(),
-            success: event.data.rc == 0,
         };
 
         UserEvent::new(data, info)
@@ -651,6 +641,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let mut data = BpfProgLoadData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             id: event.data.id,
@@ -693,6 +684,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = BpfSocketFilterData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             socket: SocketInfo {
@@ -723,6 +715,7 @@ impl EventProcessor {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
 
         let data = MprotectData {
+            ancestors: self.get_ancestors_string(&info),
             command_line: cmd_line,
             exe: exe.into(),
             addr: event.data.start,
@@ -742,6 +735,7 @@ impl EventProcessor {
         let dst_ip: IpAddr = event.data.ip_port.into();
 
         let data = ConnectData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             dst: NetworkInfo {
@@ -767,6 +761,7 @@ impl EventProcessor {
         let dst_ip: IpAddr = event.data.ip_port.into();
 
         let data = SendDataData {
+            ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
             dst: NetworkInfo {
@@ -795,6 +790,7 @@ impl EventProcessor {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
+            syscall: event.data.args.syscall_name().into(),
             module_name: event.data.name.to_string(),
             args: event.data.uargs.to_string(),
             loaded: event.data.loaded,
@@ -812,6 +808,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = FileRenameData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             old: event.data.old_name.into(),
@@ -830,6 +827,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = ExitData {
+            ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             error_code: event.data.error_code,
@@ -866,7 +864,12 @@ impl EventProcessor {
         }
 
         // early return if task key exists
-        if self.tasks.contains_key(&ck) {
+        if let Some(v) = self.tasks.get_mut(&ck) {
+            // we fix nodename if not set yet
+            // tasks init from procfs are lacking nodename
+            if v.nodename.is_none() {
+                v.nodename = event.data.nodename()
+            }
             return;
         }
 
@@ -923,6 +926,7 @@ impl EventProcessor {
             resolved: HashMap::new(),
             container: container_type,
             cgroups: cgroups,
+            nodename: event.data.nodename(),
             parent_key: Some(info.parent_key()),
         });
     }
@@ -950,7 +954,7 @@ impl EventProcessor {
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
                 container = Some(kunai::info::ContainerInfo {
-                    name: self.cache.get_hostname(mnt_ns).unwrap_or("?".into()),
+                    name: cd.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
                     ty: cd.and_then(|cd| cd.container),
                 });
             }
@@ -1040,9 +1044,8 @@ impl EventProcessor {
             debug!("skipping our event");
         }
 
-        let pid = i.process.tgid;
-
         if let Some(ns) = i.process.namespaces {
+            let pid = i.process.pid;
             let mnt = Namespace::mnt(ns.mnt);
             if let Err(e) = self.cache.cache_ns(pid, mnt) {
                 debug!("failed to cache namespace pid={pid} ns={mnt}: {e}");
@@ -1169,14 +1172,6 @@ impl EventProcessor {
             Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
                 Ok(e) => {
                     let mut e = self.to_unlink(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::Mount => match event!(enc_event, bpf_events::MountEvent) {
-                Ok(e) => {
-                    let mut e = self.to_mount(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1586,7 +1581,7 @@ struct Cli {
         short,
         long,
         value_name = "FILE",
-        help = "Specify a configuration file to use. Command line options superseed the ones specified in the configuration file."
+        help = "Specify a configuration file to use. Command line options supersede the ones specified in the configuration file."
     )]
     config: Option<PathBuf>,
 
@@ -1601,7 +1596,7 @@ struct Cli {
 
     #[arg(
         long,
-        help = "Include events by name (comma separated). Superseeds any exclude filter."
+        help = "Include events by name (comma separated). Supersedes any exclude filter."
     )]
     include: Option<String>,
 
@@ -1615,7 +1610,7 @@ struct Cli {
         short,
         long,
         value_name = "FILE",
-        help = "Detection/filtering rule file. Superseeds configuration file"
+        help = "Detection/filtering rule file. Supersedes configuration file"
     )]
     rule_file: Option<Vec<String>>,
 
@@ -1697,14 +1692,14 @@ async fn main() -> Result<(), anyhow::Error> {
         conf = Config::from_toml(std::fs::read_to_string(conf_file)?)?;
     }
 
-    // command line superseeds configuration
+    // command line supersedes configuration
 
-    // superseeds configuration
+    // supersedes configuration
     if let Some(rules) = cli.rule_file {
         conf.rules = rules;
     }
 
-    // superseeds configuration
+    // supersedes configuration
     if let Some(iocs) = cli.ioc_file {
         conf.iocs = iocs;
     }

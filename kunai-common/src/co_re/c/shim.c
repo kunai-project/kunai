@@ -279,12 +279,42 @@ SHIM_REF(mnt_namespace, ns);
 SHIM(mnt_namespace, root);
 SHIM(mnt_namespace, mounts);
 
+#define __NEW_UTS_LEN 64
+
+struct new_utsname
+{
+	char sysname[__NEW_UTS_LEN + 1];
+	char nodename[__NEW_UTS_LEN + 1];
+	char release[__NEW_UTS_LEN + 1];
+	char version[__NEW_UTS_LEN + 1];
+	char machine[__NEW_UTS_LEN + 1];
+	char domainname[__NEW_UTS_LEN + 1];
+} __attribute__((preserve_access_index));
+
+ARRAY_SHIM(new_utsname, sysname);
+ARRAY_SHIM(new_utsname, nodename);
+ARRAY_SHIM(new_utsname, release);
+ARRAY_SHIM(new_utsname, version);
+ARRAY_SHIM(new_utsname, machine);
+ARRAY_SHIM(new_utsname, domainname);
+
+struct uts_namespace
+{
+	struct new_utsname name;
+	struct ns_common ns;
+} __attribute__((preserve_access_index));
+
+SHIM_REF(uts_namespace, ns);
+SHIM_REF(uts_namespace, name);
+
 struct nsproxy
 {
 	struct mnt_namespace *mnt_ns;
+	struct uts_namespace *uts_ns;
 } __attribute__((preserve_access_index));
 
 SHIM(nsproxy, mnt_ns);
+SHIM(nsproxy, uts_ns);
 
 struct kernfs_node
 {

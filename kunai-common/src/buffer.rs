@@ -88,6 +88,11 @@ impl<const N: usize> Buffer<N> {
         }
         self.len = 0;
     }
+
+    #[inline(always)]
+    pub const fn cap(&self) -> usize {
+        N
+    }
 }
 
 #[derive(BpfError, Clone, Copy)]

@@ -1,6 +1,6 @@
 use super::*;
 use aya_bpf::programs::TracePointContext;
-use kunai_common::{maps::FdMap, syscalls::SysEnterArgs};
+use kunai_common::{co_re::task_struct, syscalls::SysEnterArgs};
 
 // print fmt: "unshare_flags: 0x%08lx", ((unsigned long)(REC->unshare_flags))
 // name: sys_enter_mmap
@@ -45,29 +45,27 @@ unsafe fn try_sys_enter_mmap(ctx: &TracePointContext) -> ProbeResult<()> {
     let fd = mmap_args.fd as i32;
 
     if fd >= 0 && mmap_args.prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
-        //if fd >= 0 {
-        let mut fds = FdMap::attach();
+        let current = task_struct::current();
 
-        let opt_p = fds.get(fd as i64);
+        let file = current
+            .get_fd(fd as usize)
+            .ok_or(ProbeError::FileNotFound)?;
 
-        match opt_p {
-            Some(f) => {
-                alloc::init()?;
-                let event = alloc::alloc_zero::<MmapExecEvent>()?;
-
-                event.init_from_current_task(Type::MmapExec)?;
-
-                event
-                    .data
-                    .filename
-                    .core_resolve(&core_read_kernel!(f, f_path)?, path::MAX_PATH_DEPTH)?;
-
-                pipe_event(ctx, event);
-            }
-            None => {
-                error_msg!(ctx, "failed to retrieve path for mmapped");
-            }
+        if file.is_null() {
+            return Err(ProbeError::FileNotFound);
         }
+
+        alloc::init()?;
+        let event = alloc::alloc_zero::<MmapExecEvent>()?;
+
+        event.init_from_current_task(Type::MmapExec)?;
+
+        event
+            .data
+            .filename
+            .core_resolve_file(&file, MAX_PATH_DEPTH)?;
+
+        pipe_event(ctx, event);
     }
 
     Ok(())

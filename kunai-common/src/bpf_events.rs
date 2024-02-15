@@ -1,3 +1,4 @@
+use crate::buffer::Buffer;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
 use crate::macros::{bpf_target_code, not_bpf_target_code};
@@ -19,6 +20,8 @@ pub use events::*;
 
 pub const COMM_SIZE: usize = 16;
 pub const COMM_DEFAULT: [i8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+pub type Nodename = Buffer<65>;
 
 #[derive(BpfError, Clone, Copy)]
 pub enum Error {
@@ -95,10 +98,9 @@ pub enum Type {
     SendData,
 
     // filesystem events
-    #[str("mount")]
-    Mount = 80,
+    // mount event was id=80
     #[str("read")]
-    Read,
+    Read = 81,
     #[str("read_config")]
     ReadConfig,
     #[str("write")]

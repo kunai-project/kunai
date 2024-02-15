@@ -89,8 +89,16 @@ unsafe fn execve_event<C: BpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
 
     let event = &mut (*event);
 
+    let current = task_struct::current();
+
+    // getting nodename first as we need the current task struct
+    event.data.nodename.read_kernel_at(
+        core_read_kernel!(current, nsproxy, uts_ns, name, nodename)?,
+        event.data.nodename.cap() as u32,
+    )?;
+
     // initializing event
-    event.init_from_current_task(Type::Execve)?;
+    event.init_from_task(Type::Execve, current)?;
 
     // file should not be null here
     // we are getting interpreter which is set to the file attribute by exec_binprm kernel function
