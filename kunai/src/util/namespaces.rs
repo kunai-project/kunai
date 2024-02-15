@@ -8,7 +8,7 @@ use std::process;
 use std::{fs::File, os::fd::AsRawFd};
 
 use kunai_macros::StrEnum;
-use libc::{c_int, pid_t, syscall, SYS_pidfd_open};
+use libc::{c_int, pid_t, syscall, SYS_pidfd_open, CLONE_NEWNS};
 use thiserror::Error;
 
 #[allow(dead_code)]
@@ -165,10 +165,10 @@ impl Namespace {
     }
 
     #[inline(always)]
-    pub fn open(&self, pid: u32) -> Result<File, NsError> {
+    pub fn open(kind: Kind, pid: u32) -> Result<File, NsError> {
         File::options()
             .read(true)
-            .open(self.kind.path(pid))
+            .open(kind.path(pid))
             .map_err(NsError::from)
     }
 }
@@ -189,14 +189,14 @@ pub enum Error {
 }
 
 impl Switcher {
-    pub fn new(ns: Namespace, pid: u32) -> Result<Self, Error> {
+    pub fn new(kind: Kind, pid: u32) -> Result<Self, Error> {
         let self_pid = process::id();
-        let self_ns = Namespace::from_pid(ns.kind, self_pid)?;
+        let ns = Namespace::from_pid(kind, pid)?;
 
         // namespace of the current process
-        let src = self_ns.open(self_pid)?;
+        let src = Namespace::open(kind, self_pid)?;
         // namespace of the target process
-        let dst = ns.open(pid)?;
+        let dst = Namespace::open(kind, pid)?;
 
         Ok(Self {
             namespace: ns,
@@ -208,13 +208,13 @@ impl Switcher {
     #[inline]
     pub fn enter(&self) -> Result<(), Error> {
         // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
-        setns(self.dst.as_raw_fd(), 0).map_err(|e| Error::SetNs(self.namespace, e))
+        setns(self.dst.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
     }
 
     #[inline]
     pub fn exit(&self) -> Result<(), Error> {
         // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
-        setns(self.src.as_raw_fd(), 0).map_err(|e| Error::SetNs(self.namespace, e))
+        setns(self.src.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
     }
 }
 
@@ -235,7 +235,7 @@ mod test {
             Kind::User,
             Kind::Uts,
         ] {
-            Switcher::new(Namespace::new(kind, 0), pid).unwrap();
+            Switcher::new(kind, pid).unwrap();
         }
     }
 

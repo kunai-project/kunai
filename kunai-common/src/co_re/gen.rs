@@ -475,8 +475,105 @@ extern "C" {
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct new_utsname {
+    pub sysname: [::core::ffi::c_char; 65usize],
+    pub nodename: [::core::ffi::c_char; 65usize],
+    pub release: [::core::ffi::c_char; 65usize],
+    pub version: [::core::ffi::c_char; 65usize],
+    pub machine: [::core::ffi::c_char; 65usize],
+    pub domainname: [::core::ffi::c_char; 65usize],
+}
+extern "C" {
+    pub fn shim_new_utsname_sysname(new_utsname: *mut new_utsname) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_sysname_user(new_utsname: *mut new_utsname)
+        -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_sysname_exists(new_utsname: *mut new_utsname) -> bool;
+}
+extern "C" {
+    pub fn shim_new_utsname_nodename(new_utsname: *mut new_utsname) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_nodename_user(
+        new_utsname: *mut new_utsname,
+    ) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_nodename_exists(new_utsname: *mut new_utsname) -> bool;
+}
+extern "C" {
+    pub fn shim_new_utsname_release(new_utsname: *mut new_utsname) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_release_user(new_utsname: *mut new_utsname)
+        -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_release_exists(new_utsname: *mut new_utsname) -> bool;
+}
+extern "C" {
+    pub fn shim_new_utsname_version(new_utsname: *mut new_utsname) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_version_user(new_utsname: *mut new_utsname)
+        -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_version_exists(new_utsname: *mut new_utsname) -> bool;
+}
+extern "C" {
+    pub fn shim_new_utsname_machine(new_utsname: *mut new_utsname) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_machine_user(new_utsname: *mut new_utsname)
+        -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_machine_exists(new_utsname: *mut new_utsname) -> bool;
+}
+extern "C" {
+    pub fn shim_new_utsname_domainname(new_utsname: *mut new_utsname) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_domainname_user(
+        new_utsname: *mut new_utsname,
+    ) -> *mut ::core::ffi::c_char;
+}
+extern "C" {
+    pub fn shim_new_utsname_domainname_exists(new_utsname: *mut new_utsname) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct uts_namespace {
+    pub name: new_utsname,
+    pub ns: ns_common,
+}
+extern "C" {
+    pub fn shim_uts_namespace_ns(uts_namespace: *mut uts_namespace) -> *mut ns_common;
+}
+extern "C" {
+    pub fn shim_uts_namespace_ns_user(uts_namespace: *mut uts_namespace) -> *mut ns_common;
+}
+extern "C" {
+    pub fn shim_uts_namespace_ns_exists(uts_namespace: *mut uts_namespace) -> bool;
+}
+extern "C" {
+    pub fn shim_uts_namespace_name(uts_namespace: *mut uts_namespace) -> *mut new_utsname;
+}
+extern "C" {
+    pub fn shim_uts_namespace_name_user(uts_namespace: *mut uts_namespace) -> *mut new_utsname;
+}
+extern "C" {
+    pub fn shim_uts_namespace_name_exists(uts_namespace: *mut uts_namespace) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct nsproxy {
     pub mnt_ns: *mut mnt_namespace,
+    pub uts_ns: *mut uts_namespace,
 }
 extern "C" {
     pub fn shim_nsproxy_mnt_ns(nsproxy: *mut nsproxy) -> *mut mnt_namespace;
@@ -486,6 +583,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_nsproxy_mnt_ns_exists(nsproxy: *mut nsproxy) -> bool;
+}
+extern "C" {
+    pub fn shim_nsproxy_uts_ns(nsproxy: *mut nsproxy) -> *mut uts_namespace;
+}
+extern "C" {
+    pub fn shim_nsproxy_uts_ns_user(nsproxy: *mut nsproxy) -> *mut uts_namespace;
+}
+extern "C" {
+    pub fn shim_nsproxy_uts_ns_exists(nsproxy: *mut nsproxy) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

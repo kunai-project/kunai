@@ -1,5 +1,8 @@
 use aya_bpf::programs::ProbeContext;
-use kunai_common::co_re::task_struct;
+use kunai_common::{
+    buffer::{self},
+    co_re::task_struct,
+};
 
 use super::*;
 
@@ -22,6 +25,19 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
     alloc::init()?;
 
     let event = alloc::alloc_zero::<CloneEvent>()?;
+
+    let nsproxy = core_read_kernel!(new_task, nsproxy)?;
+
+    // this may happen, see: https://github.com/kunai-project/kunai/issues/34
+    if !nsproxy.is_null() {
+        ignore_result!(inspect_err!(
+            event.data.nodename.read_kernel_at(
+                core_read_kernel!(new_task, nsproxy, uts_ns, name, nodename)?,
+                event.data.nodename.cap() as u32
+            ),
+            |e: &buffer::Error| warn!(ctx, "failed to read nodename", (*e).into())
+        ));
+    }
 
     // initializing task
     event.init_from_task(Type::Clone, new_task)?;

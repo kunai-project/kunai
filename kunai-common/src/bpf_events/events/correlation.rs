@@ -1,5 +1,5 @@
-use super::{CloneEvent, MmapExecEvent, ScheduleEvent, ExecveEvent};
-use crate::bpf_events::{Event, Type};
+use super::{CloneEvent, ExecveEvent, MmapExecEvent, ScheduleEvent};
+use crate::bpf_events::{Event, Nodename, Type};
 use crate::path::Path;
 use crate::{buffer::Buffer, cgroup::Cgroup};
 
@@ -24,6 +24,21 @@ pub struct CorrelationData {
     pub exe: Path,
     pub paths: [Option<Path>; 1],
     pub cgroup: Cgroup,
+    pub nodename: Option<Nodename>,
+}
+
+impl CorrelationData {
+    pub fn nodename(&self) -> Option<String> {
+        if let Some(nn) = self.nodename {
+            return Some(
+                core::ffi::CStr::from_bytes_until_nul(nn.as_slice())
+                    .ok()?
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+        None
+    }
 }
 
 impl From<&ExecveEvent> for CorrelationEvent {
@@ -36,6 +51,7 @@ impl From<&ExecveEvent> for CorrelationEvent {
                 exe: value.data.executable,
                 paths: [Some(value.data.interpreter)],
                 cgroup: value.data.cgroup,
+                nodename: Some(value.data.nodename),
             },
         }
         .switch_type(Type::Correlation)
@@ -52,6 +68,15 @@ impl From<&CloneEvent> for CorrelationEvent {
                 exe: value.data.executable,
                 paths: [None],
                 cgroup: value.data.cgroup,
+                nodename: {
+                    // nodename resolution might fail in clone
+                    // but this is not blocking event generation
+                    if value.data.nodename.is_empty() {
+                        None
+                    } else {
+                        Some(value.data.nodename)
+                    }
+                },
             },
         }
         .switch_type(Type::Correlation)
@@ -68,6 +93,7 @@ impl From<&ScheduleEvent> for CorrelationEvent {
                 exe: value.data.exe,
                 paths: [None],
                 cgroup: value.data.cgroup,
+                nodename: Some(value.data.nodename),
             },
         }
         .switch_type(Type::Correlation)

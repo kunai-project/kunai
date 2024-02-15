@@ -3,13 +3,14 @@ use aya::{
     Bpf, Btf,
 };
 use aya_obj::generated::bpf_prog_type;
-use libc::{uname, utsname};
+
+use core::ffi::FromBytesUntilNulError;
 use std::fmt::Display;
 
+use std::convert::TryFrom;
 use std::num::ParseIntError;
 use std::str::FromStr;
 use std::{cmp::PartialEq, collections::HashMap};
-use std::{convert::TryFrom, mem::MaybeUninit};
 use thiserror::Error;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +32,8 @@ pub enum KernelVersionError {
     UnameFailed,
     #[error("version string is empty")]
     EmptyVersionString,
+    #[error("{0}")]
+    ByteUntilNull(#[from] FromBytesUntilNulError),
 }
 
 impl From<ParseIntError> for KernelVersionError {
@@ -54,6 +57,8 @@ macro_rules! kernel {
 
 pub use kernel;
 
+use crate::util::uname::Utsname;
+
 impl KernelVersion {
     const MAX_VERSION: KernelVersion = KernelVersion {
         major: u16::MAX,
@@ -76,30 +81,20 @@ impl KernelVersion {
     }
 
     pub fn from_sys() -> Result<Self, KernelVersionError> {
-        let mut utsname_struct: MaybeUninit<utsname> = MaybeUninit::zeroed();
-        let result = unsafe { uname(utsname_struct.as_mut_ptr()) };
-        if result == -1 {
-            return Err(KernelVersionError::UnameFailed);
-        }
-        let full = unsafe {
-            core::ffi::CStr::from_bytes_until_nul(core::mem::transmute(
-                utsname_struct.assume_init().release.as_slice(),
-            ))
-        }
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+        let u = Utsname::from_sys().map_err(|_| KernelVersionError::UnameFailed)?;
+
+        let release = u.release()?;
 
         // we take only something looking like "[0-9]*?\.[0-9]*?\.[0-9]*?"
-        let version = full
+        let release = release
             .splitn(2, |c: char| !(c == '.' || c.is_numeric()))
             .collect::<Vec<&str>>();
 
-        if version.is_empty() {
+        if release.is_empty() {
             return Err(KernelVersionError::EmptyVersionString);
         }
 
-        Self::from_str(version[0])
+        Self::from_str(release[0])
     }
 }
 

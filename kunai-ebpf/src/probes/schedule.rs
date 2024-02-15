@@ -83,7 +83,13 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
     // we do not raise any error on cgroup parsing, we let a chance to userland to solve it
     ignore_result!(event.data.cgroup.resolve(cgroup));
 
-    event.init_from_current_task(Type::TaskSched)?;
+    let current = task_struct::current();
+    event.data.nodename.read_kernel_at(
+        core_read_kernel!(current, nsproxy, uts_ns, name, nodename)?,
+        event.data.nodename.cap() as u32,
+    )?;
+
+    event.init_from_task(Type::TaskSched, current)?;
 
     // we do not really care if that is failing
     ignore_result!(inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {

@@ -8,9 +8,8 @@ use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent,
-    MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
-    UserEvent,
+    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MprotectData,
+    NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
@@ -74,6 +73,7 @@ struct Task {
     container: Option<Container>,
     // needs to be vec because of procfs
     cgroups: Vec<String>,
+    nodename: Option<String>,
     parent_key: Option<TaskKey>,
 }
 
@@ -298,6 +298,7 @@ impl EventProcessor {
             resolved: HashMap::new(),
             container: None,
             cgroups,
+            nodename: None,
             parent_key,
         };
 
@@ -863,7 +864,12 @@ impl EventProcessor {
         }
 
         // early return if task key exists
-        if self.tasks.contains_key(&ck) {
+        if let Some(v) = self.tasks.get_mut(&ck) {
+            // we fix nodename if not set yet
+            // tasks init from procfs are lacking nodename
+            if v.nodename.is_none() {
+                v.nodename = event.data.nodename()
+            }
             return;
         }
 
@@ -920,6 +926,7 @@ impl EventProcessor {
             resolved: HashMap::new(),
             container: container_type,
             cgroups: cgroups,
+            nodename: event.data.nodename(),
             parent_key: Some(info.parent_key()),
         });
     }
@@ -947,7 +954,7 @@ impl EventProcessor {
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
                 container = Some(kunai::info::ContainerInfo {
-                    name: self.cache.get_hostname(mnt_ns).unwrap_or("?".into()),
+                    name: cd.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
                     ty: cd.and_then(|cd| cd.container),
                 });
             }
@@ -1037,9 +1044,8 @@ impl EventProcessor {
             debug!("skipping our event");
         }
 
-        let pid = i.process.tgid;
-
         if let Some(ns) = i.process.namespaces {
+            let pid = i.process.pid;
             let mnt = Namespace::mnt(ns.mnt);
             if let Err(e) = self.cache.cache_ns(pid, mnt) {
                 debug!("failed to cache namespace pid={pid} ns={mnt}: {e}");
