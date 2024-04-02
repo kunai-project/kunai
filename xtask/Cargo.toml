@@ -2,6 +2,10 @@
 name = "xtask"
 version = "0.1.0"
 edition = "2021"
+description = "Custom cargo command specific to the Kunai project"
+license.workspace = true
+repository.workspace = true
+publish = false
 
 [dependencies]
 anyhow = "1"

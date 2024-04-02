@@ -6,6 +6,10 @@
 name = "aya-helpers"
 version = "0.1.0"
 edition = "2021"
+description = "Proxy package providing up to date Aya helpers"
+license.workspace = true
+repository.workspace = true
+publish = false
 
 [dependencies]
 aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }

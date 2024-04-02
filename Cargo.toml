@@ -1,3 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["kunai", "kunai-common", "xtask"]
+
+[workspace.package]
+license = "LICENSE"
+repository = "https://github.com/kunai-project/kunai"
