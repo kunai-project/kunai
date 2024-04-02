@@ -2,6 +2,10 @@
 name = "kunai-ebpf"
 version = "0.1.0"
 edition = "2021"
+description = "Package containing eBPF code used by Kunai"
+license = "../LICENSE"
+repository = "https://github.com/kunai-project/kunai"
+publish = false
 
 [features]
 # enable debug probes
