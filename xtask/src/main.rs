@@ -7,6 +7,7 @@ mod utils;
 use std::path::PathBuf;
 use std::{fs, io::ErrorKind};
 
+use anyhow::anyhow;
 use clap::Parser;
 
 #[derive(Debug, Parser)]
@@ -16,12 +17,24 @@ pub struct Options {
 }
 
 #[derive(Debug, Parser)]
+struct ReleaseOptions {
+    args: Vec<String>,
+}
+
+#[derive(Debug, Parser)]
 enum Command {
+    /// Build eBPF code
     BuildEbpf(ebpf::BuildOptions),
+    /// Build eBPF and userland code
     Build(user::BuildOptions),
+    /// Compile and run the project
     Run(user::RunOptions),
+    /// Cargo check the full project (eBPF and userland)
     Check(user::BuildOptions),
+    /// Builds tools needed to compile the projects
     BuildTools(tools::Options),
+    /// Run cargo release on the full project (includes eBPF code)
+    Release(ReleaseOptions),
 }
 
 static EBPF_DIR: &str = "kunai-ebpf";
@@ -153,6 +166,28 @@ fn main() -> Result<(), anyhow::Error> {
             git::checkout(&linker_dir, linker_commit)?;
 
             tools::build_linker(&llvm_install, linker_dir, &opts)?;
+        }
+
+        Release(o) => {
+            let mut cargo = std::process::Command::new("cargo");
+            cargo.current_dir(EBPF_DIR).arg("release").args(&o.args);
+
+            let status = cargo.status()?;
+            if !status.success() {
+                return Err(anyhow!("cargo release failed: {status}"));
+            }
+
+            if o.args.contains(&"-h".into()) || o.args.contains(&"--help".into()) {
+                return Ok(());
+            }
+
+            let mut cargo = std::process::Command::new("cargo");
+            cargo.arg("release").args(&o.args);
+
+            let status = cargo.status()?;
+            if !status.success() {
+                return Err(anyhow!("cargo release failed: {status}"));
+            }
         }
     }
 
