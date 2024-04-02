@@ -1574,57 +1574,47 @@ impl EventReader {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    #[arg(long, help = "Enable debugging")]
+    /// Enable debugging
+    #[arg(long)]
     debug: bool,
 
-    #[arg(
-        short,
-        long,
-        value_name = "FILE",
-        help = "Specify a configuration file to use. Command line options supersede the ones specified in the configuration file."
-    )]
+    /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
+    #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    #[arg(long, help = "Prints a default configuration to stdout")]
+    /// Prints a default configuration to stdout.
+    #[arg(long)]
     dump_config: bool,
 
-    #[arg(long, help = "Show details about configurable events on stdout")]
+    /// Show details about configurable events on stdout.
+    #[arg(long)]
     show_events: bool,
 
-    #[arg(long, help = "Exclude events by name (comma separated)")]
+    /// Exclude events by name (comma separated).
+    #[arg(long)]
     exclude: Option<String>,
 
-    #[arg(
-        long,
-        help = "Include events by name (comma separated). Supersedes any exclude filter."
-    )]
+    /// Include events by name (comma separated). Supersedes any exclude filter.
+    #[arg(long)]
     include: Option<String>,
 
-    #[arg(
-        long,
-        help = "Increase the size of the buffer shared between eBPF probes and userland"
-    )]
+    /// Increase the size of the buffer shared between eBPF probes and userland.
+    #[arg(long)]
     max_buffered_events: Option<u16>,
 
-    #[arg(
-        short,
-        long,
-        value_name = "FILE",
-        help = "Detection/filtering rule file. Supersedes configuration file"
-    )]
+    /// Detection/filtering rule file. Supersedes configuration file.
+    #[arg(short, long, value_name = "FILE")]
     rule_file: Option<Vec<String>>,
 
-    #[arg(
-        short,
-        long,
-        value_name = "FILE",
-        help = "File containing IoCs (json line)"
-    )]
+    /// File containing IoCs (json line).
+    #[arg(short, long, value_name = "FILE")]
     ioc_file: Option<Vec<String>>,
 
-    #[arg(short, long, action = clap::ArgAction::Count, help="Set verbosity level, repeat option for more verbosity.")]
+    /// Set verbosity level, repeat option for more verbosity.
+    #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 
+    /// Silents out debug, info, error logging.
     #[arg(short, long)]
     silent: bool,
 }
