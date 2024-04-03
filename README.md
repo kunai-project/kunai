@@ -6,7 +6,7 @@
 
 [![GitHub release (with filter)](https://img.shields.io/github/v/release/0xrawsec/kunai?style=for-the-badge&label=stable&color=green)](https://github.com/0xrawsec/kunai/releases/latest)
 [![Documentation](https://img.shields.io/badge/docs-stable-blue.svg?style=for-the-badge&logo=docsdotrs)](https://why.kunai.rocks)
-[![GitHub tag (with filter)](https://img.shields.io/github/v/tag/0xrawsec/kunai?style=for-the-badge&label=latest&color=orange)](https://github.com/0xrawsec/kunai/releases)
+[![GitHub Latest Release](https://img.shields.io/github/v/release/kunai-project/kunai?include_prereleases&style=for-the-badge)](https://github.com/kunai-project/kunai/releases)
 [![Documentation](https://img.shields.io/badge/docs-latest-orange.svg?style=for-the-badge&logo=docsdotrs)](https://why.kunai.rocks/docs/next/quickstart)
 
 # Leitmotiv
