@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "kunai-common"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aya",
  "aya-bpf",
@@ -1840,7 +1840,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
