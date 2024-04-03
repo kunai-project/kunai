@@ -18,6 +18,13 @@ pub struct Options {
 
 #[derive(Debug, Parser)]
 struct ReleaseOptions {
+    /// Do not run cargo release on eBPF directory
+    #[clap(short = 'i', long)]
+    ignore_ebpf: bool,
+    /// Do not run cargo release on workspace packages
+    #[clap(short = 'I', long)]
+    ignore_ws: bool,
+    /// Arguments to pass to cargo release
     args: Vec<String>,
 }
 
@@ -169,24 +176,28 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         Release(o) => {
-            let mut cargo = std::process::Command::new("cargo");
-            cargo.current_dir(EBPF_DIR).arg("release").args(&o.args);
+            if !o.ignore_ebpf {
+                let mut cargo = std::process::Command::new("cargo");
+                cargo.current_dir(EBPF_DIR).arg("release").args(&o.args);
 
-            let status = cargo.status()?;
-            if !status.success() {
-                return Err(anyhow!("cargo release failed: {status}"));
+                let status = cargo.status()?;
+                if !status.success() {
+                    return Err(anyhow!("cargo release failed: {status}"));
+                }
+
+                if o.args.contains(&"-h".into()) || o.args.contains(&"--help".into()) {
+                    return Ok(());
+                }
             }
 
-            if o.args.contains(&"-h".into()) || o.args.contains(&"--help".into()) {
-                return Ok(());
-            }
+            if !o.ignore_ws {
+                let mut cargo = std::process::Command::new("cargo");
+                cargo.arg("release").args(&o.args);
 
-            let mut cargo = std::process::Command::new("cargo");
-            cargo.arg("release").args(&o.args);
-
-            let status = cargo.status()?;
-            if !status.success() {
-                return Err(anyhow!("cargo release failed: {status}"));
+                let status = cargo.status()?;
+                if !status.success() {
+                    return Err(anyhow!("cargo release failed: {status}"));
+                }
             }
         }
     }

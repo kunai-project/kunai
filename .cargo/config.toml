@@ -8,6 +8,9 @@ target = ["x86_64-unknown-linux-gnu", "bpfel-unknown-none"]
 # replace with the target triple you are developing on must be the same as
 # as the other target than bpf specified in build.target
 xtask = "run -q --target=x86_64-unknown-linux-gnu --package xtask --release --"
+xrun = "xtask run"
+xbuild = "xtask build"
+xrelease = "xtask release"
 
 [profile.release]
 lto = true
