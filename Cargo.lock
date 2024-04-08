@@ -162,19 +162,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aya-log"
-version = "0.1.13"
-source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
-dependencies = [
- "aya",
- "aya-log-common",
- "bytes",
- "log",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "aya-log-common"
 version = "0.1.13"
 source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
@@ -819,7 +806,6 @@ version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "aya",
- "aya-log",
  "aya-obj",
  "bytes",
  "chrono",

@@ -38,7 +38,6 @@ kunai-macros = { path = "../kunai-common/src/kunai-macros" }
 bytes = "1"
 futures = "0.3"
 
-aya-log = { git = "https://github.com/aya-rs/aya", branch = "main" }
 aya-obj = { git = "https://github.com/aya-rs/aya", branch = "main" }
 anyhow = "1.0.68"
 env_logger = "0.10"

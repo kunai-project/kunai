@@ -45,7 +45,6 @@ use aya::{
 };
 #[allow(unused_imports)]
 use aya::{BpfLoader, VerifierLogLevel};
-use aya_log::BpfLogger;
 
 use log::{debug, error, info, warn};
 
@@ -1749,10 +1748,6 @@ async fn main() -> Result<(), anyhow::Error> {
             .load(include_bytes_aligned!(
                 "../../../target/bpfel-unknown-none/release/kunai-ebpf"
             ))?;
-
-    if BpfLogger::init(&mut bpf).is_ok() {
-        return Err(anyhow!("kunai is not supposed to use Aya BPF logger"));
-    }
 
     BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
         .expect("failed to initialize bpf configuration");
