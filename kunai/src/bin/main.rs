@@ -13,6 +13,7 @@ use kunai::events::{
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
+use kunai::util::uname::Utsname;
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
     self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
@@ -53,7 +54,7 @@ use tokio::{signal, task, time};
 
 use kunai::cache::*;
 
-use kunai::compat::{KernelVersion, Programs};
+use kunai::compat::Programs;
 use kunai::config::Config;
 use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
@@ -1733,13 +1734,15 @@ async fn main() -> Result<(), anyhow::Error> {
         ));
     }
 
+    let current_kernel = Utsname::kernel_version()?;
+
     #[cfg(debug_assertions)]
-    let mut bpf =
-        BpfLoader::new()
-            .verifier_log_level(verifier_level)
-            .load(include_bytes_aligned!(
-                "../../../target/bpfel-unknown-none/debug/kunai-ebpf"
-            ))?;
+    let mut bpf = BpfLoader::new()
+        .verifier_log_level(verifier_level)
+        .set_global("LINUX_KERNEL_VERSION", &current_kernel)
+        .load(include_bytes_aligned!(
+            "../../../target/bpfel-unknown-none/debug/kunai-ebpf"
+        ))?;
 
     #[cfg(not(debug_assertions))]
     let mut bpf =
@@ -1760,8 +1763,6 @@ async fn main() -> Result<(), anyhow::Error> {
     EventProcessor::init(conf, receiver)?;
 
     let btf = Btf::from_sys_fs()?;
-
-    let current_kernel = KernelVersion::from_sys()?;
 
     // make possible probe selection in debug
     #[allow(unused_mut)]

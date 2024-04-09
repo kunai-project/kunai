@@ -1,4 +1,5 @@
-use compat::{KernelVersion, Programs};
+use compat::Programs;
+use kunai_common::{kernel, version::KernelVersion};
 
 pub mod cache;
 pub mod compat;

@@ -1,7 +1,9 @@
 use core::ffi::FromBytesUntilNulError;
-use std::io::Error as IoError;
 use std::mem::MaybeUninit;
+use std::{io::Error as IoError, str::FromStr};
+use thiserror::Error;
 
+use kunai_common::version::{KernelVersion, KernelVersionError};
 use libc::{uname, utsname};
 
 pub struct Utsname {
@@ -28,6 +30,14 @@ impl_getter!(version);
 impl_getter!(machine);
 impl_getter!(domainname);
 
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("{0}")]
+    Io(#[from] IoError),
+    #[error("{0}")]
+    KernelVersion(#[from] KernelVersionError),
+}
+
 impl Utsname {
     pub fn from_sys() -> Result<Self, IoError> {
         let mut u: MaybeUninit<utsname> = MaybeUninit::zeroed();
@@ -38,6 +48,32 @@ impl Utsname {
         Ok(Self {
             u: unsafe { u.assume_init() },
         })
+    }
+
+    pub fn kernel_version() -> Result<KernelVersion, Error> {
+        Ok(Self::from_sys()?.try_into_kernel_version()?)
+    }
+
+    pub fn try_into_kernel_version(self) -> Result<KernelVersion, KernelVersionError> {
+        TryInto::<KernelVersion>::try_into(self)
+    }
+}
+
+impl TryInto<KernelVersion> for Utsname {
+    type Error = KernelVersionError;
+    fn try_into(self) -> Result<KernelVersion, Self::Error> {
+        let release = self.release()?;
+
+        // we take only something looking like "[0-9]*?\.[0-9]*?\.[0-9]*?"
+        let release = release
+            .splitn(2, |c: char| !(c == '.' || c.is_numeric()))
+            .collect::<Vec<&str>>();
+
+        if release.is_empty() {
+            return Err(KernelVersionError::EmptyVersionString);
+        }
+
+        KernelVersion::from_str(release[0])
     }
 }
 

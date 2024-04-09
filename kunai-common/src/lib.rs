@@ -37,3 +37,5 @@ pub mod cgroup;
 pub mod time;
 
 pub mod config;
+
+pub mod version;

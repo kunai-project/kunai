@@ -3,146 +3,9 @@ use aya::{
     Bpf, Btf,
 };
 use aya_obj::generated::bpf_prog_type;
+use kunai_common::version::KernelVersion;
 
-use core::ffi::FromBytesUntilNulError;
-use std::fmt::Display;
-
-use std::convert::TryFrom;
-use std::num::ParseIntError;
-use std::str::FromStr;
-use std::{cmp::PartialEq, collections::HashMap};
-use thiserror::Error;
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct KernelVersion {
-    pub major: u16,
-    pub minor: u16,
-    pub patch: u16,
-}
-
-#[derive(Error, Debug, PartialEq)]
-pub enum KernelVersionError {
-    #[error("parse int error {0}")]
-    ParseIntError(ParseIntError),
-    #[error("major digit is missing")]
-    MajorIsMissing,
-    #[error("minor digit is missing")]
-    MinorIsMissing,
-    #[error("call to libc uname failed")]
-    UnameFailed,
-    #[error("version string is empty")]
-    EmptyVersionString,
-    #[error("{0}")]
-    ByteUntilNull(#[from] FromBytesUntilNulError),
-}
-
-impl From<ParseIntError> for KernelVersionError {
-    fn from(value: ParseIntError) -> Self {
-        Self::ParseIntError(value)
-    }
-}
-
-#[macro_export]
-macro_rules! kernel {
-    ($major:literal) => {
-        $crate::KernelVersion::new($major, 0, 0)
-    };
-    ($major:literal, $minor:literal) => {
-        $crate::KernelVersion::new($major, $minor, 0)
-    };
-    ($major:literal,$minor:literal,$patch:literal) => {
-        $crate::KernelVersion::new($major, $minor, $patch)
-    };
-}
-
-pub use kernel;
-
-use crate::util::uname::Utsname;
-
-impl KernelVersion {
-    const MAX_VERSION: KernelVersion = KernelVersion {
-        major: u16::MAX,
-        minor: u16::MAX,
-        patch: u16::MAX,
-    };
-
-    const MIN_VERSION: KernelVersion = KernelVersion {
-        major: u16::MIN,
-        minor: u16::MIN,
-        patch: u16::MIN,
-    };
-
-    pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
-        Self {
-            major,
-            minor,
-            patch,
-        }
-    }
-
-    pub fn from_sys() -> Result<Self, KernelVersionError> {
-        let u = Utsname::from_sys().map_err(|_| KernelVersionError::UnameFailed)?;
-
-        let release = u.release()?;
-
-        // we take only something looking like "[0-9]*?\.[0-9]*?\.[0-9]*?"
-        let release = release
-            .splitn(2, |c: char| !(c == '.' || c.is_numeric()))
-            .collect::<Vec<&str>>();
-
-        if release.is_empty() {
-            return Err(KernelVersionError::EmptyVersionString);
-        }
-
-        Self::from_str(release[0])
-    }
-}
-
-impl Display for KernelVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {
-            Self::MIN_VERSION => write!(f, "KernelVersion::MIN"),
-            Self::MAX_VERSION => write!(f, "KernelVersion::MAX"),
-            _ => write!(f, "{}.{}.{}", self.major, self.minor, self.patch),
-        }
-    }
-}
-
-impl FromStr for KernelVersion {
-    type Err = KernelVersionError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::try_from(s)
-    }
-}
-
-impl TryFrom<&str> for KernelVersion {
-    type Error = KernelVersionError;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut v = Self::default();
-        let sp = value.split('.').collect::<Vec<&str>>();
-        let major = sp.first().ok_or(KernelVersionError::MajorIsMissing)?;
-        if major.is_empty() {
-            return Err(KernelVersionError::MajorIsMissing);
-        }
-        v.major = u16::from_str(major)?;
-        v.minor = u16::from_str(sp.get(1).ok_or(KernelVersionError::MinorIsMissing)?)?;
-        if sp.len() >= 3 {
-            v.patch = u16::from_str(sp[2])?;
-        }
-        Ok(v)
-    }
-}
-
-impl PartialOrd for KernelVersion {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(
-            self.major
-                .cmp(&other.major)
-                .then_with(|| self.minor.cmp(&other.minor))
-                .then_with(|| self.patch.cmp(&other.patch)),
-        )
-    }
-}
+use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct Compatibility {
@@ -180,6 +43,10 @@ impl<'a> Programs<'a> {
             .collect();
 
         Self { m }
+    }
+
+    pub fn program_names(&self) -> Vec<&String> {
+        self.m.keys().collect()
     }
 
     pub fn expect_mut<S: AsRef<str>>(&mut self, name: S) -> &mut Program<'a> {

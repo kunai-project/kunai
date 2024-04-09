@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
 use env_logger::Builder;
-use kunai::compat::{KernelVersion, Programs};
+use kunai::{compat::Programs, util::uname::Utsname};
 use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::{error, info, warn};
 use std::{ffi::CString, panic};
@@ -35,7 +35,7 @@ fn mount(src: &str, target: &str, filesystem_type: &str) -> anyhow::Result<()> {
 fn integration() -> anyhow::Result<()> {
     let verifier_level = VerifierLogLevel::STATS;
 
-    let current_kernel = KernelVersion::from_sys()?;
+    let current_kernel = Utsname::kernel_version()?;
     info!("linux kernel: {current_kernel}");
 
     info!("mounting sysfs");

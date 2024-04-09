@@ -1,8 +1,8 @@
 use core::cmp::min;
 
-use crate::utils::cap_size;
 use crate::co_re::{iov_iter, iovec};
 use crate::helpers::{gen, *};
+use crate::utils::cap_size;
 
 use super::{Buffer, Error};
 
