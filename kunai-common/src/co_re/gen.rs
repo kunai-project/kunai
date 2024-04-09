@@ -1519,24 +1519,72 @@ extern "C" {
 extern "C" {
     pub fn shim_iovec_iov_len_exists(iovec: *mut iovec) -> bool;
 }
+extern "C" {
+    pub fn shim_iter_type_ITER_IOVEC() -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_IOVEC_exists() -> bool;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_KVEC() -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_KVEC_exists() -> bool;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_BVEC() -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_BVEC_exists() -> bool;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_PIPE() -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_PIPE_exists() -> bool;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_XARRAY() -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_XARRAY_exists() -> bool;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_DISCARD() -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_DISCARD_exists() -> bool;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_UBUF() -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iter_type_ITER_UBUF_exists() -> bool;
+}
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct iov_iter {
-    pub iter_type: u8_,
-    pub count: size_t,
     pub __bindgen_anon_1: iov_iter__bindgen_ty_1,
+    pub count: size_t,
     pub __bindgen_anon_2: iov_iter__bindgen_ty_2,
+    pub __bindgen_anon_3: iov_iter__bindgen_ty_3,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union iov_iter__bindgen_ty_1 {
+    pub iter_type: u8_,
+    pub type_: ::core::ffi::c_uint,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union iov_iter__bindgen_ty_2 {
     pub iov: *mut iovec,
     pub __iov: *mut iovec,
     pub ubuf: *mut ::core::ffi::c_void,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union iov_iter__bindgen_ty_2 {
+pub union iov_iter__bindgen_ty_3 {
     pub nr_segs: ::core::ffi::c_ulong,
 }
 extern "C" {
@@ -1547,6 +1595,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_iov_iter_iter_type_exists(iov_iter: *mut iov_iter) -> bool;
+}
+extern "C" {
+    pub fn shim_iov_iter_type(iov_iter: *mut iov_iter) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iov_iter_type_user(iov_iter: *mut iov_iter) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_iov_iter_type_exists(iov_iter: *mut iov_iter) -> bool;
 }
 extern "C" {
     pub fn shim_iov_iter_count(iov_iter: *mut iov_iter) -> ::core::ffi::c_ulong;

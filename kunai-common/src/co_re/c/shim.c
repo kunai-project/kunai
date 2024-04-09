@@ -83,6 +83,16 @@ makes it fail at linking, so don't do it.
 	_SHIM_GETTER(typeof(&(((struct struc *)0)->memb[0])), shim_##struc##_##memb_name##_user(struct struc *struc), &(struc->memb[0])) \
 	_FIELD_EXISTS_DEF(struc, memb, memb_name)
 
+#define SHIM_ENUM_VALUE(enum_type, enum_value)                                      \
+	__attribute__((always_inline)) unsigned int shim_##enum_type##_##enum_value()   \
+	{                                                                               \
+		return bpf_core_enum_value(enum enum_type, enum_value);                     \
+	}                                                                               \
+	__attribute__((always_inline)) _Bool shim_##enum_type##_##enum_value##_exists() \
+	{                                                                               \
+		return bpf_core_enum_value_exists(enum enum_type, enum_value);              \
+	}
+
 struct kgid_t
 {
 	gid_t val;
@@ -650,9 +660,33 @@ struct iovec
 SHIM(iovec, iov_base);
 SHIM(iovec, iov_len);
 
+enum iter_type
+{
+	/* iter types */
+	ITER_IOVEC,
+	ITER_KVEC,
+	ITER_BVEC,
+	ITER_PIPE,
+	ITER_XARRAY,
+	ITER_DISCARD,
+	ITER_UBUF,
+};
+
+SHIM_ENUM_VALUE(iter_type, ITER_IOVEC);
+SHIM_ENUM_VALUE(iter_type, ITER_KVEC);
+SHIM_ENUM_VALUE(iter_type, ITER_BVEC);
+SHIM_ENUM_VALUE(iter_type, ITER_PIPE);
+SHIM_ENUM_VALUE(iter_type, ITER_XARRAY);
+SHIM_ENUM_VALUE(iter_type, ITER_DISCARD);
+SHIM_ENUM_VALUE(iter_type, ITER_UBUF);
+
 struct iov_iter
 {
-	u8 iter_type;
+	union
+	{
+		u8 iter_type;
+		unsigned int type;
+	};
 	size_t count;
 	union
 	{
@@ -668,6 +702,7 @@ struct iov_iter
 } __attribute__((preserve_access_index));
 
 SHIM(iov_iter, iter_type);
+SHIM(iov_iter, type);
 SHIM(iov_iter, count);
 SHIM(iov_iter, nr_segs);
 SHIM(iov_iter, ubuf);
