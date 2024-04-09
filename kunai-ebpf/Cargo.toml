@@ -13,7 +13,6 @@ debug = []
 
 [dependencies]
 aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
-aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
 kunai-common = { path = "../kunai-common" }
 kunai-macros = { path = "../kunai-common/src/kunai-macros" }
 paste = "1.0"

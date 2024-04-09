@@ -53,44 +53,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aya-log-common"
-version = "0.1.13"
-source = "git+https://github.com/aya-rs/aya?branch=main#4c08b9b43f2734c776c6b3f22cf9262a0db577db"
-dependencies = [
- "num_enum",
-]
-
-[[package]]
-name = "aya-log-ebpf"
-version = "0.1.0"
-source = "git+https://github.com/aya-rs/aya?branch=main#4c08b9b43f2734c776c6b3f22cf9262a0db577db"
-dependencies = [
- "aya-bpf",
- "aya-log-common",
- "aya-log-ebpf-macros",
-]
-
-[[package]]
-name = "aya-log-ebpf-macros"
-version = "0.1.0"
-source = "git+https://github.com/aya-rs/aya?branch=main#4c08b9b43f2734c776c6b3f22cf9262a0db577db"
-dependencies = [
- "aya-log-common",
- "aya-log-parser",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "aya-log-parser"
-version = "0.1.11-dev.0"
-source = "git+https://github.com/aya-rs/aya?branch=main#4c08b9b43f2734c776c6b3f22cf9262a0db577db"
-dependencies = [
- "aya-log-common",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.69.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -174,7 +136,6 @@ name = "kunai-ebpf"
 version = "0.2.0"
 dependencies = [
  "aya-bpf",
- "aya-log-ebpf",
  "kunai-common",
  "kunai-macros",
  "paste",
@@ -243,26 +204,6 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
-]
-
-[[package]]
-name = "num_enum"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a015b430d3c108a207fd776d2e2196aaf8b1cf8cf93253e3a097ff3085076a1"
-dependencies = [
- "num_enum_derive",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96667db765a921f7b295ffee8b60472b686a51d4f21c2ee4ffdb94c7013b65a6"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
