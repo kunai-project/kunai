@@ -12,7 +12,6 @@ default = []
 user = [
     "aya",
     "dns-parser",
-    "aya-obj",
     "uuid",
     "tokio",
     "bytes",
@@ -51,8 +50,6 @@ futures = { version = "0.3", optional = true }
 aya-helpers = { path = "src/aya-helpers" }
 aya = { git = "https://github.com/aya-rs/aya", branch = "main", optional = true }
 aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
-aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
-aya-obj = { git = "https://github.com/aya-rs/aya", branch = "main", optional = true }
 
 [dev-dependencies]
 # Non Aya deps
@@ -64,5 +61,3 @@ thiserror = { version = "1.0" }
 # Aya deps
 aya = { git = "https://github.com/aya-rs/aya", branch = "main" }
 aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
-aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
-aya-obj = { git = "https://github.com/aya-rs/aya", branch = "main" }

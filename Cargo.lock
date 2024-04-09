@@ -162,44 +162,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aya-log-common"
-version = "0.1.13"
-source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
-dependencies = [
- "num_enum",
-]
-
-[[package]]
-name = "aya-log-ebpf"
-version = "0.1.0"
-source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
-dependencies = [
- "aya-bpf",
- "aya-log-common",
- "aya-log-ebpf-macros",
-]
-
-[[package]]
-name = "aya-log-ebpf-macros"
-version = "0.1.0"
-source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
-dependencies = [
- "aya-log-common",
- "aya-log-parser",
- "proc-macro2",
- "quote",
- "syn 2.0.39",
-]
-
-[[package]]
-name = "aya-log-parser"
-version = "0.1.11-dev.0"
-source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
-dependencies = [
- "aya-log-common",
-]
-
-[[package]]
 name = "aya-obj"
 version = "0.1.0"
 source = "git+https://github.com/aya-rs/aya?branch=main#85ad0197e0e0e30c99f3af63584f9c569b752a50"
@@ -841,8 +803,6 @@ dependencies = [
  "aya",
  "aya-bpf",
  "aya-helpers",
- "aya-log-ebpf",
- "aya-obj",
  "bindgen",
  "bytes",
  "cfg-if",
@@ -1001,26 +961,6 @@ checksum = "0fac9e2da13b5eb447a6ce3d392f23a29d8694bff781bf03a16cd9ac8697593b"
 dependencies = [
  "hermit-abi 0.2.6",
  "libc",
-]
-
-[[package]]
-name = "num_enum"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a015b430d3c108a207fd776d2e2196aaf8b1cf8cf93253e3a097ff3085076a1"
-dependencies = [
- "num_enum_derive",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96667db765a921f7b295ffee8b60472b686a51d4f21c2ee4ffdb94c7013b65a6"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.39",
 ]
 
 [[package]]
