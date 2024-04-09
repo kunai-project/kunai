@@ -23,7 +23,7 @@ consistent ancestor/parent tracking.
 */
 
 // It should be enough to get scheduling of all userland tasks
-#[kprobe(name = "sched.schedule")]
+#[kprobe(name = "sched_0x2e_schedule")]
 pub fn schedule(ctx: ProbeContext) -> u32 {
     match unsafe { try_schedule(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,

@@ -29,7 +29,7 @@ pub struct MmapArgs {
     pub off: u64,
 }
 
-#[tracepoint(name = "syscalls.sys_enter_mmap")]
+#[tracepoint(name = "syscalls_0x2e_sys_enter_mmap")]
 pub fn mmap(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_mmap(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,

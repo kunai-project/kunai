@@ -12,7 +12,7 @@ static mut EXECVE_TRACKING: LruHashMap<u128, ExecveEvent> = LruHashMap::with_max
 // this guy gives us the real executable path (i.e. a script for instance)
 // we need to hook at another point in order to get the interpreter. For
 // instance at exit of bprm_execve.
-#[kprobe(name = "execve.security_bprm_check")]
+#[kprobe(name = "execve_0x2e_security_bprm_check")]
 pub fn security_bprm_check(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_bprm_check(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
@@ -62,7 +62,7 @@ static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
 
 // for kernel < 5.9 bprm_execve does not exists, we must replace the hook
 // by __do_execve_file (done in program loader)
-#[kretprobe(name = "execve.exit.bprm_execve")]
+#[kretprobe(name = "execve_0x2e_exit_0x2e_bprm_execve")]
 pub fn bprm_execve(ctx: ProbeContext) -> u32 {
     match unsafe { try_bprm_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
@@ -148,7 +148,7 @@ unsafe fn try_bprm_execve(ctx: &ProbeContext) -> ProbeResult<()> {
     execve_event(ctx, rc)
 }
 
-#[tracepoint(name = "syscalls.sys_exit_execve")]
+#[tracepoint(name = "syscalls_0x2e_sys_exit_execve")]
 pub fn sys_exit_execve(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
@@ -159,7 +159,7 @@ pub fn sys_exit_execve(ctx: TracePointContext) -> u32 {
     }
 }
 
-#[tracepoint(name = "syscalls.sys_exit_execveat")]
+#[tracepoint(name = "syscalls_0x2e_sys_exit_execveat")]
 pub fn sys_exit_execveat(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,

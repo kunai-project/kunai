@@ -6,13 +6,13 @@ use kunai_common::{
     net::IpPort,
 };
 
-#[kprobe(name = "net.enter.__sys_connect")]
+#[kprobe(name = "net_0x2e_enter_0x2e___sys_connect")]
 pub fn enter_sys_connect(ctx: ProbeContext) -> u32 {
     unsafe { ignore_result!(ProbeFn::net_sys_connect.save_ctx(&ctx)) }
     0
 }
 
-#[kretprobe(name = "net.exit.__sys_connect")]
+#[kretprobe(name = "net_0x2e_exit_0x2e___sys_connect")]
 pub fn exit_sys_connect(ctx: ProbeContext) -> u32 {
     let rc = match unsafe {
         ProbeFn::net_sys_connect
