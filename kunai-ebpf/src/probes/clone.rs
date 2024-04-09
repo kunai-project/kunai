@@ -1,4 +1,4 @@
-use aya_bpf::programs::ProbeContext;
+use aya_ebpf::programs::ProbeContext;
 use kunai_common::{
     buffer::{self},
     co_re::task_struct,
@@ -6,8 +6,8 @@ use kunai_common::{
 
 use super::*;
 
-#[kprobe(name = "clone_0x2e_enter_0x2e_security_task_alloc")]
-pub fn security_task_alloc(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "security_task_alloc")]
+pub fn clone_0x2e_enter_0x2e_security_task_alloc(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_enter_wake_up_new_task(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

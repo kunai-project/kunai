@@ -1,5 +1,5 @@
-use crate::helpers::{bpf_probe_read_kernel_buf, bpf_probe_read_user_buf};
-use aya_bpf::cty::c_void;
+use aya_ebpf::cty::c_void;
+use aya_ebpf::helpers::{bpf_probe_read_kernel_buf, bpf_probe_read_user_buf};
 
 use super::gen::{self, *};
 use super::{iov_iter, iovec, rust_shim_kernel_impl, rust_shim_user_impl, CoRe};

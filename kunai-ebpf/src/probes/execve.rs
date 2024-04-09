@@ -1,8 +1,8 @@
 use super::*;
 
-use aya_bpf::maps::LruHashMap;
-use aya_bpf::programs::{ProbeContext, TracePointContext};
-use aya_bpf::BpfContext;
+use aya_ebpf::maps::LruHashMap;
+use aya_ebpf::programs::{ProbeContext, TracePointContext};
+use aya_ebpf::EbpfContext;
 use co_re::task_struct;
 use kunai_common::syscalls::SysExitArgs;
 
@@ -12,8 +12,9 @@ static mut EXECVE_TRACKING: LruHashMap<u128, ExecveEvent> = LruHashMap::with_max
 // this guy gives us the real executable path (i.e. a script for instance)
 // we need to hook at another point in order to get the interpreter. For
 // instance at exit of bprm_execve.
-#[kprobe(name = "execve_0x2e_security_bprm_check")]
-pub fn security_bprm_check(ctx: ProbeContext) -> u32 {
+
+#[kprobe(function = "security_bprm_check")]
+pub fn execve_0x2e_security_bprm_check(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_bprm_check(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -62,8 +63,9 @@ static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
 
 // for kernel < 5.9 bprm_execve does not exists, we must replace the hook
 // by __do_execve_file (done in program loader)
-#[kretprobe(name = "execve_0x2e_exit_0x2e_bprm_execve")]
-pub fn bprm_execve(ctx: ProbeContext) -> u32 {
+
+#[kretprobe(function = "bprm_execve")]
+pub fn execve_0x2e_exit_0x2e_bprm_execve(ctx: ProbeContext) -> u32 {
     match unsafe { try_bprm_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -74,7 +76,7 @@ pub fn bprm_execve(ctx: ProbeContext) -> u32 {
 }
 
 #[inline(always)]
-unsafe fn execve_event<C: BpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
+unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
     let linux_binprm = BPRM_EXECVE_ARGS
         .get(&bpf_task_tracking_id())
         .ok_or(MapError::GetFailure)?;
@@ -148,8 +150,8 @@ unsafe fn try_bprm_execve(ctx: &ProbeContext) -> ProbeResult<()> {
     execve_event(ctx, rc)
 }
 
-#[tracepoint(name = "syscalls_0x2e_sys_exit_execve")]
-pub fn sys_exit_execve(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_exit_execve", category = "syscalls")]
+pub fn syscalls_0x2e_sys_exit_execve(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -159,8 +161,8 @@ pub fn sys_exit_execve(ctx: TracePointContext) -> u32 {
     }
 }
 
-#[tracepoint(name = "syscalls_0x2e_sys_exit_execveat")]
-pub fn sys_exit_execveat(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_exit_execveat", category = "syscalls")]
+pub fn syscalls_0x2e_sys_exit_execveat(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

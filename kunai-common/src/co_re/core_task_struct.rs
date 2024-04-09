@@ -1,4 +1,4 @@
-use crate::helpers::{
+use aya_ebpf::helpers::{
     bpf_get_current_pid_tgid, bpf_get_current_task, bpf_get_current_task_btf,
     bpf_probe_read_kernel_buf,
 };

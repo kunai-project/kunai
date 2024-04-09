@@ -1,4 +1,4 @@
-use aya_bpf::macros::*;
+use aya_ebpf::macros::*;
 
 use kunai_common::{
     alloc,

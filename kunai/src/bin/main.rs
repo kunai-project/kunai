@@ -1739,7 +1739,7 @@ async fn main() -> Result<(), anyhow::Error> {
     #[cfg(debug_assertions)]
     let mut bpf = BpfLoader::new()
         .verifier_log_level(verifier_level)
-        .set_global("LINUX_KERNEL_VERSION", &current_kernel)
+        .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
         .load(include_bytes_aligned!(
             "../../../target/bpfel-unknown-none/debug/kunai-ebpf"
         ))?;
@@ -1773,6 +1773,10 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     let mut programs = Programs::from_bpf(&mut bpf);
+
+    for n in programs.program_names() {
+        info!("{}", n)
+    }
 
     kunai::configure_probes(&mut programs, current_kernel);
 

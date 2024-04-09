@@ -1,7 +1,7 @@
-use aya_bpf::{
+use aya_ebpf::{
     macros::map,
     maps::{Array, LruPerCpuHashMap},
-    BpfContext,
+    EbpfContext,
 };
 
 use crate::{
@@ -96,7 +96,7 @@ pub struct Args {
 }
 
 #[inline(always)]
-pub unsafe fn error_with_args<C: BpfContext>(ctx: &C, args: &Args) {
+pub unsafe fn error_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
     /*let mut i = match I_ERROR.get(0) {
         Some(&u) => u,
         None => 0,

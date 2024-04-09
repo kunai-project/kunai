@@ -1,4 +1,4 @@
-use crate::helpers::{bpf_probe_read_kernel_str_bytes, bpf_probe_read_user_str_bytes};
+use aya_ebpf::helpers::{bpf_probe_read_kernel_str_bytes, bpf_probe_read_user_str_bytes};
 
 use super::{Error, String};
 

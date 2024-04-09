@@ -15,11 +15,6 @@ pub mod syscalls;
 
 bpf_target_code! {
     pub mod co_re;
-    pub mod helpers {
-        // this is a temporary fix to benefit from fixed helpers
-        // while still using older Aya git for the rest
-        pub use aya_helpers::helpers::*;
-    }
 }
 
 pub mod bpf_events;

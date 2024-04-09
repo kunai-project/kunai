@@ -1,9 +1,9 @@
 use super::*;
-use aya_bpf::programs::TracePointContext;
+use aya_ebpf::programs::TracePointContext;
 use kunai_common::syscalls::{SysEnterArgs, Syscall};
 
-#[tracepoint(name = "syscalls_0x2e_sys_enter_exit")]
-pub fn sys_enter_exit(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_enter_exit", category = "syscalls")]
+pub fn syscalls_0x2e_sys_enter_exit(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_exit(&ctx, Type::Exit) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -13,8 +13,8 @@ pub fn sys_enter_exit(ctx: TracePointContext) -> u32 {
     }
 }
 
-#[tracepoint(name = "syscalls_0x2e_sys_enter_exit_group")]
-pub fn sys_enter_exit_group(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_enter_exit_group", category = "syscalls")]
+pub fn syscalls_0x2e_sys_enter_exit_group(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_exit(&ctx, Type::ExitGroup) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

@@ -1,4 +1,4 @@
-use crate::helpers::bpf_get_prandom_u32;
+use aya_ebpf::helpers::bpf_get_prandom_u32;
 
 use super::Uuid;
 

@@ -24,7 +24,7 @@ pub struct ErrorData {
 
 bpf_target_code! {
     use crate::string;
-    use aya_helpers::helpers::{bpf_get_current_pid_tgid, bpf_get_current_comm};
+    use aya_ebpf::helpers::{bpf_get_current_pid_tgid, bpf_get_current_comm};
 
     const DEFAULT_COMM: String<16> = string::from_static("?");
 
