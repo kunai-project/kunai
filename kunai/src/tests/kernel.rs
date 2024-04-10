@@ -45,24 +45,21 @@ fn integration() -> anyhow::Result<()> {
     info!("mounting tracefs");
     mount("none", "/sys/kernel/tracing", "tracefs")?;
 
+    let bpf_elf = {
+        #[cfg(debug_assertions)]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
+        #[cfg(not(debug_assertions))]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
+        d
+    };
+
     info!("loading ebpf bytes");
-    #[cfg(debug_assertions)]
-    let mut bpf =
-        BpfLoader::new()
-            .verifier_log_level(verifier_level)
-            .load(include_bytes_aligned!(
-                "../../../target/bpfel-unknown-none/debug/kunai-ebpf"
-            ))?;
+    let mut bpf = BpfLoader::new()
+        .verifier_log_level(verifier_level)
+        .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
+        .load(bpf_elf)?;
 
-    #[cfg(not(debug_assertions))]
-    let mut bpf =
-        BpfLoader::new()
-            .verifier_log_level(verifier_level)
-            .load(include_bytes_aligned!(
-                "../../../target/bpfel-unknown-none/release/kunai-ebpf"
-            ))?;
-
-    let mut programs = Programs::from_bpf(&mut bpf);
+    let mut programs = Programs::from_bpf(&mut bpf).with_elf_info(bpf_elf)?;
 
     kunai::configure_probes(&mut programs, current_kernel);
 
