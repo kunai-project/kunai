@@ -1,4 +1,4 @@
-use aya_bpf::{bindings::pt_regs, macros::*, maps::LruHashMap, programs::ProbeContext};
+use aya_ebpf::{bindings::pt_regs, macros::*, maps::LruHashMap, programs::ProbeContext};
 
 use crate::utils::bpf_task_tracking_id;
 

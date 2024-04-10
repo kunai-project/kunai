@@ -1,4 +1,4 @@
-use aya_bpf::cty::c_void;
+use aya_ebpf::cty::c_void;
 
 use super::gen::{self, *};
 use super::{rust_shim_kernel_impl, CoRe};

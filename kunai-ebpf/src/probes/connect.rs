@@ -1,19 +1,19 @@
 use super::*;
 
-use aya_bpf::programs::ProbeContext;
+use aya_ebpf::programs::ProbeContext;
 use kunai_common::{
     kprobe::{KProbeEntryContext, ProbeFn},
     net::IpPort,
 };
 
-#[kprobe(name = "net.enter.__sys_connect")]
-pub fn enter_sys_connect(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "__sys_connect")]
+pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
     unsafe { ignore_result!(ProbeFn::net_sys_connect.save_ctx(&ctx)) }
     0
 }
 
-#[kretprobe(name = "net.exit.__sys_connect")]
-pub fn exit_sys_connect(ctx: ProbeContext) -> u32 {
+#[kretprobe(function = "__sys_connect")]
+pub fn net_exit_sys_connect(ctx: ProbeContext) -> u32 {
     let rc = match unsafe {
         ProbeFn::net_sys_connect
             .restore_ctx()

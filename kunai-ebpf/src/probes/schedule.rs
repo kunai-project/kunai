@@ -1,6 +1,6 @@
 use super::*;
-use aya_bpf::maps::LruHashMap;
-use aya_bpf::programs::ProbeContext;
+use aya_ebpf::maps::LruHashMap;
+use aya_ebpf::programs::ProbeContext;
 use co_re::task_struct;
 use kunai_common::inspect_err;
 
@@ -23,8 +23,8 @@ consistent ancestor/parent tracking.
 */
 
 // It should be enough to get scheduling of all userland tasks
-#[kprobe(name = "sched.schedule")]
-pub fn schedule(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "schedule")]
+pub fn sched_schedule(ctx: ProbeContext) -> u32 {
     match unsafe { try_schedule(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

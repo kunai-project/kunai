@@ -1,6 +1,6 @@
 use crate::co_re::{self, core_read_kernel};
-use crate::helpers::gen;
 use crate::utils::{bound_value_for_verifier, cap_size};
+use aya_ebpf::helpers::gen;
 
 use super::{Error, Metadata, Mode, Path, MAX_NAME};
 

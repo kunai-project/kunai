@@ -1,5 +1,5 @@
 use super::*;
-use aya_bpf::{
+use aya_ebpf::{
     cty::{c_int, c_void, size_t},
     programs::ProbeContext,
 };
@@ -98,8 +98,8 @@ unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
     Ok(ip_port.port() == 53)
 }
 
-#[kprobe(name = "net.dns.enter.vfs_read")]
-pub fn enter_vfs_read(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "vfs_read")]
+pub fn net_dns_enter_vfs_read(ctx: ProbeContext) -> u32 {
     match unsafe { try_enter_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -135,8 +135,8 @@ unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[kretprobe(name = "net.dns.exit.vfs_read")]
-pub fn exit_vfs_read(ctx: ProbeContext) -> u32 {
+#[kretprobe(function = "vfs_read")]
+pub fn net_dns_exit_vfs_read(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_exit_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -185,8 +185,8 @@ unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[kprobe(name = "net.dns.enter.__sys_recvfrom")]
-pub fn enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "__sys_recvfrom")]
+pub fn net_dns_enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
     match unsafe { try_enter_sys_recvfrom(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -225,8 +225,8 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[kretprobe(name = "net.dns.exit.__sys_recvfrom")]
-pub fn exit_sys_recvfrom(ctx: ProbeContext) -> u32 {
+#[kretprobe(function = "__sys_recvfrom")]
+pub fn net_dns_exit_sys_recvfrom(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_exit_sys_recvfrom(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -279,8 +279,8 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[kprobe(name = "net.dns.enter.__sys_recvmsg")]
-pub fn enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "__sys_recvmsg")]
+pub fn net_dns_enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
     match unsafe { try_enter_sys_recvmsg(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -322,8 +322,8 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[kretprobe(name = "net.dns.exit.__sys_recvmsg")]
-pub fn exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
+#[kretprobe(function = "__sys_recvmsg")]
+pub fn net_dns_exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_exit_recvmsg(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

@@ -1,8 +1,8 @@
 use core::cmp::min;
 
 use crate::co_re::{iov_iter, iovec};
-use crate::helpers::{gen, *};
 use crate::utils::cap_size;
+use aya_ebpf::helpers::{gen, *};
 
 use super::{Buffer, Error};
 

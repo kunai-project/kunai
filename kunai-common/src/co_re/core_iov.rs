@@ -1,4 +1,4 @@
-use aya_bpf::cty::c_void;
+use aya_ebpf::cty::c_void;
 
 use crate::kernel;
 use crate::version::kernel_version;
@@ -58,18 +58,18 @@ impl IterType {
                 x if shim_iter_type_ITER_BVEC_exists() && x == shim_iter_type_ITER_BVEC() => {
                     Some(IterType::ITER_BVEC)
                 }
-                /*x if shim_iter_type_ITER_XARRAY_exists() && x == shim_iter_type_ITER_XARRAY() => {
+                x if shim_iter_type_ITER_XARRAY_exists() && x == shim_iter_type_ITER_XARRAY() => {
                     Some(IterType::ITER_XARRAY)
-                }*/
-                /*x if shim_iter_type_ITER_PIPE_exists() && x == shim_iter_type_ITER_PIPE() => {
+                }
+                x if shim_iter_type_ITER_PIPE_exists() && x == shim_iter_type_ITER_PIPE() => {
                     Some(IterType::ITER_PIPE)
-                }*/
-                /*x if shim_iter_type_ITER_DISCARD_exists() && x == shim_iter_type_ITER_DISCARD() => {
+                }
+                x if shim_iter_type_ITER_DISCARD_exists() && x == shim_iter_type_ITER_DISCARD() => {
                     Some(IterType::ITER_DISCARD)
-                }*/
-                /*x if shim_iter_type_ITER_UBUF_exists() && x == shim_iter_type_ITER_UBUF() => {
+                }
+                x if shim_iter_type_ITER_UBUF_exists() && x == shim_iter_type_ITER_UBUF() => {
                     Some(IterType::ITER_UBUF)
-                }*/
+                }
                 _ => None,
             }
         }

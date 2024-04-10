@@ -1,5 +1,5 @@
 use super::*;
-use aya_bpf::programs::TracePointContext;
+use aya_ebpf::programs::TracePointContext;
 use kunai_common::{co_re::task_struct, syscalls::SysEnterArgs};
 
 // print fmt: "unshare_flags: 0x%08lx", ((unsigned long)(REC->unshare_flags))
@@ -29,8 +29,8 @@ pub struct MmapArgs {
     pub off: u64,
 }
 
-#[tracepoint(name = "syscalls.sys_enter_mmap")]
-pub fn mmap(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_enter_mmap", category = "syscalls")]
+pub fn syscalls_sys_enter_mmap(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_mmap(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

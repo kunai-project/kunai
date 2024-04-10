@@ -1,4 +1,4 @@
-use aya_bpf::helpers::bpf_probe_read_kernel;
+use aya_ebpf::helpers::bpf_probe_read_kernel;
 
 use super::gen::{self, *};
 use super::{core_read_kernel, file, rust_shim_kernel_impl, CoRe};

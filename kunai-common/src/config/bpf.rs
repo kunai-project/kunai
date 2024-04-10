@@ -1,7 +1,7 @@
 use crate::bpf_events;
-use crate::helpers::bpf_get_current_pid_tgid;
-use aya_bpf::macros::map;
-use aya_bpf::maps::Array;
+use aya_ebpf::helpers::bpf_get_current_pid_tgid;
+use aya_ebpf::macros::map;
+use aya_ebpf::maps::Array;
 
 use super::BpfConfig;
 

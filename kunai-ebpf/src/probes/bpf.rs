@@ -1,5 +1,5 @@
 use super::*;
-use aya_bpf::{maps::LruHashMap, programs::ProbeContext};
+use aya_ebpf::{maps::LruHashMap, programs::ProbeContext};
 
 #[map]
 static mut BPF_PROG_TRACK: LruHashMap<u64, co_re::bpf_prog> = LruHashMap::with_max_entries(1024, 0);
@@ -7,8 +7,8 @@ static mut BPF_PROG_TRACK: LruHashMap<u64, co_re::bpf_prog> = LruHashMap::with_m
 // this function gets called at the end of bpf_prog_load
 // and contains all useful information about program
 // being loaded
-#[kprobe(name = "entry.security_bpf_prog")]
-pub fn security_bpf_prog_alloc(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "security_bpf_prog")]
+pub fn entry_security_bpf_prog(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_bpf_prog(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -27,8 +27,8 @@ unsafe fn try_security_bpf_prog(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 // this probe gets executed after security_bpf_prog because of fexit
-#[kretprobe(name = "exit.bpf_prog_load")]
-pub fn bpf_prog_load(ctx: ProbeContext) -> u32 {
+#[kretprobe(function = "bpf_prog_load")]
+pub fn exit_bpf_prog_load(ctx: ProbeContext) -> u32 {
     match unsafe { try_bpf_prog_load(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

@@ -101,4 +101,12 @@ mod test {
         assert!(!u.domainname().unwrap().is_empty());
         assert!(u.domainname().unwrap().len() < 64);
     }
+
+    #[test]
+    fn test_from_sys() {
+        println!(
+            "current kernel version: {}",
+            Utsname::kernel_version().unwrap()
+        );
+    }
 }

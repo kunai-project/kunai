@@ -1,5 +1,5 @@
-use aya_bpf::{programs::FExitContext, BpfContext};
-use aya_helpers::helpers::{bpf_get_current_pid_tgid, bpf_probe_read};
+use aya_ebpf::helpers::{self, bpf_get_current_pid_tgid, bpf_probe_read};
+use aya_ebpf::{programs::FExitContext, EbpfContext};
 
 #[inline(always)]
 pub fn bpf_task_tracking_id() -> u64 {
@@ -15,11 +15,9 @@ pub enum Error {
 // this function is available since some minor commit of 5.15 kernel so for kernels
 // between 5.5 (since when fexit is possible) and that 5.15 kernel version, it is not
 // possible to use this function. Use bpf_get_fexit_rc instead.
-pub fn bpf_get_func_ret<C: BpfContext>(ctx: &C) -> Result<u64, Error> {
+pub fn bpf_get_func_ret<C: EbpfContext>(ctx: &C) -> Result<u64, Error> {
     let mut rc = 0u64;
-    if unsafe { aya_helpers::helpers::bpf_get_func_ret(ctx.as_ptr(), core::ptr::addr_of_mut!(rc)) }
-        == 0
-    {
+    if unsafe { helpers::bpf_get_func_ret(ctx.as_ptr(), core::ptr::addr_of_mut!(rc)) } == 0 {
         return Ok(rc);
     }
     Err(Error::NotSupported)

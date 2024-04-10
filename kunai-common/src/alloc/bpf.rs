@@ -1,6 +1,6 @@
 use super::Error;
 use crate::{bpf_events, buffer::Buffer};
-use aya_bpf::{
+use aya_ebpf::{
     macros::map,
     maps::{PerCpuArray, PerCpuHashMap},
 };

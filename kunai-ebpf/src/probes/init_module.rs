@@ -1,15 +1,15 @@
 use super::*;
 
-use aya_bpf::maps::LruHashMap;
-use aya_bpf::programs::{ProbeContext, TracePointContext};
+use aya_ebpf::maps::LruHashMap;
+use aya_ebpf::programs::{ProbeContext, TracePointContext};
 use kunai_common::syscalls::{SysEnterArgs, SysExitArgs};
 
 #[map]
 static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
     LruHashMap::with_max_entries(1024, 0);
 
-#[kprobe(name = "lkm.mod_sysfs_setup")]
-pub fn mod_sysfs_setup(ctx: ProbeContext) -> u32 {
+#[kprobe(function = "mod_sysfs_setup")]
+pub fn lkm_mod_sysfs_setup(ctx: ProbeContext) -> u32 {
     match unsafe { try_mod_sysfs_setup(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -36,8 +36,8 @@ unsafe fn try_mod_sysfs_setup(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[tracepoint(name = "lkm.syscalls.sys_enter_init_module")]
-pub fn sys_enter_init_module(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_enter_init_module", category = "syscalls")]
+pub fn lkm_syscalls_sys_enter_init_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -52,8 +52,8 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
     handle_init_module(ctx, args.into())
 }
 
-#[tracepoint(name = "lkm.syscalls.sys_enter_finit_module")]
-pub fn sys_enter_finit_module(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_enter_finit_module", category = "syscalls")]
+pub fn lkm_syscalls_sys_enter_finit_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_finit_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -98,8 +98,8 @@ unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> P
     Ok(())
 }
 
-#[tracepoint(name = "lkm.syscalls.sys_exit_init_module")]
-pub fn sys_exit_init_module(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_exit_init_module", category = "syscalls")]
+pub fn lkm_syscalls_sys_exit_init_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -109,8 +109,8 @@ pub fn sys_exit_init_module(ctx: TracePointContext) -> u32 {
     }
 }
 
-#[tracepoint(name = "lkm.syscalls.sys_exit_finit_module")]
-pub fn sys_exit_finit_module(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_exit_finit_module", category = "syscalls")]
+pub fn lkm_syscalls_sys_exit_finit_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
+use aya::{include_bytes_aligned, BpfLoader, VerifierLogLevel};
 use env_logger::Builder;
 use kunai::{compat::Programs, util::uname::Utsname};
 use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
@@ -45,29 +45,23 @@ fn integration() -> anyhow::Result<()> {
     info!("mounting tracefs");
     mount("none", "/sys/kernel/tracing", "tracefs")?;
 
+    let bpf_elf = {
+        #[cfg(debug_assertions)]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
+        #[cfg(not(debug_assertions))]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
+        d
+    };
+
     info!("loading ebpf bytes");
-    #[cfg(debug_assertions)]
-    let mut bpf =
-        BpfLoader::new()
-            .verifier_log_level(verifier_level)
-            .load(include_bytes_aligned!(
-                "../../../target/bpfel-unknown-none/debug/kunai-ebpf"
-            ))?;
+    let mut bpf = BpfLoader::new()
+        .verifier_log_level(verifier_level)
+        .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
+        .load(bpf_elf)?;
 
-    #[cfg(not(debug_assertions))]
-    let mut bpf =
-        BpfLoader::new()
-            .verifier_log_level(verifier_level)
-            .load(include_bytes_aligned!(
-                "../../../target/bpfel-unknown-none/release/kunai-ebpf"
-            ))?;
-
-    let mut programs = Programs::from_bpf(&mut bpf);
+    let mut programs = Programs::from_bpf(&mut bpf).with_elf_info(bpf_elf)?;
 
     kunai::configure_probes(&mut programs, current_kernel);
-
-    info!("getting BTF");
-    let btf = Btf::from_sys_fs()?;
 
     // generic program loader
     for (_, mut p) in programs.into_vec_sorted_by_prio() {
@@ -94,7 +88,7 @@ fn integration() -> anyhow::Result<()> {
             continue;
         }
 
-        p.attach(&btf)?;
+        p.attach()?;
     }
 
     Ok(())

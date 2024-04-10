@@ -1,6 +1,6 @@
 use super::*;
 
-use aya_bpf::{maps::LruHashMap, programs::TracePointContext};
+use aya_ebpf::{maps::LruHashMap, programs::TracePointContext};
 use kunai_common::syscalls::{SysEnterArgs, SysExitArgs};
 
 #[map]
@@ -16,8 +16,8 @@ struct PrctlArgs {
     arg5: u64,
 }
 
-#[tracepoint(name = "syscalls.sys_enter_prctl")]
-pub fn sys_enter_prctl(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_enter_prctl", category = "syscalls")]
+pub fn syscalls_sys_enter_prctl(ctx: TracePointContext) -> u32 {
     match unsafe { try_enter_prctl(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -37,8 +37,8 @@ unsafe fn try_enter_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
     return Ok(());
 }
 
-#[tracepoint(name = "syscalls.sys_exit_prctl")]
-pub fn sys_exit_prctl(ctx: TracePointContext) -> u32 {
+#[tracepoint(name = "sys_exit_prctl", category = "syscalls")]
+pub fn syscalls_sys_exit_prctl(ctx: TracePointContext) -> u32 {
     match unsafe { try_exit_prctl(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

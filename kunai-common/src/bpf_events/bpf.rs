@@ -6,8 +6,8 @@ use super::TaskInfo;
 use super::Type;
 use crate::co_re::core_read_kernel;
 use crate::co_re::task_struct;
-use crate::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
 use crate::uuid::Uuid;
+use aya_ebpf::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
 
 impl<T> Event<T> {
     #[inline(always)]

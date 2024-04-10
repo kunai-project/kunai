@@ -42,7 +42,7 @@ use aya::{
     maps::perf::{AsyncPerfEventArray, Events, PerfBufferError},
     maps::HashMap as AyaHashMap,
     util::online_cpus,
-    Bpf, Btf,
+    Bpf,
 };
 #[allow(unused_imports)]
 use aya::{BpfLoader, VerifierLogLevel};
@@ -1736,21 +1736,18 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let current_kernel = Utsname::kernel_version()?;
 
-    #[cfg(debug_assertions)]
+    let bpf_elf = {
+        #[cfg(debug_assertions)]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
+        #[cfg(not(debug_assertions))]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
+        d
+    };
+
     let mut bpf = BpfLoader::new()
         .verifier_log_level(verifier_level)
-        .set_global("LINUX_KERNEL_VERSION", &current_kernel)
-        .load(include_bytes_aligned!(
-            "../../../target/bpfel-unknown-none/debug/kunai-ebpf"
-        ))?;
-
-    #[cfg(not(debug_assertions))]
-    let mut bpf =
-        BpfLoader::new()
-            .verifier_log_level(verifier_level)
-            .load(include_bytes_aligned!(
-                "../../../target/bpfel-unknown-none/release/kunai-ebpf"
-            ))?;
+        .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
+        .load(bpf_elf)?;
 
     BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
         .expect("failed to initialize bpf configuration");
@@ -1762,8 +1759,6 @@ async fn main() -> Result<(), anyhow::Error> {
     EventReader::init(&mut bpf, conf.clone(), sender)?;
     EventProcessor::init(conf, receiver)?;
 
-    let btf = Btf::from_sys_fs()?;
-
     // make possible probe selection in debug
     #[allow(unused_mut)]
     let mut en_probes: Vec<String> = vec![];
@@ -1772,7 +1767,8 @@ async fn main() -> Result<(), anyhow::Error> {
         enable.split(',').for_each(|s| en_probes.push(s.into()));
     }
 
-    let mut programs = Programs::from_bpf(&mut bpf);
+    // We need to parse eBPF ELF to extract section names
+    let mut programs = Programs::from_bpf(&mut bpf).with_elf_info(bpf_elf)?;
 
     kunai::configure_probes(&mut programs, current_kernel);
 
@@ -1812,7 +1808,7 @@ async fn main() -> Result<(), anyhow::Error> {
             continue;
         }
 
-        p.attach(&btf)?;
+        p.attach()?;
     }
 
     info!("Waiting for Ctrl-C...");

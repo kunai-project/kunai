@@ -16,7 +16,6 @@ pub struct KernelVersion {
     pub patch: u16,
 }
 
-
 #[macro_export]
 macro_rules! kernel {
     ($major:literal) => {
@@ -62,5 +61,44 @@ impl PartialOrd for KernelVersion {
                 .then_with(|| self.minor.cmp(&other.minor))
                 .then_with(|| self.patch.cmp(&other.patch)),
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use core::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn test_kernel_macro() {
+        assert_eq!(kernel!(5), KernelVersion::new(5, 0, 0));
+        assert_eq!(kernel!(5, 4), KernelVersion::new(5, 4, 0));
+        assert_eq!(kernel!(5, 4, 42), KernelVersion::new(5, 4, 42));
+        assert!(kernel!(6) > kernel!(5, 9));
+        assert!(kernel!(4, 0, 3) < kernel!(5, 9));
+    }
+
+    #[test]
+    fn test_parse_kernel_version() {
+        let v5 = KernelVersion::from_str("5.1.0").unwrap();
+        let v6 = KernelVersion::from_str("6.1.0").unwrap();
+        KernelVersion::from_str("6.0").unwrap();
+        assert_eq!(
+            KernelVersion::from_str("6"),
+            Err(KernelVersionError::MinorIsMissing)
+        );
+        assert_eq!(
+            KernelVersion::from_str(""),
+            Err(KernelVersionError::MajorIsMissing)
+        );
+        assert_eq!(v5, KernelVersion::from_str("5.1.0").unwrap());
+        assert!(v6 > v5);
+        assert!(
+            KernelVersion::from_str("5.1.1").unwrap() > KernelVersion::from_str("5.1.0").unwrap()
+        );
+        assert!(
+            KernelVersion::from_str("5.2.1").unwrap() > KernelVersion::from_str("5.1.0").unwrap()
+        );
     }
 }

@@ -1,5 +1,5 @@
 use super::Error;
-use aya_bpf::{helpers::bpf_probe_read, BpfContext};
+use aya_ebpf::{helpers::bpf_probe_read, EbpfContext};
 
 /// To read the input parameters for a tracepoint conveniently, define a struct
 /// to hold the input arguments. Refer to to
@@ -27,7 +27,7 @@ pub struct SysExitArgs {
 }
 
 impl SysExitArgs {
-    pub fn from_context<C: BpfContext>(c: &C) -> Result<Self, Error> {
+    pub fn from_context<C: EbpfContext>(c: &C) -> Result<Self, Error> {
         unsafe { bpf_probe_read(c.as_ptr() as *const SysExitArgs) }
             .map_err(|_| Error::FailedToReadExitArgs)
     }
@@ -41,7 +41,7 @@ pub struct SysEnterArgs<A> {
 }
 
 impl<A> SysEnterArgs<A> {
-    pub fn from_context<C: BpfContext>(c: &C) -> Result<Self, Error> {
+    pub fn from_context<C: EbpfContext>(c: &C) -> Result<Self, Error> {
         unsafe { bpf_probe_read(c.as_ptr() as *const SysEnterArgs<A>) }
             .map_err(|_| Error::FailedToReadEnterArgs)
     }
