@@ -3,7 +3,7 @@ version = "0.2.0-rc.3"
 name = "kunai"
 edition = "2021"
 description = "Kunai userland package"
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 publish = false
 

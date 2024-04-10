@@ -3,7 +3,7 @@ name = "kunai-common"
 version = "0.2.0"
 edition = "2021"
 description = "Package providing shared structures between eBPF and userland"
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 publish = false
 
