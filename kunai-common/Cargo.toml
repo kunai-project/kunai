@@ -9,25 +9,13 @@ publish = false
 
 [features]
 default = []
-user = [
-    "aya",
-    "dns-parser",
-    "uuid",
-    "tokio",
-    "bytes",
-    "futures",
-    "lru-st",
-    "thiserror",
-]
+user = ["aya", "dns-parser", "uuid", "tokio", "bytes", "futures", "thiserror"]
 
 [build-dependencies]
 bindgen = "0.69.2"
 
 [dependencies]
 # Non Aya deps
-lru-st = { git = "https://github.com/0xrawsec/lru-st/", branch = "master", features = [
-    "async",
-], optional = true }
 dns-parser = { version = "0.8.0", optional = true }
 uuid = { version = "1.3.0", optional = true, features = ["v4"] }
 cfg-if = "1.0.0"

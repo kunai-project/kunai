@@ -822,7 +822,6 @@ dependencies = [
  "dns-parser",
  "futures",
  "kunai-macros",
- "lru-st",
  "paste",
  "thiserror",
  "tokio",
