@@ -17,16 +17,3 @@ pub struct CloneData {
     pub cgroup: Cgroup,
     pub nodename: Nodename,
 }
-
-#[cfg(test)]
-mod test {
-    use core::mem::MaybeUninit;
-
-    use super::CloneData;
-
-    #[test]
-    fn test_zeroed_nodename() {
-        let d = unsafe { MaybeUninit::<CloneData>::zeroed().assume_init() };
-        assert!(d.nodename.is_none());
-    }
-}

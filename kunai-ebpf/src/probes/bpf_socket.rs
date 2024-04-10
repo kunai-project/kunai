@@ -4,13 +4,13 @@ use kunai_common::{co_re::sock_fprog_kern, kprobe::ProbeFn, net::SocketInfo};
 use super::*;
 
 #[kprobe(function = "__sk_attach_prog")]
-pub fn sk_0x2e_enter_0x2e___sk_attach_prog(ctx: ProbeContext) -> u32 {
+pub fn sk_enter_sk_attach_prog(ctx: ProbeContext) -> u32 {
     unsafe { ignore_result!(ProbeFn::sk_sk_attach_prog.save_ctx(&ctx)) }
     0
 }
 
 #[kretprobe(function = "__sk_attach_prog")]
-pub fn sk_0x2e_exit_0x2e___sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
+pub fn sk_exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
     let rc = match unsafe {
         ProbeFn::sk_sk_attach_prog
             .restore_ctx()
@@ -36,13 +36,13 @@ pub fn sk_0x2e_exit_0x2e___sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
 }
 
 #[kprobe(function = "reuseport_attach_prog")]
-pub fn sk_0x2e_enter_0x2e_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
+pub fn sk_enter_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
     unsafe { ignore_result!(ProbeFn::sk_reuseport_attach_prog.save_ctx(&ctx)) }
     0
 }
 
 #[kretprobe(function = "reuseport_attach_prog")]
-pub fn sk_0x2e_exit_0x2e_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
+pub fn sk_exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
     let rc = match unsafe {
         ProbeFn::sk_reuseport_attach_prog
             .restore_ctx()

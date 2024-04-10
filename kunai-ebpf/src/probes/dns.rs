@@ -99,7 +99,7 @@ unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
 }
 
 #[kprobe(function = "vfs_read")]
-pub fn net_0x2e_dns_0x2e_enter_0x2e_vfs_read(ctx: ProbeContext) -> u32 {
+pub fn net_dns_enter_vfs_read(ctx: ProbeContext) -> u32 {
     match unsafe { try_enter_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -136,7 +136,7 @@ unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kretprobe(function = "vfs_read")]
-pub fn net_0x2e_dns_0x2e_exit_0x2e_vfs_read(ctx: ProbeContext) -> u32 {
+pub fn net_dns_exit_vfs_read(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_exit_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -186,7 +186,7 @@ unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kprobe(function = "__sys_recvfrom")]
-pub fn net_0x2e_dns_0x2e_enter_0x2e___sys_recvfrom(ctx: ProbeContext) -> u32 {
+pub fn net_dns_enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
     match unsafe { try_enter_sys_recvfrom(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -226,7 +226,7 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kretprobe(function = "__sys_recvfrom")]
-pub fn net_0x2e_dns_0x2e_exit_0x2e___sys_recvfrom(ctx: ProbeContext) -> u32 {
+pub fn net_dns_exit_sys_recvfrom(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_exit_sys_recvfrom(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -280,7 +280,7 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kprobe(function = "__sys_recvmsg")]
-pub fn net_0x2e_dns_0x2e_enter_0x2e___sys_recvmsg(ctx: ProbeContext) -> u32 {
+pub fn net_dns_enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
     match unsafe { try_enter_sys_recvmsg(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -323,7 +323,7 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kretprobe(function = "__sys_recvmsg")]
-pub fn net_0x2e_dns_0x2e_exit_0x2e___sys_recvmsg(ctx: ProbeContext) -> u32 {
+pub fn net_dns_exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_exit_recvmsg(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

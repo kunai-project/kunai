@@ -7,7 +7,7 @@ use kunai_common::{
 use super::*;
 
 #[kprobe(function = "security_task_alloc")]
-pub fn clone_0x2e_enter_0x2e_security_task_alloc(ctx: ProbeContext) -> u32 {
+pub fn clone_enter_security_task_alloc(ctx: ProbeContext) -> u32 {
     let rc = match unsafe { try_enter_wake_up_new_task(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

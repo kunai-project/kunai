@@ -14,28 +14,28 @@ pub mod util;
 /// panic: if a given probe name is not found
 #[allow(unused_variables)]
 pub fn configure_probes(programs: &mut Programs, target: KernelVersion) {
-    programs.expect_mut("execve.security_bprm_check").prio = 0;
+    programs.expect_mut("execve_security_bprm_check").prio = 0;
 
-    programs.expect_mut("execve.exit.bprm_execve").prio = 20;
-    programs.expect_mut("syscalls.sys_exit_execve").prio = 20;
+    programs.expect_mut("execve_exit_bprm_execve").prio = 20;
+    programs.expect_mut("syscalls_sys_exit_execve").prio = 20;
 
     // bprm_execve does not exists before 5.9
     programs
-        .expect_mut("execve.exit.bprm_execve")
+        .expect_mut("execve_exit_bprm_execve")
         .min_kernel(kernel!(5, 9));
 
     programs
-        .expect_mut("syscalls.sys_exit_execve")
+        .expect_mut("syscalls_sys_exit_execve")
         .max_kernel(kernel!(5, 9));
 
     programs
-        .expect_mut("syscalls.sys_exit_execveat")
+        .expect_mut("syscalls_sys_exit_execveat")
         .max_kernel(kernel!(5, 9));
 
     // bpf probes
-    programs.expect_mut("entry.security_bpf_prog").prio = 90;
-    programs.expect_mut("exit.bpf_prog_load").prio = 100;
+    programs.expect_mut("entry_security_bpf_prog").prio = 90;
+    programs.expect_mut("exit_bpf_prog_load").prio = 100;
 
     // mmap probe
-    programs.expect_mut("syscalls.sys_enter_mmap").prio = 90;
+    programs.expect_mut("syscalls_sys_enter_mmap").prio = 90;
 }

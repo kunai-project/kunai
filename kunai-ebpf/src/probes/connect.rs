@@ -7,13 +7,13 @@ use kunai_common::{
 };
 
 #[kprobe(function = "__sys_connect")]
-pub fn net_0x2e_enter_0x2e___sys_connect(ctx: ProbeContext) -> u32 {
+pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
     unsafe { ignore_result!(ProbeFn::net_sys_connect.save_ctx(&ctx)) }
     0
 }
 
 #[kretprobe(function = "__sys_connect")]
-pub fn net_0x2e_exit_0x2e___sys_connect(ctx: ProbeContext) -> u32 {
+pub fn net_exit_sys_connect(ctx: ProbeContext) -> u32 {
     let rc = match unsafe {
         ProbeFn::net_sys_connect
             .restore_ctx()

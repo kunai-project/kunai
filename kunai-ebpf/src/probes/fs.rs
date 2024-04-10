@@ -67,7 +67,7 @@ unsafe fn file_key(file: &co_re::file) -> ProbeResult<FileKey> {
 }
 
 #[kprobe(function = "vfs_read")]
-pub fn fs_0x2e_vfs_read(ctx: ProbeContext) -> u32 {
+pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -78,7 +78,7 @@ pub fn fs_0x2e_vfs_read(ctx: ProbeContext) -> u32 {
 }
 
 #[kprobe(function = "vfs_readv")]
-pub fn fs_0x2e_vfs_readv(ctx: ProbeContext) -> u32 {
+pub fn fs_vfs_readv(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -130,7 +130,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kprobe(function = "vfs_write")]
-pub fn fs_0x2e_vfs_write(ctx: ProbeContext) -> u32 {
+pub fn fs_vfs_write(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_write(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -141,7 +141,7 @@ pub fn fs_0x2e_vfs_write(ctx: ProbeContext) -> u32 {
 }
 
 #[kprobe(function = "vfs_writev")]
-pub fn fs_0x2e_vfs_writev(ctx: ProbeContext) -> u32 {
+pub fn fs_vfs_writev(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_write(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -191,7 +191,7 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kprobe(function = "security_path_rename")]
-pub fn fs_0x2e_security_path_rename(ctx: ProbeContext) -> u32 {
+pub fn fs_security_path_rename(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_path_rename(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -248,7 +248,7 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
 static mut PATHS: LruHashMap<u128, Path> = LruHashMap::with_max_entries(4096, 0);
 
 #[kprobe(function = "security_path_unlink")]
-pub fn fs_0x2e_security_path_unlink(ctx: ProbeContext) -> u32 {
+pub fn fs_security_path_unlink(ctx: ProbeContext) -> u32 {
     match unsafe { try_security_path_unlink(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -282,7 +282,7 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 // do_unlinkat cannot be hooked at ret as path/dentry we wanna parse
 // seems to be cleaned up and cannot be parsed correctly.
 #[kretprobe(function = "vfs_unlink")]
-pub fn fs_0x2e_exit_0x2e_vfs_unlink(ctx: ProbeContext) -> u32 {
+pub fn fs_exit_vfs_unlink(ctx: ProbeContext) -> u32 {
     match unsafe { try_vfs_unlink(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

@@ -24,7 +24,7 @@ pub struct MprotectArgs {
 }
 
 #[tracepoint(name = "sys_enter_mprotect", category = "syscalls")]
-pub fn syscalls_0x2e_sys_enter_mprotect(ctx: TracePointContext) -> u32 {
+pub fn syscalls_sys_enter_mprotect(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_mprotect(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

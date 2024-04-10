@@ -2,7 +2,6 @@
 #![no_main]
 
 // bringing probes into main
-#[allow(non_snake_case)]
 mod probes;
 
 #[panic_handler]

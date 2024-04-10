@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
+use aya::{include_bytes_aligned, BpfLoader, VerifierLogLevel};
 use env_logger::Builder;
 use kunai::{compat::Programs, util::uname::Utsname};
 use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
@@ -66,9 +66,6 @@ fn integration() -> anyhow::Result<()> {
 
     kunai::configure_probes(&mut programs, current_kernel);
 
-    info!("getting BTF");
-    let btf = Btf::from_sys_fs()?;
-
     // generic program loader
     for (_, mut p) in programs.into_vec_sorted_by_prio() {
         info!(
@@ -94,7 +91,7 @@ fn integration() -> anyhow::Result<()> {
             continue;
         }
 
-        p.attach(&btf)?;
+        p.attach()?;
     }
 
     Ok(())

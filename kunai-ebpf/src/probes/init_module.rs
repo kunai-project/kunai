@@ -9,7 +9,7 @@ static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
     LruHashMap::with_max_entries(1024, 0);
 
 #[kprobe(function = "mod_sysfs_setup")]
-pub fn lkm_0x2e_mod_sysfs_setup(ctx: ProbeContext) -> u32 {
+pub fn lkm_mod_sysfs_setup(ctx: ProbeContext) -> u32 {
     match unsafe { try_mod_sysfs_setup(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -37,7 +37,7 @@ unsafe fn try_mod_sysfs_setup(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[tracepoint(name = "sys_enter_init_module", category = "syscalls")]
-pub fn lkm_0x2e_syscalls_0x2e_sys_enter_init_module(ctx: TracePointContext) -> u32 {
+pub fn lkm_syscalls_sys_enter_init_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -53,7 +53,7 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
 }
 
 #[tracepoint(name = "sys_enter_finit_module", category = "syscalls")]
-pub fn lkm_0x2e_syscalls_0x2e_sys_enter_finit_module(ctx: TracePointContext) -> u32 {
+pub fn lkm_syscalls_sys_enter_finit_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_enter_finit_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -99,7 +99,7 @@ unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> P
 }
 
 #[tracepoint(name = "sys_exit_init_module", category = "syscalls")]
-pub fn lkm_0x2e_syscalls_0x2e_sys_exit_init_module(ctx: TracePointContext) -> u32 {
+pub fn lkm_syscalls_sys_exit_init_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -110,7 +110,7 @@ pub fn lkm_0x2e_syscalls_0x2e_sys_exit_init_module(ctx: TracePointContext) -> u3
 }
 
 #[tracepoint(name = "sys_exit_finit_module", category = "syscalls")]
-pub fn lkm_0x2e_syscalls_0x2e_sys_exit_finit_module(ctx: TracePointContext) -> u32 {
+pub fn lkm_syscalls_sys_exit_finit_module(ctx: TracePointContext) -> u32 {
     match unsafe { try_sys_exit_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
