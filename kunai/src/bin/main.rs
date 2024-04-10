@@ -1736,10 +1736,13 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let current_kernel = Utsname::kernel_version()?;
 
-    #[cfg(debug_assertions)]
-    let bpf_elf = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
-    #[cfg(not(debug_assertions))]
-    let elf = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
+    let bpf_elf = {
+        #[cfg(debug_assertions)]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
+        #[cfg(not(debug_assertions))]
+        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
+        d
+    };
 
     let mut bpf = BpfLoader::new()
         .verifier_log_level(verifier_level)
