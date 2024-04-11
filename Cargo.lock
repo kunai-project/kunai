@@ -510,16 +510,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "event_derive"
-version = "0.1.0"
-source = "git+https://github.com/0xrawsec/gene-rs?branch=main#66d4827e52ec2231cfff12598e38be5a28a6b8e8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.58",
-]
-
-[[package]]
 name = "flate2"
 version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -620,10 +610,11 @@ dependencies = [
 
 [[package]]
 name = "gene"
-version = "0.1.0"
-source = "git+https://github.com/0xrawsec/gene-rs?branch=main#66d4827e52ec2231cfff12598e38be5a28a6b8e8"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18d9fb911fbe9651874491f7ffc8aa753b4dfa3a54db302a1f6a385b77972d02"
 dependencies = [
- "event_derive",
+ "gene_derive",
  "lazy_static",
  "pest",
  "pest_derive",
@@ -631,6 +622,17 @@ dependencies = [
  "serde",
  "serde_yaml",
  "thiserror",
+]
+
+[[package]]
+name = "gene_derive"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39bf67bfa3bb3bd65f1202cec9fe704203338cc9a451c29173dbd12d7813416e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.58",
 ]
 
 [[package]]
@@ -786,9 +788,9 @@ dependencies = [
  "chrono",
  "clap",
  "env_logger",
- "event_derive",
  "futures",
  "gene",
+ "gene_derive",
  "hex",
  "ip_network",
  "kunai-common",
