@@ -7,8 +7,8 @@ use std::{
 };
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
-use event_derive::{Event, FieldGetter};
 use gene::{Event, FieldGetter, FieldValue};
+use gene_derive::{Event, FieldGetter};
 
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 

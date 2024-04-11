@@ -1,5 +1,5 @@
-use event_derive::FieldGetter;
 use gene::{FieldGetter, FieldValue};
+use gene_derive::FieldGetter;
 
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};

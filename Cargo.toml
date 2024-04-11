@@ -3,5 +3,6 @@ resolver = "2"
 members = ["kunai", "kunai-common", "xtask"]
 
 [workspace.package]
+license = "GPL-3.0"
 license-file = "LICENSE"
 repository = "https://github.com/kunai-project/kunai"

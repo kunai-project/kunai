@@ -1,9 +1,9 @@
 [package]
-version = "0.2.0-rc.3"
+version = "0.2.0"
 name = "kunai"
 edition = "2021"
-description = "Kunai userland package"
-license-file.workspace = true
+description = "Kunai userland crate"
+license.workspace = true
 repository.workspace = true
 publish = false
 
@@ -23,8 +23,8 @@ lru-st = { version = "0.1.1", features = ["sync"] }
 aya = { version = "0.12.0", features = ["async_tokio"] }
 
 # detection engine for events
-gene = { git = "https://github.com/0xrawsec/gene-rs", branch = "main" }
-event_derive = { git = "https://github.com/0xrawsec/gene-rs", branch = "main" }
+gene = { version = "0.1.2" }
+gene_derive = { version = "0.1.2" }
 
 kunai-common = { path = "../kunai-common", features = ["user"] }
 kunai-macros = { path = "../kunai-common/src/kunai-macros" }
