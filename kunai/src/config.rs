@@ -93,6 +93,11 @@ impl Config {
         self.host_uuid.or(host_uuid())
     }
 
+    pub fn stdout_output(mut self) -> Self {
+        self.output = "stdout".into();
+        self
+    }
+
     pub fn generate_host_uuid(&mut self) {
         self.host_uuid = host_uuid().or(Some(uuid::Uuid::new_v4()));
     }

@@ -1,15 +1,18 @@
 use anyhow::anyhow;
 use aya::maps::MapData;
 use bytes::BytesMut;
-use clap::Parser;
+
+use clap::builder::styling;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
 use gene::rules::MAX_SEVERITY;
 use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MprotectData,
-    NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData, UserEvent,
+    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MmapExecData,
+    MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
+    UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
@@ -22,7 +25,7 @@ use kunai_common::config::{BpfConfig, Filter};
 use kunai_common::inspect_err;
 
 use log::LevelFilter;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -31,10 +34,12 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+use std::thread::JoinHandle;
 use std::{process, thread};
 
 use aya::{
@@ -124,14 +129,14 @@ struct EventProcessor {
     iocs: HashSet<String>,
     random: u32,
     cache: cache::Cache,
-    receiver: Receiver<EncodedEvent>,
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
     output: std::fs::File,
+    handle: Option<JoinHandle<Result<(), anyhow::Error>>>,
 }
 
 impl EventProcessor {
-    pub fn init(config: Config, receiver: Receiver<EncodedEvent>) -> anyhow::Result<()> {
+    pub fn with_config(config: Config) -> anyhow::Result<Self> {
         let output = match &config.output.as_str() {
             &"stdout" => String::from("/dev/stdout"),
             &"stderr" => String::from("/dev/stderr"),
@@ -153,11 +158,11 @@ impl EventProcessor {
             cache: Cache::with_max_entries(10000),
             tasks: HashMap::new(),
             resolved: HashMap::new(),
-            receiver,
             output: std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
                 .open(output)?,
+            handle: None,
         };
 
         // loading rules in the engine
@@ -190,15 +195,35 @@ impl EventProcessor {
             |e: &anyhow::Error| warn!("failed to initialize tasks with procfs: {}", e)
         };
 
-        thread::spawn(move || {
-            // the thread must drop CLONE_FS in order to be able to navigate in namespaces
-            unshare(libc::CLONE_FS).unwrap();
-            while let Ok(mut enc) = ep.receiver.recv() {
+        Ok(ep)
+    }
+
+    /// Listen for events on the receiver
+    pub fn listen(
+        self,
+        receiver: Receiver<EncodedEvent>,
+    ) -> anyhow::Result<Arc<RwLock<EventProcessor>>> {
+        let ep = Arc::new(RwLock::new(self));
+
+        let shared = Arc::clone(&ep);
+
+        // we spawn thread only if there is a receiver
+        let h = thread::spawn(move || {
+            // the thread must drop CLONE_FS in order to be able to navigate in mnt namespaces
+            unshare(libc::CLONE_FS)?;
+            while let Ok(mut enc) = receiver.recv() {
+                // lock error is a symptom of implementation mistake so we panic
+                let mut ep = shared.write().unwrap();
                 ep.handle_event(&mut enc);
             }
+
+            Ok::<(), anyhow::Error>(())
         });
 
-        Ok(())
+        // lock error is a symptom of implementation mistake so we panic
+        ep.write().unwrap().handle = Some(h);
+
+        Ok(ep)
     }
 
     fn load_iocs<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
@@ -1571,8 +1596,25 @@ impl EventReader {
     }
 }
 
+const ABOUT_KUNAI: &str = r#"
+     ▲
+    / \    
+   / | \   
+  /  |  \   Kunai is a multi-purpose security monitoring tool for Linux systems.
+ / _ | _ \ 
+ \   |   /
+  \  |  /  This software is licensed under the GNU General Public License version 3.0 (GPL-3.0).
+   \   /   You are free to use, modify, and distribute this software under the terms of
+    |-|     the GPL-3.0 license. For more details, please refer to the full text of the
+    |\|     license at: https://www.gnu.org/licenses/gpl-3.0.html
+    |\|
+    |\|
+    |-|
+   /   \
+   \___/"#;
+
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = ABOUT_KUNAI, long_about = None)]
 struct Cli {
     /// Enable debugging
     #[arg(long)]
@@ -1617,12 +1659,197 @@ struct Cli {
     /// Silents out debug, info, error logging.
     #[arg(short, long)]
     silent: bool,
+
+    /// Specify a kunai command (if any)
+    #[clap(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Parser)]
+struct ReplayOpt {
+    log_files: Vec<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
+    Replay(ReplayOpt),
+}
+
+impl Command {
+    fn replay(conf: Config, o: ReplayOpt) -> anyhow::Result<()> {
+        let mut p = EventProcessor::with_config(conf.stdout_output())?;
+        for f in o.log_files {
+            let reader = std::io::BufReader::new(fs::File::open(f)?);
+            let mut de = serde_json::Deserializer::from_reader(reader);
+            while let Ok(v) = serde_json::Value::deserialize(&mut de) {
+                // we attempt at getting event name from json
+                if let Some(name) = v
+                    .get("info")
+                    .and_then(|info| info.get("event"))
+                    .and_then(|event| event.get("name"))
+                    .and_then(|name| name.as_str())
+                {
+                    macro_rules! scan_event {
+                        ($scanner:expr, $into:ty) => {{
+                            let mut e: UserEvent<$into> = serde_json::from_value(v)?;
+                            $scanner.scan_and_print(&mut e);
+                        }};
+                    }
+
+                    let t = Type::from_str(name).map_err(|e| anyhow!("{e}"))?;
+
+                    // exhaustive pattern matching so that we don't miss new events
+                    match t {
+                        Type::Execve | Type::ExecveScript => scan_event!(p, ExecveData),
+                        Type::Clone => scan_event!(p, CloneData),
+                        Type::Prctl => scan_event!(p, PrctlData),
+                        Type::MmapExec => scan_event!(p, MmapExecData),
+                        Type::MprotectExec => scan_event!(p, MprotectData),
+                        Type::Connect => scan_event!(p, ConnectData),
+                        Type::DnsQuery => scan_event!(p, DnsQueryData),
+                        Type::SendData => scan_event!(p, SendDataData),
+                        Type::InitModule => scan_event!(p, InitModuleData),
+                        Type::WriteConfig | Type::Write | Type::ReadConfig | Type::Read => {
+                            scan_event!(p, RWData)
+                        }
+                        Type::FileUnlink => scan_event!(p, UnlinkData),
+                        Type::FileRename => scan_event!(p, FileRenameData),
+                        Type::BpfProgLoad => scan_event!(p, BpfProgLoadData),
+                        Type::BpfSocketFilter => scan_event!(p, BpfSocketFilterData),
+                        Type::Exit | Type::ExitGroup => scan_event!(p, ExitData),
+
+                        Type::Unknown
+                        | Type::CacheHash
+                        | Type::Correlation
+                        | Type::Error
+                        | Type::EndEvents
+                        | Type::TaskSched
+                        | Type::Max => {}
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run(conf: Config, vll: VerifierLogLevel) -> anyhow::Result<()> {
+        // checking that we are running as root
+        if get_current_uid() != 0 {
+            return Err(anyhow::Error::msg(
+                "You need to be root to run this program, this is necessary to load eBPF programs",
+            ));
+        }
+
+        let current_kernel = Utsname::kernel_version()?;
+
+        let bpf_elf = {
+            #[cfg(debug_assertions)]
+            let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
+            #[cfg(not(debug_assertions))]
+            let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
+            d
+        };
+
+        let mut bpf = BpfLoader::new()
+            .verifier_log_level(vll)
+            .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
+            .load(bpf_elf)?;
+
+        BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
+            .expect("failed to initialize bpf configuration");
+
+        // we start event reader and event processor before loading the programs
+        // if we load the programs first we might have some event lost errors
+        let (sender, receiver) = channel::<EncodedEvent>();
+
+        EventReader::init(&mut bpf, conf.clone(), sender)?;
+        EventProcessor::with_config(conf)?.listen(receiver)?;
+
+        // make possible probe selection in debug
+        #[allow(unused_mut)]
+        let mut en_probes: Vec<String> = vec![];
+        #[cfg(debug_assertions)]
+        if let Ok(enable) = std::env::var("PROBES") {
+            enable.split(',').for_each(|s| en_probes.push(s.into()));
+        }
+
+        // We need to parse eBPF ELF to extract section names
+        let mut programs = Programs::from_bpf(&mut bpf).with_elf_info(bpf_elf)?;
+
+        kunai::configure_probes(&mut programs, current_kernel);
+
+        // generic program loader
+        for (_, mut p) in programs.into_vec_sorted_by_prio() {
+            // filtering probes to enable (only available in debug)
+            if !en_probes.is_empty()
+                && en_probes.iter().filter(|e| p.name.contains(*e)).count() == 0
+            {
+                continue;
+            }
+
+            // we force enabling of selected probes
+            // debug probes are disabled by default
+            if !en_probes.is_empty() {
+                p.enable();
+            }
+
+            info!(
+                "loading: {} {:?} with priority={}",
+                p.name,
+                p.prog_type(),
+                p.prio
+            );
+
+            if !p.enable {
+                warn!("{} probe has been disabled", p.name);
+                continue;
+            }
+
+            if !p.is_compatible(&current_kernel) {
+                warn!(
+                    "{} probe is not compatible with current kernel: min={} max={} current={}",
+                    p.name,
+                    p.compat.min(),
+                    p.compat.max(),
+                    current_kernel
+                );
+                continue;
+            }
+
+            p.attach()?;
+        }
+
+        info!("Waiting for Ctrl-C...");
+        signal::ctrl_c().await?;
+        info!("Exiting...");
+        Ok(())
+    }
 }
 
 // todo: make single-threaded / multi-threaded available in configuration
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), anyhow::Error> {
-    let cli = Cli::parse();
+    let c = {
+        let c: clap::Command = Cli::command();
+        let styles = styling::Styles::styled()
+            .header(styling::AnsiColor::Green.on_default() | styling::Effects::BOLD)
+            .usage(styling::AnsiColor::Green.on_default() | styling::Effects::BOLD)
+            .literal(styling::AnsiColor::Blue.on_default() | styling::Effects::BOLD)
+            .placeholder(styling::AnsiColor::Cyan.on_default());
+
+        c.styles(styles).help_template(
+            r#"{about-with-newline}
+{author-with-newline}
+{usage-heading} {usage}
+
+{all-args}"#,
+        )
+    };
+
+    let cli = Cli::from_arg_matches(&c.get_matches())?;
+    //let cli = Cli::parse();
     let mut conf = Config::default();
 
     // Handling any CLI argument not needing to run eBPF
@@ -1727,93 +1954,9 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    // checking that we are running as root
-    if get_current_uid() != 0 {
-        return Err(anyhow::Error::msg(
-            "You need to be root to run this program, this is necessary to load eBPF programs",
-        ));
+    // We finished preparing config
+    match cli.command {
+        Some(Command::Replay(o)) => return Command::replay(conf, o),
+        _ => return Command::run(conf, verifier_level).await,
     }
-
-    let current_kernel = Utsname::kernel_version()?;
-
-    let bpf_elf = {
-        #[cfg(debug_assertions)]
-        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
-        #[cfg(not(debug_assertions))]
-        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
-        d
-    };
-
-    let mut bpf = BpfLoader::new()
-        .verifier_log_level(verifier_level)
-        .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
-        .load(bpf_elf)?;
-
-    BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
-        .expect("failed to initialize bpf configuration");
-
-    // we start event reader and event processor before loading the programs
-    // if we load the programs first we might have some event lost errors
-    let (sender, receiver) = channel::<EncodedEvent>();
-
-    EventReader::init(&mut bpf, conf.clone(), sender)?;
-    EventProcessor::init(conf, receiver)?;
-
-    // make possible probe selection in debug
-    #[allow(unused_mut)]
-    let mut en_probes: Vec<String> = vec![];
-    #[cfg(debug_assertions)]
-    if let Ok(enable) = std::env::var("PROBES") {
-        enable.split(',').for_each(|s| en_probes.push(s.into()));
-    }
-
-    // We need to parse eBPF ELF to extract section names
-    let mut programs = Programs::from_bpf(&mut bpf).with_elf_info(bpf_elf)?;
-
-    kunai::configure_probes(&mut programs, current_kernel);
-
-    // generic program loader
-    for (_, mut p) in programs.into_vec_sorted_by_prio() {
-        // filtering probes to enable (only available in debug)
-        if !en_probes.is_empty() && en_probes.iter().filter(|e| p.name.contains(*e)).count() == 0 {
-            continue;
-        }
-
-        // we force enabling of selected probes
-        // debug probes are disabled by default
-        if !en_probes.is_empty() {
-            p.enable();
-        }
-
-        info!(
-            "loading: {} {:?} with priority={}",
-            p.name,
-            p.prog_type(),
-            p.prio
-        );
-
-        if !p.enable {
-            warn!("{} probe has been disabled", p.name);
-            continue;
-        }
-
-        if !p.is_compatible(&current_kernel) {
-            warn!(
-                "{} probe is not compatible with current kernel: min={} max={} current={}",
-                p.name,
-                p.compat.min(),
-                p.compat.max(),
-                current_kernel
-            );
-            continue;
-        }
-
-        p.attach()?;
-    }
-
-    info!("Waiting for Ctrl-C...");
-    signal::ctrl_c().await?;
-    info!("Exiting...");
-
-    Ok(())
 }

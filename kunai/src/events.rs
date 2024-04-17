@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     collections::HashSet,
-    fmt::LowerHex,
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
 };
@@ -94,7 +93,7 @@ pub struct TaskSection {
     uid: u32,
     gid: u32,
     namespaces: Option<NamespaceInfo>,
-    #[serde(serialize_with = "serialize_to_hex")]
+    #[serde(with = "u32_hex")]
     flags: u32,
 }
 
@@ -138,30 +137,30 @@ where
     serializer.serialize_str(&ts.0.to_rfc3339_opts(SecondsFormat::Nanos, true))
 }
 
-struct UtcDateTimeVisitor;
-
-impl<'de> Visitor<'de> for UtcDateTimeVisitor {
-    type Value = UtcDateTime;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("expecting a rfc3339 formatted timestamp")
-    }
-
-    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        DateTime::parse_from_rfc3339(&v)
-            .map_err(|e| E::custom(e.to_string()))
-            .map(UtcDateTime::from)
-    }
-}
-
 impl<'de> Deserialize<'de> for UtcDateTime {
     fn deserialize<D>(deserializer: D) -> Result<UtcDateTime, D::Error>
     where
         D: Deserializer<'de>,
     {
+        struct UtcDateTimeVisitor;
+
+        impl<'de> Visitor<'de> for UtcDateTimeVisitor {
+            type Value = UtcDateTime;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("expecting a rfc3339 formatted timestamp")
+            }
+
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                DateTime::parse_from_rfc3339(&v)
+                    .map_err(|e| E::custom(e.to_string()))
+                    .map(UtcDateTime::from)
+            }
+        }
+
         deserializer.deserialize_string(UtcDateTimeVisitor)
     }
 }
@@ -323,12 +322,52 @@ impl<T> UserEvent<T> {
     }
 }
 
-#[inline(always)]
-fn serialize_to_hex<S, T: LowerHex>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(&format!("0x{:x}", value))
+mod u32_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    #[inline(always)]
+    pub fn serialize<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{:x}", value))
+    }
+
+    #[inline(always)]
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u32, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(u32::from_str_radix(
+            &String::deserialize(deserializer)?.trim_start_matches("0x"),
+            16,
+        )
+        .map_err(|e| serde::de::Error::custom(e))?)
+    }
+}
+
+mod u64_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    #[inline(always)]
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{:x}", value))
+    }
+
+    #[inline(always)]
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(u64::from_str_radix(
+            &String::deserialize(deserializer)?.trim_start_matches("0x"),
+            16,
+        )
+        .map_err(|e| serde::de::Error::custom(e))?)
+    }
 }
 
 /// helper macro helping de define standardized user data.
@@ -340,7 +379,7 @@ where
 /// ```rust,ignore
 /// def_user_data!(
 ///    pub struct CloneData {
-///        #[serde(serialize_with = "serialize_to_hex")]
+///        #[serde(serialize_with = "u64_hex")]
 ///        pub flags: u64,
 ///    }
 /// );
@@ -398,7 +437,7 @@ impl IocGetter for ExecveData {
 
 def_user_data!(
     pub struct CloneData {
-        #[serde(serialize_with = "serialize_to_hex")]
+        #[serde(with = "u64_hex")]
         pub flags: u64,
     }
 );
@@ -408,13 +447,13 @@ impl_std_iocs!(CloneData);
 def_user_data!(
     pub struct PrctlData {
         pub option: String,
-        #[serde(serialize_with = "serialize_to_hex")]
+        #[serde(with = "u64_hex")]
         pub arg2: u64,
-        #[serde(serialize_with = "serialize_to_hex")]
+        #[serde(with = "u64_hex")]
         pub arg3: u64,
-        #[serde(serialize_with = "serialize_to_hex")]
+        #[serde(with = "u64_hex")]
         pub arg4: u64,
-        #[serde(serialize_with = "serialize_to_hex")]
+        #[serde(with = "u64_hex")]
         pub arg5: u64,
         pub success: bool,
     }
@@ -438,9 +477,9 @@ impl IocGetter for MmapExecData {
 
 def_user_data!(
     pub struct MprotectData {
-        #[serde(serialize_with = "serialize_to_hex")]
+        #[serde(with = "u64_hex")]
         pub addr: u64,
-        #[serde(serialize_with = "serialize_to_hex")]
+        #[serde(with = "u64_hex")]
         pub prot: u64,
     }
 );
