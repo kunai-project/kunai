@@ -3,7 +3,7 @@ use kunai_macros::BpfError;
 
 not_bpf_target_code! {
     mod user;
-    pub use user::*;
+    
 }
 
 bpf_target_code! {

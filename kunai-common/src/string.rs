@@ -104,9 +104,9 @@ impl<const N: usize> String<N> {
     }
 
     #[inline(always)]
-    fn push_byte_at(&mut self, b: u8, at: usize) -> Result<(), ()> {
+    fn push_byte_at(&mut self, b: u8, at: usize) -> Result<(), Error> {
         if self.is_full() {
-            return Err(());
+            return Err(Error::StringIsFull);
         }
         let k = bound_value_for_verifier(at as isize, 0, (self.cap() - 1) as isize);
         self.s.as_mut()[k as usize] = b;
@@ -115,7 +115,7 @@ impl<const N: usize> String<N> {
     }
 
     #[inline(always)]
-    pub fn push_byte(&mut self, b: u8) -> Result<(), ()> {
+    pub fn push_byte(&mut self, b: u8) -> Result<(), Error> {
         self.push_byte_at(b, self.len)
     }
 

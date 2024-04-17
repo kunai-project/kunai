@@ -2,7 +2,6 @@ use crate::{bpf_events, macros::bpf_target_code, macros::not_bpf_target_code};
 
 not_bpf_target_code! {
     mod user;
-    pub use user::*;
 }
 
 bpf_target_code! {
