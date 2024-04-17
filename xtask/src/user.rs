@@ -129,7 +129,7 @@ fn build(opts: &BuildOptions) -> Result<(), anyhow::Error> {
 
 /// Build the project
 pub fn check(opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
-    cargo("check", opts)
+    cargo("clippy", opts)
 }
 
 pub fn build_all(ebpf_dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {

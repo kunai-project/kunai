@@ -115,7 +115,7 @@ impl BuildOptions {
         let dump_dir = linker_out_dir.join("dump_module");
 
         // do not override any previous rustflags set in command line
-        for (opt, value) in vec![
+        for (opt, value) in [
             ("-C link-arg=--log-level", "info"),
             (
                 "-C link-arg=--log-file",
@@ -126,8 +126,8 @@ impl BuildOptions {
                 dump_dir.to_string_lossy().as_ref(),
             ),
         ] {
-            if rustflags.iter().find(|s| s.contains(opt)).is_none() {
-                rustflags.push(format!("{opt}={value}").into())
+            if !rustflags.iter().any(|s| s.contains(opt)) {
+                rustflags.push(format!("{opt}={value}"))
             }
         }
 
@@ -207,7 +207,7 @@ fn fix_path_in_json(root: &str, val: &mut JsonValue) {
 }
 
 pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
-    let output = cargo("check", dir, opts)
+    let output = cargo("clippy", dir, opts)
         .env("RUSTFLAGS", opts.mandatory_rustflags().join(" "))
         .output()
         .expect("failed to run cargo check");
@@ -218,8 +218,7 @@ pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     if opts
         .build_args
         .iter()
-        .find(|s| s.contains("--message-format=json"))
-        .is_some()
+        .any(|s| s.contains("--message-format=json"))
     {
         // we have some json output to process
         for line in reader.lines() {
