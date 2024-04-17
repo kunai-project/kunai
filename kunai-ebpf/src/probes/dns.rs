@@ -112,9 +112,9 @@ pub fn net_dns_enter_vfs_read(ctx: ProbeContext) -> u32 {
 // many vfs_read ar happening (not only on sockets) so this function
 // aims at filtering as much as we can to save only interesting contexts
 unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
-    let file = co_re::file::from_ptr(kprobe_arg!(&ctx, 0)?);
-    let ubuf: *const u8 = kprobe_arg!(&ctx, 1)?;
-    let count: size_t = kprobe_arg!(&ctx, 2)?;
+    let file = co_re::file::from_ptr(kprobe_arg!(ctx, 0)?);
+    let ubuf: *const u8 = kprobe_arg!(ctx, 1)?;
+    let count: size_t = kprobe_arg!(ctx, 2)?;
 
     if !file.is_sock().unwrap_or(false) || ubuf.is_null() || count == 0 {
         return Ok(());
@@ -220,7 +220,7 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
-    ProbeFn::dns_sys_recv_from.save_ctx(&ctx)?;
+    ProbeFn::dns_sys_recv_from.save_ctx(ctx)?;
 
     Ok(())
 }
@@ -317,7 +317,7 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we save context
-    ProbeFn::net_dns_sys_recvmsg.save_ctx(&ctx)?;
+    ProbeFn::net_dns_sys_recvmsg.save_ctx(ctx)?;
 
     Ok(())
 }

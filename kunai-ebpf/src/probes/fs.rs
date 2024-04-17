@@ -18,11 +18,11 @@ static mut FILE_TRACKING: LruHashMap<FileKey, RW> = LruHashMap::with_max_entries
 #[inline(always)]
 unsafe fn track_read(file: &co_re::file) -> ProbeResult<()> {
     let key = &file_key(file)?;
-    match FILE_TRACKING.get_ptr_mut(&key) {
+    match FILE_TRACKING.get_ptr_mut(key) {
         Some(rw) => (*rw).0 = true,
         None => {
             FILE_TRACKING
-                .insert(&key, &RW(true, false), 0)
+                .insert(key, &RW(true, false), 0)
                 .map_err(|_| MapError::InsertFailure)?;
         }
     }
@@ -32,11 +32,11 @@ unsafe fn track_read(file: &co_re::file) -> ProbeResult<()> {
 #[inline(always)]
 unsafe fn track_write(file: &co_re::file) -> ProbeResult<()> {
     let key = &file_key(file)?;
-    match FILE_TRACKING.get_ptr_mut(&key) {
+    match FILE_TRACKING.get_ptr_mut(key) {
         Some(rw) => (*rw).1 = true,
         None => {
             FILE_TRACKING
-                .insert(&key, &RW(false, true), 0)
+                .insert(key, &RW(false, true), 0)
                 .map_err(|_| MapError::InsertFailure)?;
         }
     }
@@ -271,7 +271,7 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
     // as vfs_unlink can be reached without security_path_unlink being called
     // we report error when insertion is failing
     PATHS
-        .insert(&ProbeFn::security_path_unlink.depth_key(), &p, 0)
+        .insert(&ProbeFn::security_path_unlink.depth_key(), p, 0)
         .map_err(|_| MapError::InsertFailure)?;
 
     Ok(())
@@ -302,7 +302,7 @@ unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let path_key = ProbeFn::security_path_unlink.depth_key();
     if let Some(p) = PATHS.get(&path_key) {
-        e.data.path.copy_from(&p);
+        e.data.path.copy_from(p);
         // make some room in the cache
         ignore_result!(PATHS.remove(&path_key));
     } else {

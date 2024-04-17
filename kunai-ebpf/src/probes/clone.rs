@@ -8,19 +8,18 @@ use super::*;
 
 #[kprobe(function = "security_task_alloc")]
 pub fn clone_enter_security_task_alloc(ctx: ProbeContext) -> u32 {
-    let rc = match unsafe { try_enter_wake_up_new_task(&ctx) } {
+    match unsafe { try_enter_wake_up_new_task(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
             errors::BPF_PROG_FAILURE
         }
-    };
-    rc
+    }
 }
 
 unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
     let new_task = task_struct::from_ptr(kprobe_arg!(ctx, 0)?);
-    let clone_flags = kprobe_arg!(&ctx, 1)?;
+    let clone_flags = kprobe_arg!(ctx, 1)?;
 
     alloc::init()?;
 

@@ -34,7 +34,7 @@ unsafe fn try_enter_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
     // we ignore result as we can check something went wrong when we try to insert argument
     ignore_result!(PRCTL_ARGS.insert(&bpf_task_tracking_id(), &args, 0));
 
-    return Ok(());
+    Ok(())
 }
 
 #[tracepoint(name = "sys_exit_prctl", category = "syscalls")]
@@ -73,5 +73,5 @@ unsafe fn try_exit_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
     // cleanup prctl arguments no need to handle failure
     ignore_result!(PRCTL_ARGS.remove(&key));
 
-    return Ok(());
+    Ok(())
 }
