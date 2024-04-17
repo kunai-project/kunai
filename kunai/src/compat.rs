@@ -77,7 +77,7 @@ impl<'a> Programs<'a> {
     pub fn expect_mut<S: AsRef<str>>(&mut self, name: S) -> &mut Program<'a> {
         self.m
             .get_mut(name.as_ref())
-            .expect(&format!("missing probe {}", name.as_ref()))
+            .unwrap_or_else(|| panic!("missing probe {}", name.as_ref()))
     }
 
     pub fn into_vec_sorted_by_prio(self) -> Vec<(String, Program<'a>)> {
@@ -121,7 +121,7 @@ impl<'a> Program<'a> {
                 if kernel_attach.starts_with("sys_exit") {
                     return self.prio + 1;
                 }
-                return self.prio;
+                self.prio
             }
             programs::Program::KProbe(program) => match program.kind() {
                 programs::ProbeKind::URetProbe => self.prio + 1,

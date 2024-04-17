@@ -160,7 +160,7 @@ impl Namespace {
 
         Ok(Namespace {
             inum: s.parse::<u32>()?,
-            kind: kind,
+            kind,
         })
     }
 

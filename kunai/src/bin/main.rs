@@ -65,7 +65,7 @@ use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
 
 const PAGE_SIZE: usize = 4096;
-const KERNEL_IMAGE: &'static str = "kernel";
+const KERNEL_IMAGE: &str = "kernel";
 
 #[derive(Debug, Clone)]
 struct Task {
@@ -179,7 +179,7 @@ impl EventProcessor {
         // loading iocs
         if !config.iocs.is_empty() {
             for file in config.iocs.clone() {
-                ep.load_iocs(file.to_string())
+                ep.load_iocs(&file)
                     .map_err(|e| anyhow!("failed to load IoC file: {e}"))?;
             }
             info!("number of IoCs loaded: {}", ep.iocs.len());
@@ -316,7 +316,7 @@ impl EventProcessor {
             .collect::<Vec<String>>();
 
         let task = Task {
-            image: image,
+            image,
             command_line: p.cmdline().unwrap_or(vec!["?".into()]),
             pid: p.pid,
             flags: stat.flags,
@@ -422,10 +422,9 @@ impl EventProcessor {
         if let Some(domain) = self
             .tasks
             .get(&ck)
-            .map(|c| c.resolved.get(&ip).map(|s| Cow::from(s)))
-            .flatten()
+            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
         {
-            return domain.into();
+            return domain;
         }
 
         // we lookup in the global table
@@ -475,7 +474,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_execve(
+    fn execve_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::ExecveEvent,
@@ -500,7 +499,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_clone(
+    fn clone_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::CloneEvent,
@@ -515,7 +514,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_prctl(
+    fn prctl_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::PrctlEvent,
@@ -523,7 +522,7 @@ impl EventProcessor {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let option = PrctlOption::try_from_uint(event.data.option)
-            .and_then(|o| Ok(o.as_str().into()))
+            .map(|o| o.as_str().into())
             .unwrap_or(format!("unknown({})", event.data.option))
             .to_string();
 
@@ -543,7 +542,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_mmap_exec(
+    fn mmap_exec_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::MmapExecEvent,
@@ -567,7 +566,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_dns_queries(
+    fn dns_query_events(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::DnsQueryEvent,
@@ -601,7 +600,7 @@ impl EventProcessor {
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
             data.query = r.question.clone();
-            data.proto = proto.clone().into();
+            data.proto = proto.clone();
             data.dns_server = NetworkInfo {
                 hostname: None,
                 ip: serv_ip,
@@ -625,7 +624,11 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_rw(&mut self, info: StdEventInfo, event: &bpf_events::ConfigEvent) -> UserEvent<RWData> {
+    fn rw_event(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::ConfigEvent,
+    ) -> UserEvent<RWData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = RWData {
@@ -639,7 +642,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_unlink(
+    fn unlink_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::UnlinkEvent,
@@ -658,7 +661,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_bpf_prog_load(
+    fn bpf_prog_load_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::BpfProgLoadEvent,
@@ -701,7 +704,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_bpf_socket_filter(
+    fn bpf_socket_filter_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::BpfSocketFilterEvent,
@@ -714,7 +717,7 @@ impl EventProcessor {
             exe: exe.into(),
             socket: SocketInfo {
                 domain: event.data.socket_info.domain_to_string(),
-                ty: event.data.socket_info.type_to_string().into(),
+                ty: event.data.socket_info.type_to_string(),
             },
             filter: FilterInfo {
                 md5: md5_data(event.data.filter.as_slice()),
@@ -844,7 +847,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_exit(
+    fn exit_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::ExitEvent,
@@ -950,7 +953,7 @@ impl EventProcessor {
             flags: info.info.process.flags,
             resolved: HashMap::new(),
             container: container_type,
-            cgroups: cgroups,
+            cgroups,
             nodename: event.data.nodename(),
             parent_key: Some(info.parent_key()),
         });
@@ -1006,12 +1009,7 @@ impl EventProcessor {
         let matching_iocs = event
             .iocs()
             .iter()
-            .filter_map(|ioc| {
-                if self.iocs.contains(&ioc.to_string()) {
-                    return Some(ioc);
-                }
-                None
-            })
+            .filter(|ioc| self.iocs.contains(&ioc.to_string()))
             .map(|ioc| ioc.to_string())
             .collect::<HashSet<String>>();
 
@@ -1022,12 +1020,12 @@ impl EventProcessor {
             }
 
             // we add ioc matching to the list of matching rules
-            scan_result.as_mut().map(|sr| {
+            if let Some(sr) = scan_result.as_mut() {
                 sr.iocs = matching_iocs;
                 // if we match an ioc we consider the event is of
                 // the higher severity
                 sr.severity = MAX_SEVERITY;
-            });
+            }
         }
 
         scan_result
@@ -1102,7 +1100,7 @@ impl EventProcessor {
                         // we have to rebuild std_info as it has it is uses correlation
                         // information
                         let std_info = self.build_std_event_info(std_info.info);
-                        let mut e = self.to_execve(std_info, e);
+                        let mut e = self.execve_event(std_info, e);
 
                         self.scan_and_print(&mut e);
                     }
@@ -1121,7 +1119,7 @@ impl EventProcessor {
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
                     let std_info = self.build_std_event_info(std_info.info);
-                    let mut e = self.to_clone(std_info, e);
+                    let mut e = self.clone_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1129,7 +1127,7 @@ impl EventProcessor {
 
             Type::Prctl => match event!(enc_event, bpf_events::PrctlEvent) {
                 Ok(e) => {
-                    let mut e = self.to_prctl(std_info, e);
+                    let mut e = self.prctl_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1137,7 +1135,7 @@ impl EventProcessor {
 
             Type::MmapExec => match event!(enc_event, bpf_events::MmapExecEvent) {
                 Ok(e) => {
-                    let mut e = self.to_mmap_exec(std_info, e);
+                    let mut e = self.mmap_exec_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1161,7 +1159,7 @@ impl EventProcessor {
 
             Type::DnsQuery => match event!(enc_event, bpf_events::DnsQueryEvent) {
                 Ok(e) => {
-                    for e in self.to_dns_queries(std_info, e).iter_mut() {
+                    for e in self.dns_query_events(std_info, e).iter_mut() {
                         self.scan_and_print(e);
                     }
                 }
@@ -1187,7 +1185,7 @@ impl EventProcessor {
             Type::WriteConfig | Type::Write | Type::ReadConfig | Type::Read => {
                 match event!(enc_event, bpf_events::ConfigEvent) {
                     Ok(e) => {
-                        let mut e = self.to_rw(std_info, e);
+                        let mut e = self.rw_event(std_info, e);
                         self.scan_and_print(&mut e);
                     }
                     Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1196,7 +1194,7 @@ impl EventProcessor {
 
             Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
                 Ok(e) => {
-                    let mut e = self.to_unlink(std_info, e);
+                    let mut e = self.unlink_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1212,7 +1210,7 @@ impl EventProcessor {
 
             Type::BpfProgLoad => match event!(enc_event, bpf_events::BpfProgLoadEvent) {
                 Ok(e) => {
-                    let mut e = self.to_bpf_prog_load(std_info, e);
+                    let mut e = self.bpf_prog_load_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1220,7 +1218,7 @@ impl EventProcessor {
 
             Type::BpfSocketFilter => match event!(enc_event, bpf_events::BpfSocketFilterEvent) {
                 Ok(e) => {
-                    let mut e = self.to_bpf_socket_filter(std_info, e);
+                    let mut e = self.bpf_socket_filter_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1228,7 +1226,7 @@ impl EventProcessor {
 
             Type::Exit | Type::ExitGroup => match event!(enc_event, bpf_events::ExitEvent) {
                 Ok(e) => {
-                    let mut e = self.to_exit(std_info, e);
+                    let mut e = self.exit_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1377,13 +1375,13 @@ impl EventReader {
         #[allow(clippy::single_match)]
         match i.etype {
             Type::Execve => {
-                let mut event = mut_event!(e, bpf_events::ExecveEvent).unwrap();
+                let event = mut_event!(e, bpf_events::ExecveEvent).unwrap();
                 if event.data.interpreter != event.data.executable {
                     event.info.etype = Type::ExecveScript
                 }
             }
             Type::BpfProgLoad => {
-                let mut event = mut_event!(e, bpf_events::BpfProgLoadEvent).unwrap();
+                let event = mut_event!(e, bpf_events::BpfProgLoadEvent).unwrap();
 
                 // dumping eBPF program from userland
                 match util::bpf::bpf_dump_xlated_by_id_and_tag(event.data.id, event.data.tag) {

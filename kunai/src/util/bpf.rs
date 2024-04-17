@@ -55,12 +55,8 @@ pub enum Error {
 
 impl Error {
     pub fn is_io_error_not_found(&self) -> bool {
-        match self {
-            Error::IoError(e) => match e.kind() {
-                io::ErrorKind::NotFound => return true,
-                _ => {}
-            },
-            _ => {}
+        if let Error::IoError(e) = self {
+            return matches!(e.kind(), io::ErrorKind::NotFound);
         }
         false
     }

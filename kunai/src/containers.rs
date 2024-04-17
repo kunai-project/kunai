@@ -33,7 +33,7 @@ impl<'de> Deserialize<'de> for Container {
     {
         // Deserialization logic goes here
         struct ContainerVisitor;
-        const VARIANTS: &'static [&'static str] = &Container::variants_str();
+        const VARIANTS: &[&str] = &Container::variants_str();
 
         impl<'de> serde::de::Visitor<'de> for ContainerVisitor {
             type Value = Container;
@@ -63,7 +63,7 @@ impl FieldGetter for Container {
         if i.len() > 0 {
             return None;
         }
-        return Some(self.as_str().into());
+        Some(self.as_str().into())
     }
 }
 

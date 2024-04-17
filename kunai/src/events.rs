@@ -106,10 +106,7 @@ impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
             guuid: value.tg_uuid.into_uuid().hyphenated().to_string(),
             uid: value.uid,
             gid: value.gid,
-            namespaces: match value.namespaces {
-                Some(ns) => Some(ns.into()),
-                _ => None,
-            },
+            namespaces: value.namespaces.map(|ns| ns.into()),
             flags: value.flags,
         }
     }
@@ -151,12 +148,12 @@ impl<'de> Deserialize<'de> for UtcDateTime {
                 formatter.write_str("expecting a rfc3339 formatted timestamp")
             }
 
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                DateTime::parse_from_rfc3339(&v)
-                    .map_err(|e| E::custom(e.to_string()))
+                DateTime::parse_from_rfc3339(v)
+                    .map_err(|e| E::custom(e))
                     .map(UtcDateTime::from)
             }
         }
@@ -315,7 +312,7 @@ where
 impl<T> UserEvent<T> {
     pub fn new(data: T, info: StdEventInfo) -> Self {
         Self {
-            data: data,
+            data,
             detection: None,
             info: info.into(),
         }
@@ -338,11 +335,11 @@ mod u32_hex {
     where
         D: Deserializer<'de>,
     {
-        Ok(u32::from_str_radix(
-            &String::deserialize(deserializer)?.trim_start_matches("0x"),
+        u32::from_str_radix(
+            String::deserialize(deserializer)?.trim_start_matches("0x"),
             16,
         )
-        .map_err(|e| serde::de::Error::custom(e))?)
+        .map_err(serde::de::Error::custom)
     }
 }
 
@@ -362,11 +359,11 @@ mod u64_hex {
     where
         D: Deserializer<'de>,
     {
-        Ok(u64::from_str_radix(
-            &String::deserialize(deserializer)?.trim_start_matches("0x"),
+        u64::from_str_radix(
+            String::deserialize(deserializer)?.trim_start_matches("0x"),
             16,
         )
-        .map_err(|e| serde::de::Error::custom(e))?)
+        .map_err(serde::de::Error::custom)
     }
 }
 
@@ -424,12 +421,12 @@ impl IocGetter for ExecveData {
         let mut v = vec![self.parent_exe.as_str().into()];
 
         // exe path + hashes
-        v.extend(self.exe.iocs().into_iter());
+        v.extend(self.exe.iocs());
 
         // exe path + hashes of interpreter if any
-        self.interpreter
-            .as_ref()
-            .map(|h| v.extend(h.iocs().into_iter()));
+        if let Some(h) = self.interpreter.as_ref() {
+            v.extend(h.iocs())
+        }
 
         v
     }
@@ -512,7 +509,9 @@ impl IocGetter for NetworkInfo {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         let mut v = vec![self.ip.to_string().into()];
 
-        self.hostname.as_ref().map(|hn| v.push(hn.into()));
+        if let Some(hn) = self.hostname.as_ref() {
+            v.push(hn.into())
+        }
 
         v
     }
@@ -589,7 +588,7 @@ impl IocGetter for DnsQueryData {
         // the domain queried
         v.push((&self.query).into());
         // dns server iocs
-        v.extend(self.dns_server.iocs().into_iter());
+        v.extend(self.dns_server.iocs());
         v
     }
 }
