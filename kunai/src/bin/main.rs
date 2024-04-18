@@ -735,7 +735,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_mprotect(
+    fn mprotect_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::MprotectEvent,
@@ -754,7 +754,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_connect(
+    fn connect_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::ConnectEvent,
@@ -780,7 +780,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_send_data(
+    fn send_data_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::SendEntropyEvent,
@@ -807,7 +807,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_init_module(
+    fn init_module_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::InitModuleEvent,
@@ -828,7 +828,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_file_rename(
+    fn file_rename_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::FileRenameEvent,
@@ -1143,7 +1143,7 @@ impl EventProcessor {
 
             Type::MprotectExec => match event!(enc_event, bpf_events::MprotectEvent) {
                 Ok(e) => {
-                    let mut e = self.to_mprotect(std_info, e);
+                    let mut e = self.mprotect_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1151,7 +1151,7 @@ impl EventProcessor {
 
             Type::Connect => match event!(enc_event, bpf_events::ConnectEvent) {
                 Ok(e) => {
-                    let mut e = self.to_connect(std_info, e);
+                    let mut e = self.connect_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1168,7 +1168,7 @@ impl EventProcessor {
 
             Type::SendData => match event!(enc_event, bpf_events::SendEntropyEvent) {
                 Ok(e) => {
-                    let mut e = self.to_send_data(std_info, e);
+                    let mut e = self.send_data_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1176,7 +1176,7 @@ impl EventProcessor {
 
             Type::InitModule => match event!(enc_event, bpf_events::InitModuleEvent) {
                 Ok(e) => {
-                    let mut e = self.to_init_module(std_info, e);
+                    let mut e = self.init_module_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1202,7 +1202,7 @@ impl EventProcessor {
 
             Type::FileRename => match event!(enc_event, bpf_events::FileRenameEvent) {
                 Ok(e) => {
-                    let mut e = self.to_file_rename(std_info, e);
+                    let mut e = self.file_rename_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
