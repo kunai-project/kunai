@@ -1653,7 +1653,27 @@ extern "C" {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct msghdr {
+    pub msg_name: *mut ::core::ffi::c_void,
+    pub msg_namelen: ::core::ffi::c_int,
     pub msg_iter: iov_iter,
+}
+extern "C" {
+    pub fn shim_msghdr_msg_name(msghdr: *mut msghdr) -> *mut ::core::ffi::c_void;
+}
+extern "C" {
+    pub fn shim_msghdr_msg_name_user(msghdr: *mut msghdr) -> *mut ::core::ffi::c_void;
+}
+extern "C" {
+    pub fn shim_msghdr_msg_name_exists(msghdr: *mut msghdr) -> bool;
+}
+extern "C" {
+    pub fn shim_msghdr_msg_namelen(msghdr: *mut msghdr) -> ::core::ffi::c_int;
+}
+extern "C" {
+    pub fn shim_msghdr_msg_namelen_user(msghdr: *mut msghdr) -> ::core::ffi::c_int;
+}
+extern "C" {
+    pub fn shim_msghdr_msg_namelen_exists(msghdr: *mut msghdr) -> bool;
 }
 extern "C" {
     pub fn shim_msghdr_msg_iter(msghdr: *mut msghdr) -> *mut iov_iter;

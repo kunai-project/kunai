@@ -122,6 +122,7 @@ impl sock_common {
 pub type msghdr = CoRe<gen::msghdr>;
 
 impl msghdr {
+    rust_shim_kernel_impl!(pub, msghdr, msg_name, *mut c_void);
     rust_shim_kernel_impl!(pub, msghdr, msg_iter, iov_iter);
 }
 
