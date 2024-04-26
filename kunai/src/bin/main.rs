@@ -123,7 +123,7 @@ impl SystemInfo {
     }
 }
 
-struct EventProcessor {
+struct EventConsumer {
     system_info: SystemInfo,
     engine: gene::Engine,
     iocs: HashSet<String>,
@@ -135,7 +135,7 @@ struct EventProcessor {
     handle: Option<JoinHandle<Result<(), anyhow::Error>>>,
 }
 
-impl EventProcessor {
+impl EventConsumer {
     pub fn with_config(config: Config) -> anyhow::Result<Self> {
         let output = match &config.output.as_str() {
             &"stdout" => String::from("/dev/stdout"),
@@ -199,10 +199,10 @@ impl EventProcessor {
     }
 
     /// Listen for events on the receiver
-    pub fn listen(
+    pub fn consume(
         self,
         receiver: Receiver<EncodedEvent>,
-    ) -> anyhow::Result<Arc<RwLock<EventProcessor>>> {
+    ) -> anyhow::Result<Arc<RwLock<EventConsumer>>> {
         let ep = Arc::new(RwLock::new(self));
 
         let shared = Arc::clone(&ep);
@@ -1251,12 +1251,14 @@ impl EventProcessor {
     }
 }
 
-struct EventReader {
+struct EventProducer {
+    config: Config,
     batch: usize,
     pipe: VecDeque<EncodedEvent>,
     sender: Sender<EncodedEvent>,
     filter: Filter,
     stats: AyaHashMap<MapData, Type, u64>,
+    perf_array: AsyncPerfEventArray<MapData>,
 }
 
 #[inline(always)]
@@ -1265,27 +1267,29 @@ fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) 
     2usize.pow(c.ilog2() + 1)
 }
 
-impl EventReader {
-    pub fn init(
+impl EventProducer {
+    pub fn with_params(
         bpf: &mut Bpf,
         config: Config,
         sender: Sender<EncodedEvent>,
-    ) -> anyhow::Result<Arc<Mutex<Self>>> {
+    ) -> anyhow::Result<Self> {
         let filter = (&config).try_into()?;
         let stats_map: AyaHashMap<_, Type, u64> =
             AyaHashMap::try_from(bpf.take_map(bpf_events::KUNAI_STATS_MAP).unwrap()).unwrap();
 
-        let ep = EventReader {
+        let perf_array =
+            AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
+                .unwrap();
+
+        Ok(EventProducer {
+            config,
             pipe: VecDeque::new(),
             batch: 0,
             sender,
             filter,
             stats: stats_map,
-        };
-
-        let safe = Arc::new(Mutex::new(ep));
-        Self::read_events(&safe, bpf, &config);
-        Ok(safe)
+            perf_array,
+        })
     }
 
     #[inline(always)]
@@ -1451,20 +1455,20 @@ impl EventReader {
         }
     }
 
-    fn read_events(er: &Arc<Mutex<Self>>, bpf: &mut Bpf, config: &Config) {
-        // try to convert the PERF_ARRAY map to an AsyncPerfEventArray
-        let mut perf_array =
-            AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
-                .unwrap();
-
+    async fn produce(self) -> Arc<Mutex<Self>> {
         let online_cpus = online_cpus().expect("failed to get online cpus");
         let barrier = Arc::new(Barrier::new(online_cpus.len()));
         // we choose what task will handle the reduce process (handle piped events)
         let reducer_cpu_id = online_cpus[0];
+        let config = self.config.clone();
+        let shared = Arc::new(Mutex::new(self));
 
         for cpu_id in online_cpus {
             // open a separate perf buffer for each cpu
-            let mut buf = perf_array
+            let mut buf = shared
+                .lock()
+                .await
+                .perf_array
                 .open(
                     cpu_id,
                     Some(optimal_page_count(
@@ -1474,8 +1478,7 @@ impl EventReader {
                     )),
                 )
                 .unwrap();
-
-            let event_reader = er.clone();
+            let event_reader = shared.clone();
             let bar = barrier.clone();
             let conf = config.clone();
 
@@ -1591,6 +1594,8 @@ impl EventReader {
                 Ok::<_, PerfBufferError>(())
             });
         }
+
+        shared
     }
 }
 
@@ -1676,7 +1681,7 @@ enum Command {
 
 impl Command {
     fn replay(conf: Config, o: ReplayOpt) -> anyhow::Result<()> {
-        let mut p = EventProcessor::with_config(conf.stdout_output())?;
+        let mut p = EventConsumer::with_config(conf.stdout_output())?;
         for f in o.log_files {
             let reader = std::io::BufReader::new(fs::File::open(f)?);
             let mut de = serde_json::Deserializer::from_reader(reader);
@@ -1762,8 +1767,10 @@ impl Command {
         // if we load the programs first we might have some event lost errors
         let (sender, receiver) = channel::<EncodedEvent>();
 
-        EventReader::init(&mut bpf, conf.clone(), sender)?;
-        EventProcessor::with_config(conf)?.listen(receiver)?;
+        EventProducer::with_params(&mut bpf, conf.clone(), sender)?
+            .produce()
+            .await;
+        EventConsumer::with_config(conf)?.consume(receiver)?;
 
         // make possible probe selection in debug
         #[allow(unused_mut)]
