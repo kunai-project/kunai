@@ -1,8 +1,4 @@
-use aya_ebpf::{
-    macros::map,
-    maps::{Array, LruPerCpuHashMap},
-    EbpfContext,
-};
+use aya_ebpf::{macros::map, maps::LruPerCpuHashMap, EbpfContext};
 
 use crate::{
     bpf_events::{error, ErrorEvent},
@@ -15,9 +11,6 @@ use super::*;
 #[map]
 pub static mut ERRORS: LruPerCpuHashMap<u32, ErrorEvent> =
     LruPerCpuHashMap::with_max_entries(16, 0);
-
-#[map]
-pub static mut I_ERROR: Array<u32> = Array::with_max_entries(1, 0);
 
 const SIZE: usize = ErrorEvent::size_of();
 pub static EMPTY_ERROR: [u8; SIZE] = [0; SIZE];
@@ -97,10 +90,6 @@ pub struct Args {
 
 #[inline(always)]
 pub unsafe fn error_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
-    /*let mut i = match I_ERROR.get(0) {
-        Some(&u) => u,
-        None => 0,
-    };*/
     let _ = ERRORS.insert(&0, &(*(EMPTY_ERROR.as_ptr() as *const ErrorEvent)), 0);
     if let Some(e) = ERRORS.get_ptr_mut(&0) {
         let e = &mut *e;
@@ -112,8 +101,6 @@ pub unsafe fn error_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
         e.data.message = args.message;
 
         bpf_events::pipe_error(ctx, e);
-        /*i = i.wrapping_add(1);
-        I_ERROR.get_ptr_mut(0).map(|old| *old = i);*/
     }
 }
 
