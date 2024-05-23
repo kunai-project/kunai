@@ -1,5 +1,5 @@
 use aya::{
-    programs::{self, ProgramError},
+    programs::{self, kprobe::KProbeLinkId, trace_point::TracePointLinkId, ProgramError},
     Bpf,
 };
 use aya_obj::generated::bpf_prog_type;
@@ -16,6 +16,8 @@ pub enum Error {
     NoTpCategory(String),
     #[error("missing kernel attach function for program: {0}")]
     NoAttachFn(String),
+    #[error("wrong link id kind")]
+    WrongLinkId,
     #[error("{0}")]
     Program(#[from] ProgramError),
 }
@@ -46,7 +48,7 @@ pub struct Programs<'a> {
 }
 
 impl<'a> Programs<'a> {
-    pub fn from_bpf(bpf: &'a mut Bpf) -> Self {
+    pub fn with_bpf(bpf: &'a mut Bpf) -> Self {
         let m = bpf
             .programs_mut()
             .map(|(name, p)| {
@@ -85,6 +87,38 @@ impl<'a> Programs<'a> {
         sorted.sort_unstable_by_key(|(_, p)| p.prio_by_prog());
         sorted
     }
+
+    pub fn sorted_by_prio(&mut self) -> Vec<(&String, &mut Program<'a>)> {
+        let mut sorted = self.m.iter_mut().collect::<Vec<_>>();
+        sorted.sort_unstable_by_key(|(_, p)| p.prio_by_prog());
+        sorted
+    }
+}
+
+#[derive(Debug)]
+pub enum LinkId {
+    KProbe(KProbeLinkId),
+    Tracepoint(TracePointLinkId),
+}
+
+impl TryFrom<LinkId> for KProbeLinkId {
+    type Error = Error;
+    fn try_from(value: LinkId) -> Result<Self, Self::Error> {
+        match value {
+            LinkId::KProbe(l) => Ok(l),
+            _ => Err(Error::WrongLinkId),
+        }
+    }
+}
+
+impl TryFrom<LinkId> for TracePointLinkId {
+    type Error = Error;
+    fn try_from(value: LinkId) -> Result<Self, Self::Error> {
+        match value {
+            LinkId::Tracepoint(l) => Ok(l),
+            _ => Err(Error::WrongLinkId),
+        }
+    }
 }
 
 pub struct Program<'a> {
@@ -94,6 +128,9 @@ pub struct Program<'a> {
     pub compat: Compatibility,
     pub program: &'a mut programs::Program,
     pub enable: bool,
+    pub link_id: Option<LinkId>,
+    pub loaded: bool,
+    pub attached: bool,
 }
 
 impl<'a> Program<'a> {
@@ -105,6 +142,9 @@ impl<'a> Program<'a> {
             program: p,
             compat: Compatibility::default(),
             enable: true,
+            link_id: None,
+            loaded: false,
+            attached: false,
         }
     }
 
@@ -194,6 +234,43 @@ impl<'a> Program<'a> {
         self.enable = false
     }
 
+    pub fn load(&mut self) -> Result<(), Error> {
+        let program = self.prog_mut();
+
+        match program {
+            programs::Program::TracePoint(p) => {
+                p.load()?;
+            }
+            programs::Program::KProbe(p) => {
+                p.load()?;
+            }
+            _ => {
+                unimplemented!()
+            }
+        }
+        self.loaded = true;
+        Ok(())
+    }
+
+    pub fn unload(&mut self) -> Result<(), Error> {
+        let program = self.prog_mut();
+
+        match program {
+            programs::Program::TracePoint(p) => {
+                p.unload()?;
+            }
+            programs::Program::KProbe(p) => {
+                p.unload()?;
+            }
+            _ => {
+                unimplemented!()
+            }
+        }
+        self.loaded = false;
+        self.attached = false;
+        Ok(())
+    }
+
     pub fn attach(&mut self) -> Result<(), Error> {
         let program_name = self.name.clone();
         let kernel_attach_fn = self.attach_func();
@@ -201,21 +278,39 @@ impl<'a> Program<'a> {
         let program = self.prog_mut();
 
         match program {
-            programs::Program::TracePoint(program) => {
-                program.load()?;
+            programs::Program::TracePoint(p) => {
                 let cat = tracepoint_category.ok_or(Error::NoTpCategory(program_name.clone()))?;
                 let attach = kernel_attach_fn.ok_or(Error::NoAttachFn(program_name))?;
-                program.attach(&cat, &attach)?;
+                self.link_id = Some(LinkId::Tracepoint(p.attach(&cat, &attach)?));
             }
-            programs::Program::KProbe(program) => {
-                program.load()?;
+            programs::Program::KProbe(p) => {
                 let attach = kernel_attach_fn.ok_or(Error::NoAttachFn(program_name))?;
-                program.attach(attach, 0)?;
+                self.link_id = Some(LinkId::KProbe(p.attach(attach, 0)?));
             }
             _ => {
                 unimplemented!()
             }
         }
+        self.attached = true;
+        Ok(())
+    }
+
+    pub fn load_and_attach(&mut self) -> Result<(), Error> {
+        self.load()?;
+        self.attach()
+    }
+
+    pub fn detach(&mut self) -> Result<(), Error> {
+        if let Some(link_id) = self.link_id.take() {
+            match self.prog_mut() {
+                programs::Program::TracePoint(p) => p.detach(link_id.try_into()?)?,
+                programs::Program::KProbe(p) => p.detach(link_id.try_into()?)?,
+                _ => {
+                    unimplemented!()
+                }
+            }
+        }
+        self.attached = false;
         Ok(())
     }
 }
