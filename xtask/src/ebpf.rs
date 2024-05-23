@@ -208,7 +208,9 @@ fn fix_path_in_json(root: &str, val: &mut JsonValue) {
 
 pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     let output = cargo("clippy", dir, opts)
-        .env("RUSTFLAGS", opts.mandatory_rustflags().join(" "))
+        // we must use build_rustflags so that we have same options
+        // for build and check commands. Thus making build/check faster
+        .env("RUSTFLAGS", opts.build_rustflags())
         .output()
         .expect("failed to run cargo check");
 
