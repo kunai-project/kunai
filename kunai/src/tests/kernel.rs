@@ -59,7 +59,7 @@ fn integration() -> anyhow::Result<()> {
         .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
         .load(bpf_elf)?;
 
-    let mut programs = Programs::from_bpf(&mut bpf).with_elf_info(bpf_elf)?;
+    let mut programs = Programs::with_bpf(&mut bpf).with_elf_info(bpf_elf)?;
 
     kunai::configure_probes(&mut programs, current_kernel);
 
@@ -88,7 +88,7 @@ fn integration() -> anyhow::Result<()> {
             continue;
         }
 
-        p.attach()?;
+        p.load_and_attach()?;
     }
 
     Ok(())

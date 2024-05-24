@@ -30,6 +30,7 @@ mod mprotect;
 mod prctl;
 mod schedule;
 mod send_data;
+mod syscore_resume;
 
 /// macro to track ignored results
 macro_rules! ignore_result {

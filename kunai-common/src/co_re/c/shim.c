@@ -711,9 +711,13 @@ SHIM(iov_iter, __iov);
 
 struct msghdr
 {
+	void *msg_name;
+	int msg_namelen;
 	struct iov_iter msg_iter;
 } __attribute__((preserve_access_index));
 
+SHIM(msghdr, msg_name);
+SHIM(msghdr, msg_namelen);
 SHIM_REF(msghdr, msg_iter);
 
 struct user_msghdr

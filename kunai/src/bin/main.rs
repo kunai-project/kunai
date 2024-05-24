@@ -24,6 +24,7 @@ use kunai_common::bpf_events::{
 use kunai_common::config::{BpfConfig, Filter};
 use kunai_common::inspect_err;
 
+use kunai_common::version::KernelVersion;
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +34,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::{self, BufRead, Write};
 use std::net::IpAddr;
+
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -40,6 +42,7 @@ use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::sync::{Arc, RwLock};
 
 use std::thread::JoinHandle;
+use std::time::Duration;
 use std::{process, thread};
 
 use aya::{
@@ -123,7 +126,7 @@ impl SystemInfo {
     }
 }
 
-struct EventProcessor {
+struct EventConsumer {
     system_info: SystemInfo,
     engine: gene::Engine,
     iocs: HashSet<String>,
@@ -135,7 +138,7 @@ struct EventProcessor {
     handle: Option<JoinHandle<Result<(), anyhow::Error>>>,
 }
 
-impl EventProcessor {
+impl EventConsumer {
     pub fn with_config(config: Config) -> anyhow::Result<Self> {
         let output = match &config.output.as_str() {
             &"stdout" => String::from("/dev/stdout"),
@@ -199,10 +202,10 @@ impl EventProcessor {
     }
 
     /// Listen for events on the receiver
-    pub fn listen(
+    pub fn consume(
         self,
         receiver: Receiver<EncodedEvent>,
-    ) -> anyhow::Result<Arc<RwLock<EventProcessor>>> {
+    ) -> anyhow::Result<Arc<RwLock<EventConsumer>>> {
         let ep = Arc::new(RwLock::new(self));
 
         let shared = Arc::clone(&ep);
@@ -735,7 +738,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_mprotect(
+    fn mprotect_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::MprotectEvent,
@@ -754,7 +757,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_connect(
+    fn connect_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::ConnectEvent,
@@ -780,7 +783,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_send_data(
+    fn send_data_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::SendEntropyEvent,
@@ -807,7 +810,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_init_module(
+    fn init_module_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::InitModuleEvent,
@@ -828,7 +831,7 @@ impl EventProcessor {
     }
 
     #[inline]
-    fn to_file_rename(
+    fn file_rename_event(
         &self,
         info: StdEventInfo,
         event: &bpf_events::FileRenameEvent,
@@ -1143,7 +1146,7 @@ impl EventProcessor {
 
             Type::MprotectExec => match event!(enc_event, bpf_events::MprotectEvent) {
                 Ok(e) => {
-                    let mut e = self.to_mprotect(std_info, e);
+                    let mut e = self.mprotect_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1151,7 +1154,7 @@ impl EventProcessor {
 
             Type::Connect => match event!(enc_event, bpf_events::ConnectEvent) {
                 Ok(e) => {
-                    let mut e = self.to_connect(std_info, e);
+                    let mut e = self.connect_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1168,7 +1171,7 @@ impl EventProcessor {
 
             Type::SendData => match event!(enc_event, bpf_events::SendEntropyEvent) {
                 Ok(e) => {
-                    let mut e = self.to_send_data(std_info, e);
+                    let mut e = self.send_data_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1176,7 +1179,7 @@ impl EventProcessor {
 
             Type::InitModule => match event!(enc_event, bpf_events::InitModuleEvent) {
                 Ok(e) => {
-                    let mut e = self.to_init_module(std_info, e);
+                    let mut e = self.init_module_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1202,7 +1205,7 @@ impl EventProcessor {
 
             Type::FileRename => match event!(enc_event, bpf_events::FileRenameEvent) {
                 Ok(e) => {
-                    let mut e = self.to_file_rename(std_info, e);
+                    let mut e = self.file_rename_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -1247,16 +1250,23 @@ impl EventProcessor {
             },
 
             Type::Error => panic!("error events should be processed earlier"),
+            Type::SyscoreResume => { /*  just ignore it */ }
         }
     }
 }
 
-struct EventReader {
+struct EventProducer {
+    config: Config,
     batch: usize,
     pipe: VecDeque<EncodedEvent>,
     sender: Sender<EncodedEvent>,
     filter: Filter,
     stats: AyaHashMap<MapData, Type, u64>,
+    perf_array: AsyncPerfEventArray<MapData>,
+    tasks: Vec<tokio::task::JoinHandle<Result<(), PerfBufferError>>>,
+    stop: bool,
+    // flag to be set when the producer needs to reload
+    reload: bool,
 }
 
 #[inline(always)]
@@ -1265,27 +1275,32 @@ fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) 
     2usize.pow(c.ilog2() + 1)
 }
 
-impl EventReader {
-    pub fn init(
+impl EventProducer {
+    pub fn with_params(
         bpf: &mut Bpf,
         config: Config,
         sender: Sender<EncodedEvent>,
-    ) -> anyhow::Result<Arc<Mutex<Self>>> {
+    ) -> anyhow::Result<Self> {
         let filter = (&config).try_into()?;
         let stats_map: AyaHashMap<_, Type, u64> =
             AyaHashMap::try_from(bpf.take_map(bpf_events::KUNAI_STATS_MAP).unwrap()).unwrap();
 
-        let ep = EventReader {
+        let perf_array =
+            AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
+                .unwrap();
+
+        Ok(EventProducer {
+            config,
             pipe: VecDeque::new(),
             batch: 0,
             sender,
             filter,
             stats: stats_map,
-        };
-
-        let safe = Arc::new(Mutex::new(ep));
-        Self::read_events(&safe, bpf, &config);
-        Ok(safe)
+            perf_array,
+            tasks: vec![],
+            stop: false,
+            reload: false,
+        })
     }
 
     #[inline(always)]
@@ -1369,7 +1384,7 @@ impl EventReader {
     /// this function must return true if main processing loop has to pass to the next event
     /// after the call.
     #[inline]
-    fn process_time_critical(&self, e: &mut EncodedEvent) -> bool {
+    fn process_time_critical(&mut self, e: &mut EncodedEvent) -> bool {
         let i = unsafe { e.info() }.expect("info should not fail here");
 
         #[allow(clippy::single_match)]
@@ -1415,6 +1430,13 @@ impl EventReader {
                     error::Level::Warn => warn!("{}", e),
                     error::Level::Error => error!("{}", e),
                 }
+                // we don't need to process such event further
+                return true;
+            }
+            Type::SyscoreResume => {
+                debug!("received syscore_resume event");
+                self.reload = true;
+                // we don't need to process such event further
                 return true;
             }
             _ => {}
@@ -1451,20 +1473,20 @@ impl EventReader {
         }
     }
 
-    fn read_events(er: &Arc<Mutex<Self>>, bpf: &mut Bpf, config: &Config) {
-        // try to convert the PERF_ARRAY map to an AsyncPerfEventArray
-        let mut perf_array =
-            AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
-                .unwrap();
-
+    async fn produce(self) -> Arc<Mutex<Self>> {
         let online_cpus = online_cpus().expect("failed to get online cpus");
         let barrier = Arc::new(Barrier::new(online_cpus.len()));
         // we choose what task will handle the reduce process (handle piped events)
         let reducer_cpu_id = online_cpus[0];
+        let config = self.config.clone();
+        let shared = Arc::new(Mutex::new(self));
 
         for cpu_id in online_cpus {
             // open a separate perf buffer for each cpu
-            let mut buf = perf_array
+            let mut buf = shared
+                .lock()
+                .await
+                .perf_array
                 .open(
                     cpu_id,
                     Some(optimal_page_count(
@@ -1474,13 +1496,12 @@ impl EventReader {
                     )),
                 )
                 .unwrap();
-
-            let event_reader = er.clone();
+            let event_reader = shared.clone();
             let bar = barrier.clone();
             let conf = config.clone();
 
             // process each perf buffer in a separate task
-            task::spawn(async move {
+            let t = task::spawn(async move {
                 // the number of buffers we want to use gives us the number of events we can read
                 // in one go in userland
                 let mut buffers = (0..conf.max_buffered_events)
@@ -1585,12 +1606,54 @@ impl EventReader {
                     // all threads wait that piped events are processed so that the reducer does not
                     // handle events being piped in the same time by others
                     bar.wait().await;
+
+                    // we break the loop if processor is stopped
+                    if event_reader.lock().await.stop {
+                        break;
+                    }
                 }
 
                 #[allow(unreachable_code)]
                 Ok::<_, PerfBufferError>(())
             });
+
+            shared.lock().await.tasks.push(t);
         }
+
+        shared
+    }
+
+    fn stop(&mut self) {
+        self.stop = true
+    }
+
+    #[inline(always)]
+    fn is_finished(&self) -> bool {
+        self.tasks.iter().all(|t| t.is_finished())
+    }
+
+    async fn join(&mut self) -> anyhow::Result<()> {
+        while let Some(t) = self.tasks.pop() {
+            if t.is_finished() {
+                t.await??;
+                continue;
+            }
+            self.tasks.push(t)
+        }
+        Ok(())
+    }
+
+    async fn arc_join(arc: &Arc<Mutex<Self>>, sleep: Duration) -> anyhow::Result<()> {
+        loop {
+            // drop lock  before sleep
+            {
+                if arc.lock().await.is_finished() {
+                    break;
+                }
+            }
+            time::sleep(sleep).await;
+        }
+        arc.lock().await.join().await
     }
 }
 
@@ -1674,9 +1737,85 @@ enum Command {
     Replay(ReplayOpt),
 }
 
+const BPF_ELF: &[u8] = {
+    #[cfg(debug_assertions)]
+    let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
+    #[cfg(not(debug_assertions))]
+    let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
+    d
+};
+
+fn prepare_bpf(kernel: KernelVersion, conf: &Config, vll: VerifierLogLevel) -> anyhow::Result<Bpf> {
+    let mut bpf = BpfLoader::new()
+        .verifier_log_level(vll)
+        .set_global("LINUX_KERNEL_VERSION", &kernel, true)
+        .load(BPF_ELF)?;
+
+    BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
+        .expect("failed to initialize bpf configuration");
+
+    Ok(bpf)
+}
+
+fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<Programs<'_>> {
+    // make possible probe selection in debug
+    #[allow(unused_mut)]
+    let mut en_probes: Vec<String> = vec![];
+    #[cfg(debug_assertions)]
+    if let Ok(enable) = std::env::var("PROBES") {
+        enable.split(',').for_each(|s| en_probes.push(s.into()));
+    }
+
+    // We need to parse eBPF ELF to extract section names
+    let mut programs = Programs::with_bpf(bpf).with_elf_info(BPF_ELF)?;
+
+    kunai::configure_probes(&mut programs, kernel);
+
+    // generic program loader
+    for (_, p) in programs.sorted_by_prio() {
+        // filtering probes to enable (only available in debug)
+        if !en_probes.is_empty() && en_probes.iter().filter(|e| p.name.contains(*e)).count() == 0 {
+            continue;
+        }
+
+        // we force enabling of selected probes
+        // debug probes are disabled by default
+        if !en_probes.is_empty() {
+            p.enable();
+        }
+
+        info!(
+            "loading: {} {:?} with priority={}",
+            p.name,
+            p.prog_type(),
+            p.prio
+        );
+
+        if !p.enable {
+            warn!("{} probe has been disabled", p.name);
+            continue;
+        }
+
+        if !p.is_compatible(&kernel) {
+            warn!(
+                "{} probe is not compatible with current kernel: min={} max={} current={}",
+                p.name,
+                p.compat.min(),
+                p.compat.max(),
+                kernel
+            );
+            continue;
+        }
+
+        p.load_and_attach()?;
+    }
+
+    Ok(programs)
+}
+
 impl Command {
     fn replay(conf: Config, o: ReplayOpt) -> anyhow::Result<()> {
-        let mut p = EventProcessor::with_config(conf.stdout_output())?;
+        let mut p = EventConsumer::with_config(conf.stdout_output())?;
         for f in o.log_files {
             let reader = std::io::BufReader::new(fs::File::open(f)?);
             let mut de = serde_json::Deserializer::from_reader(reader);
@@ -1723,6 +1862,7 @@ impl Command {
                         | Type::Error
                         | Type::EndEvents
                         | Type::TaskSched
+                        | Type::SyscoreResume
                         | Type::Max => {}
                     }
                 }
@@ -1739,85 +1879,46 @@ impl Command {
                 "You need to be root to run this program, this is necessary to load eBPF programs",
             ));
         }
-
         let current_kernel = Utsname::kernel_version()?;
-
-        let bpf_elf = {
-            #[cfg(debug_assertions)]
-            let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
-            #[cfg(not(debug_assertions))]
-            let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
-            d
-        };
-
-        let mut bpf = BpfLoader::new()
-            .verifier_log_level(vll)
-            .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
-            .load(bpf_elf)?;
-
-        BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
-            .expect("failed to initialize bpf configuration");
 
         // we start event reader and event processor before loading the programs
         // if we load the programs first we might have some event lost errors
         let (sender, receiver) = channel::<EncodedEvent>();
 
-        EventReader::init(&mut bpf, conf.clone(), sender)?;
-        EventProcessor::with_config(conf)?.listen(receiver)?;
+        // we start consumer
+        EventConsumer::with_config(conf.clone())?.consume(receiver)?;
 
-        // make possible probe selection in debug
-        #[allow(unused_mut)]
-        let mut en_probes: Vec<String> = vec![];
-        #[cfg(debug_assertions)]
-        if let Ok(enable) = std::env::var("PROBES") {
-            enable.split(',').for_each(|s| en_probes.push(s.into()));
-        }
+        // we spawn a task to reload producer when needed
+        task::spawn(async move {
+            loop {
+                info!("Starting event producer");
+                // we start producer
+                let mut bpf = prepare_bpf(current_kernel, &conf, vll)?;
+                let arc_prod = EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?
+                    .produce()
+                    .await;
 
-        // We need to parse eBPF ELF to extract section names
-        let mut programs = Programs::from_bpf(&mut bpf).with_elf_info(bpf_elf)?;
+                // we load and attach bpf programs
+                load_and_attach_bpf(current_kernel, &mut bpf)?;
 
-        kunai::configure_probes(&mut programs, current_kernel);
+                loop {
+                    // block make sure lock is dropped before sleeping
+                    if arc_prod.lock().await.reload {
+                        info!("Reloading event producer");
+                        arc_prod.lock().await.stop();
+                        // we wait for event producer to be ready
+                        EventProducer::arc_join(&arc_prod, Duration::from_millis(500)).await?;
 
-        // generic program loader
-        for (_, mut p) in programs.into_vec_sorted_by_prio() {
-            // filtering probes to enable (only available in debug)
-            if !en_probes.is_empty()
-                && en_probes.iter().filter(|e| p.name.contains(*e)).count() == 0
-            {
-                continue;
+                        // we do not need to unload programs as this will be done at drop
+                        break;
+                    }
+                    time::sleep(Duration::from_millis(500)).await;
+                }
             }
 
-            // we force enabling of selected probes
-            // debug probes are disabled by default
-            if !en_probes.is_empty() {
-                p.enable();
-            }
-
-            info!(
-                "loading: {} {:?} with priority={}",
-                p.name,
-                p.prog_type(),
-                p.prio
-            );
-
-            if !p.enable {
-                warn!("{} probe has been disabled", p.name);
-                continue;
-            }
-
-            if !p.is_compatible(&current_kernel) {
-                warn!(
-                    "{} probe is not compatible with current kernel: min={} max={} current={}",
-                    p.name,
-                    p.compat.min(),
-                    p.compat.max(),
-                    current_kernel
-                );
-                continue;
-            }
-
-            p.attach()?;
-        }
+            #[allow(unreachable_code)]
+            Ok::<_, anyhow::Error>(())
+        });
 
         info!("Waiting for Ctrl-C...");
         signal::ctrl_c().await?;
@@ -1955,6 +2056,6 @@ async fn main() -> Result<(), anyhow::Error> {
     // We finished preparing config
     match cli.command {
         Some(Command::Replay(o)) => return Command::replay(conf, o),
-        _ => return Command::run(conf, verifier_level).await,
+        _ => Command::run(conf, verifier_level).await,
     }
 }

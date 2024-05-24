@@ -32,6 +32,8 @@ mod prctl;
 pub use prctl::*;
 pub mod error;
 pub use error::{ErrorData, ErrorEvent};
+pub mod syscore_resume;
+pub use syscore_resume::*;
 
 // prevent using correlation event in bpf code
 not_bpf_target_code! {
@@ -76,6 +78,7 @@ const fn max_bpf_event_size() -> usize {
             Type::FileUnlink => UnlinkEvent::size_of(),
             Type::Unknown | Type::EndEvents | Type::Correlation | Type::CacheHash | Type::Max => 0,
             Type::Error => ErrorEvent::size_of(),
+            Type::SyscoreResume => SysCoreResumeEvent::size_of(),
             // never handle _ pattern otherwise this function loses all interest
         };
         if size > max {

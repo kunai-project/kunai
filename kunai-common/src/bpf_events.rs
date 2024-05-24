@@ -123,6 +123,8 @@ pub enum Type {
     CacheHash,
     #[str("error")]
     Error,
+    #[str("syscore_resume")]
+    SyscoreResume,
 
     // !!! all new event types must be put before max
     #[str("max")]
