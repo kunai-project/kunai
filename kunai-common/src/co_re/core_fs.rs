@@ -15,8 +15,23 @@ impl inode {
     rust_shim_kernel_impl!(inode, i_mode, u16);
     rust_shim_kernel_impl!(inode, i_sb, super_block);
     rust_shim_kernel_impl!(inode, i_size, i64);
-    rust_shim_kernel_impl!(inode, i_atime, timespec64);
-    rust_shim_kernel_impl!(inode, i_mtime, timespec64);
+
+    // handle i_atime member (renamed in 6.7)
+    rust_shim_kernel_impl!(pub(self),_i_atime, inode, i_atime, timespec64);
+    rust_shim_kernel_impl!(pub(self), ___i_atime, inode, __i_atime, timespec64);
+
+    pub unsafe fn i_atime(&self) -> Option<timespec64> {
+        self._i_atime().or_else(|| self.___i_atime())
+    }
+
+    // handle i_mtime member (renamed in 6.7)
+    rust_shim_kernel_impl!(pub(self),_i_mtime, inode, i_mtime, timespec64);
+    rust_shim_kernel_impl!(pub(self), ___i_mtime, inode, __i_mtime, timespec64);
+
+    pub unsafe fn i_mtime(&self) -> Option<timespec64> {
+        self._i_mtime().or_else(|| self.___i_mtime())
+    }
+
     rust_shim_kernel_impl!(pub(self),_i_ctime, inode, i_ctime, timespec64);
     rust_shim_kernel_impl!(pub(self), ___i_ctime, inode, __i_ctime, timespec64);
 

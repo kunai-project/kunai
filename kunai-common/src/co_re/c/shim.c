@@ -218,8 +218,16 @@ struct inode
 	unsigned long i_ino;
 	struct super_block *i_sb;
 	loff_t i_size;
-	struct timespec64 i_atime;
-	struct timespec64 i_mtime;
+	union
+	{
+		struct timespec64 i_atime;
+		struct timespec64 __i_atime;
+	};
+	union
+	{
+		struct timespec64 i_mtime;
+		struct timespec64 __i_mtime;
+	};
 	union
 	{
 		struct timespec64 i_ctime;
@@ -232,7 +240,9 @@ SHIM(inode, i_mode);
 SHIM(inode, i_sb);
 SHIM(inode, i_size);
 SHIM(inode, i_atime);
+SHIM(inode, __i_atime);
 SHIM(inode, i_mtime);
+SHIM(inode, __i_mtime);
 SHIM(inode, i_ctime);
 SHIM(inode, __i_ctime);
 

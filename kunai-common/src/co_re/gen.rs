@@ -250,13 +250,25 @@ pub struct inode {
     pub i_ino: ::core::ffi::c_ulong,
     pub i_sb: *mut super_block,
     pub i_size: loff_t,
-    pub i_atime: timespec64,
-    pub i_mtime: timespec64,
     pub __bindgen_anon_1: inode__bindgen_ty_1,
+    pub __bindgen_anon_2: inode__bindgen_ty_2,
+    pub __bindgen_anon_3: inode__bindgen_ty_3,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union inode__bindgen_ty_1 {
+    pub i_atime: timespec64,
+    pub __i_atime: timespec64,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union inode__bindgen_ty_2 {
+    pub i_mtime: timespec64,
+    pub __i_mtime: timespec64,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union inode__bindgen_ty_3 {
     pub i_ctime: timespec64,
     pub __i_ctime: timespec64,
 }
@@ -306,6 +318,15 @@ extern "C" {
     pub fn shim_inode_i_atime_exists(inode: *mut inode) -> bool;
 }
 extern "C" {
+    pub fn shim_inode___i_atime(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode___i_atime_user(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode___i_atime_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
     pub fn shim_inode_i_mtime(inode: *mut inode) -> timespec64;
 }
 extern "C" {
@@ -313,6 +334,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_inode_i_mtime_exists(inode: *mut inode) -> bool;
+}
+extern "C" {
+    pub fn shim_inode___i_mtime(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode___i_mtime_user(inode: *mut inode) -> timespec64;
+}
+extern "C" {
+    pub fn shim_inode___i_mtime_exists(inode: *mut inode) -> bool;
 }
 extern "C" {
     pub fn shim_inode_i_ctime(inode: *mut inode) -> timespec64;
