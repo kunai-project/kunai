@@ -30,6 +30,7 @@ pub enum ProbeFn {
     sk_sk_attach_prog,
     sk_reuseport_attach_prog,
     security_path_unlink,
+    security_task_alloc,
 }
 
 #[repr(C)]
