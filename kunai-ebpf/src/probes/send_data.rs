@@ -49,12 +49,11 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     let iov_buf = alloc::alloc_zero::<Buffer<ENCRYPT_DATA_MAX_BUFFER_SIZE>>()?;
 
     let msg_size = iov_iter.count().ok_or(ProbeError::CoReFieldMissing)?;
-    let nr_segs = iov_iter.nr_segs().ok_or(ProbeError::CoReFieldMissing)?;
 
     let ip_port = IpPort::from_sock_common_foreign_ip(&sk_common)?;
 
-    // if iov_iter contains enough bytes, is valid and ip_port is not zeros (might be the case if connection not established yet)
-    if msg_size < 256 || nr_segs == 0 || ip_port.is_zero() {
+    // if iov_iter contains enough bytes and ip_port is not zeros (might be the case if connection not established yet)
+    if msg_size < 256 || ip_port.is_zero() {
         return Ok(());
     }
 
