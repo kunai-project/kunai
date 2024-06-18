@@ -63,7 +63,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
         }
     };
 
-    // if iov_iter contains enough bytes and ip_port is not zeros (might be the case if connection not established yet)
+    // if iov_iter contains enough bytes to trigger event
     if msg_size < c.send_data_min_len {
         return Ok(());
     }
