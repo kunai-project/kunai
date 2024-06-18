@@ -23,6 +23,9 @@ pub fn net_security_socket_sendmsg(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
+    // we get bpf configuration
+    let c = get_cfg!()?;
+
     let psock = co_re::socket::from_ptr(ctx.arg(0).ok_or(ProbeError::KProbeArgFailure)?);
 
     let pmsg = co_re::msghdr::from_ptr(ctx.arg(1).ok_or(ProbeError::KProbeArgFailure)?);
@@ -50,10 +53,18 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let msg_size = iov_iter.count().ok_or(ProbeError::CoReFieldMissing)?;
 
-    let ip_port = IpPort::from_sock_common_foreign_ip(&sk_common)?;
+    let ip_port = {
+        // handle this particular case: https://elixir.bootlin.com/linux/v6.9.5/source/net/socket.c#L2180
+        if pmsg.has_msg_name() {
+            let sock_addr = core_read_kernel!(pmsg, sockaddr)?;
+            IpPort::from_sockaddr(sock_addr)?
+        } else {
+            IpPort::from_sock_common_foreign_ip(&sk_common)?
+        }
+    };
 
     // if iov_iter contains enough bytes and ip_port is not zeros (might be the case if connection not established yet)
-    if msg_size < 256 || ip_port.is_zero() {
+    if msg_size < c.send_data_min_len {
         return Ok(());
     }
 

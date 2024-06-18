@@ -59,4 +59,5 @@ impl Filter {
 pub struct BpfConfig {
     pub loader: Loader,
     pub filter: Filter,
+    pub send_data_min_len: u64,
 }

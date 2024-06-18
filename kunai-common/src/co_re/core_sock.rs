@@ -124,6 +124,19 @@ pub type msghdr = CoRe<gen::msghdr>;
 impl msghdr {
     rust_shim_kernel_impl!(pub, msghdr, msg_name, *mut c_void);
     rust_shim_kernel_impl!(pub, msghdr, msg_iter, iov_iter);
+
+    pub unsafe fn sockaddr(&self) -> Option<sockaddr> {
+        if let Some(msg_name) = self.msg_name() {
+            if !msg_name.is_null() {
+                return Some(sockaddr::from_ptr(msg_name as *const _));
+            }
+        }
+        None
+    }
+
+    pub unsafe fn has_msg_name(&self) -> bool {
+        self.msg_name().map(|n| !n.is_null()).unwrap_or(false)
+    }
 }
 
 #[allow(non_camel_case_types)]
