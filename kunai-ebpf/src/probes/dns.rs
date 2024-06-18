@@ -51,7 +51,7 @@ impl SockHelper {
         // if there is an optional server it takes precedence over addr got from socket
         let ip_port = match opt_server {
             Some(server) => server,
-            None => IpPort::from_sock_common_foreign_ip(&sk_common).unwrap_or_default(),
+            None => IpPort::from_sock_common_foreign_ip(sk_common).unwrap_or_default(),
         };
 
         // we don't take protocol communicating on other ports than dns
@@ -92,7 +92,7 @@ unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
     }
 
     let sock_common = core_read_kernel!(sock, sk_common)?;
-    let ip_port = IpPort::from_sock_common_foreign_ip(&sock_common)?;
+    let ip_port = IpPort::from_sock_common_foreign_ip(sock_common)?;
 
     // filter on dst port
     Ok(ip_port.port() == 53)

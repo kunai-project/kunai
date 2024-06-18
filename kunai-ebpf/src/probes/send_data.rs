@@ -59,7 +59,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
             let sock_addr = core_read_kernel!(pmsg, sockaddr)?;
             IpPort::from_sockaddr(sock_addr)?
         } else {
-            IpPort::from_sock_common_foreign_ip(&sk_common)?
+            IpPort::from_sock_common_foreign_ip(sk_common)?
         }
     };
 

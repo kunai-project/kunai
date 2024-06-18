@@ -35,7 +35,7 @@ impl IpPort {
     }
 
     #[inline(always)]
-    pub unsafe fn from_sock_common_foreign_ip(sk: &sock_common) -> Result<Self, Error> {
+    pub unsafe fn from_sock_common_foreign_ip(sk: sock_common) -> Result<Self, Error> {
         let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
         let dport = sk.skc_dport().ok_or(Error::SkcPortPairMissing)?.to_be();
 
