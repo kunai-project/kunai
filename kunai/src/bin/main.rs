@@ -588,12 +588,6 @@ impl EventConsumer {
             _ => format!("unknown({})", event.data.proto),
         };
 
-        debug!(
-            "packet data len={}: {:?}",
-            event.data.data.len(),
-            event.data.packet_data()
-        );
-
         let responses = event.data.answers().unwrap_or_default();
         let ancestors = self.get_ancestors_string(&info);
 
