@@ -1705,6 +1705,11 @@ struct Cli {
     #[arg(long)]
     max_buffered_events: Option<u16>,
 
+    /// Minimum amount of data sent to trigger a send_data event,
+    /// set it to 0 to get all send_data events.
+    #[arg(long)]
+    send_data_min_len: Option<u64>,
+
     /// Detection/filtering rule file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
     rule_file: Option<Vec<String>>,
@@ -1947,7 +1952,7 @@ async fn main() -> Result<(), anyhow::Error> {
         )
     };
 
-    let cli = Cli::from_arg_matches(&c.get_matches())?;
+    let cli: Cli = Cli::from_arg_matches(&c.get_matches())?;
     //let cli = Cli::parse();
     let mut conf = Config::default();
 
@@ -2024,6 +2029,9 @@ async fn main() -> Result<(), anyhow::Error> {
     if cli.max_buffered_events.is_some() {
         conf.max_buffered_events = cli.max_buffered_events.unwrap();
     }
+
+    // we configure min len for send_data events
+    conf.send_data_min_len = cli.send_data_min_len;
 
     // we exclude events
     if let Some(exclude) = cli.exclude {

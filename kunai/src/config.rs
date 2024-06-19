@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use thiserror::Error;
 
+pub const DEFAULT_SEND_DATA_MIN_LEN: u64 = 256;
+pub const DEFAULT_MAX_BUFFERED_EVENTS: u16 = 1024;
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("invalid output {0}")]
@@ -41,6 +44,7 @@ pub struct Config {
     host_uuid: Option<uuid::Uuid>,
     pub output: String,
     pub max_buffered_events: u16,
+    pub send_data_min_len: Option<u64>,
     pub rules: Vec<String>,
     pub iocs: Vec<String>,
     pub events: Vec<Event>,
@@ -64,7 +68,8 @@ impl Default for Config {
         Self {
             host_uuid: None,
             output: "/dev/stdout".into(),
-            max_buffered_events: 1024,
+            max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
+            send_data_min_len: None,
             rules: vec![],
             iocs: vec![],
             events,
@@ -175,6 +180,7 @@ impl TryFrom<&Config> for BpfConfig {
         Ok(Self {
             loader: Loader::from_own_pid(),
             filter: value.try_into()?,
+            send_data_min_len: value.send_data_min_len.unwrap_or(DEFAULT_SEND_DATA_MIN_LEN),
         })
     }
 }

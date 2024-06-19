@@ -14,8 +14,8 @@ bpf_target_code! {
 #[repr(C)]
 #[derive(BpfError, Debug, Clone, Copy)]
 pub enum Error {
-    #[error("unknown socket type")]
-    UnknownSocketType,
+    #[error("sa_family not supported")]
+    UnsupportedSaFamily,
     #[error("sk_type member not found")]
     SkTypeMissing,
     #[error("sk_protocol member not found")]
@@ -28,6 +28,16 @@ pub enum Error {
     SkcPortPairMissing,
     #[error("skc_v6_daddr member not found")]
     SkcV6daddrMissing,
+    #[error("sockaddr sa_family member not found")]
+    SaFamilyMissing,
+    #[error("sockaddr_in addr member not found")]
+    SaInAddrMissing,
+    #[error("sockaddr_in port member not found")]
+    SaInPortMissing,
+    #[error("sockaddr_in6 addr member not found")]
+    SaIn6AddrMissing,
+    #[error("sockaddr_in6 port member not found")]
+    SaIn6PortMissing,
 }
 
 impl From<Error> for ProbeError {

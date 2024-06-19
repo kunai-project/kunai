@@ -1,12 +1,41 @@
 use crate::co_re::core_read_kernel;
 use crate::co_re::sock_common;
+use crate::co_re::sockaddr;
+use crate::co_re::sockaddr_in;
+use crate::co_re::sockaddr_in6;
 use crate::consts::*;
 
 use super::{Error, IpPort, SocketInfo};
 
 impl IpPort {
     #[inline(always)]
-    pub unsafe fn from_sock_common_foreign_ip(sk: &sock_common) -> Result<Self, Error> {
+    pub unsafe fn from_sockaddr(sa: sockaddr) -> Result<Self, Error> {
+        let sa_family = sa.sa_family().ok_or(Error::SaFamilyMissing)?;
+
+        if sa_family == AF_INET {
+            let sa_in = sockaddr_in::from(sa);
+
+            let addr = sa_in.s_addr().ok_or(Error::SaInAddrMissing)?.to_be();
+            let port = sa_in.sin_port().ok_or(Error::SaInPortMissing)?.to_be();
+
+            return Ok(IpPort::new_v4_from_be(addr, port));
+        } else if sa_family == AF_INET6 {
+            let sa_in6 = sockaddr_in6::from(sa);
+
+            let addr = sa_in6
+                .sin6_addr()
+                .and_then(|in6| in6.addr32())
+                .ok_or(Error::SaIn6AddrMissing)?;
+            let port = sa_in6.sin6_port().ok_or(Error::SaIn6PortMissing)?.to_be();
+
+            return Ok(IpPort::new_v6_from_be(addr, port));
+        }
+
+        return Err(Error::UnsupportedSaFamily);
+    }
+
+    #[inline(always)]
+    pub unsafe fn from_sock_common_foreign_ip(sk: sock_common) -> Result<Self, Error> {
         let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
         let dport = sk.skc_dport().ok_or(Error::SkcPortPairMissing)?.to_be();
 
@@ -24,7 +53,7 @@ impl IpPort {
             ));
         }
 
-        return Err(Error::UnknownSocketType);
+        return Err(Error::UnsupportedSaFamily);
     }
 }
 
