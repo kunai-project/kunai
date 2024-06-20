@@ -889,7 +889,7 @@ impl EventConsumer {
         event: &bpf_events::CorrelationEvent,
     ) {
         let ck = info.task_key();
-        
+
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
         if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
@@ -1814,6 +1814,13 @@ impl Command {
     fn replay(conf: Config, o: ReplayOpt) -> anyhow::Result<()> {
         let mut p = EventConsumer::with_config(conf.stdout_output())?;
         for f in o.log_files {
+            let f = {
+                if f == "-" {
+                    "/dev/stdin".into()
+                } else {
+                    f
+                }
+            };
             let reader = std::io::BufReader::new(fs::File::open(f)?);
             let mut de = serde_json::Deserializer::from_reader(reader);
             while let Ok(v) = serde_json::Value::deserialize(&mut de) {
