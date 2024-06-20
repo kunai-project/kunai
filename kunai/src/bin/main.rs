@@ -271,7 +271,7 @@ impl EventConsumer {
                 }
 
                 // lookup in ancestors
-                let ancestors = self.get_ancestors(parent);
+                let ancestors = self.get_ancestors(parent, 0);
                 if let Some(c) = Container::from_ancestors(&ancestors) {
                     self.tasks
                         .entry(tk)
@@ -359,15 +359,23 @@ impl EventConsumer {
         (self.get_exe(ck), self.get_command_line(ck))
     }
 
+    /// get the list of ancestors given a [TaskKey]. If skip is 0 the last
+    /// item is the image of the task referenced by `tk`. One can skip ancestors
+    /// by setting `skip` > 0.
     #[inline]
-    fn get_ancestors(&self, mut parent: TaskKey) -> Vec<String> {
+    fn get_ancestors(&self, mut tk: TaskKey, mut skip: u16) -> Vec<String> {
         let mut ancestors = vec![];
         let mut last = None;
 
-        while let Some(task) = self.tasks.get(&parent) {
+        while let Some(task) = self.tasks.get(&tk) {
             last = Some(task);
-            ancestors.insert(0, task.image.to_string_lossy().to_string());
-            parent = match task.parent_key {
+            if skip == 0 {
+                ancestors.insert(0, task.image.to_string_lossy().to_string());
+            } else {
+                skip -= 1;
+            }
+
+            tk = match task.parent_key {
                 Some(v) => v,
                 None => {
                     break;
@@ -376,7 +384,7 @@ impl EventConsumer {
         }
 
         if let Some(last) = last {
-            if last.pid != 1 && !last.is_kthread() {
+            if last.pid != 1 && !last.is_kthread() && skip == 0 {
                 ancestors.insert(0, "?".into());
             }
         }
@@ -386,7 +394,7 @@ impl EventConsumer {
 
     #[inline]
     fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
-        self.get_ancestors(i.parent_key()).join("|")
+        self.get_ancestors(i.task_key(), 1).join("|")
     }
 
     #[inline]
@@ -482,7 +490,7 @@ impl EventConsumer {
         info: StdEventInfo,
         event: &bpf_events::ExecveEvent,
     ) -> UserEvent<ExecveData> {
-        let ancestors = self.get_ancestors(info.parent_key());
+        let ancestors = self.get_ancestors(info.parent_key(), 0);
 
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
 
@@ -881,7 +889,7 @@ impl EventConsumer {
         event: &bpf_events::CorrelationEvent,
     ) {
         let ck = info.task_key();
-
+        
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
         if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
@@ -930,7 +938,7 @@ impl EventConsumer {
         let mut container_type = Container::from_cgroups(&cgroups);
 
         if container_type.is_none() {
-            let ancestors = self.get_ancestors(info.parent_key());
+            let ancestors = self.get_ancestors(info.parent_key(), 0);
             container_type = Container::from_ancestors(&ancestors);
         }
 
@@ -1457,12 +1465,6 @@ impl EventProducer {
                 self.send_event(bpf_events::HashEvent::from(event)).unwrap();
             }
 
-            Type::TaskSched => {
-                let c: bpf_events::CorrelationEvent =
-                    event!(e, bpf_events::ScheduleEvent).unwrap().into();
-                self.send_event(c).unwrap();
-            }
-
             _ => {}
         }
     }
@@ -1575,10 +1577,6 @@ impl EventProducer {
 
                         // filtering out unwanted events
                         if !er.filter.is_enabled(etype) {
-                            continue;
-                        }
-
-                        if matches!(etype, Type::TaskSched) {
                             continue;
                         }
 
