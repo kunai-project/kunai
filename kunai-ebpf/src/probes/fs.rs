@@ -202,6 +202,9 @@ pub fn fs_security_path_rename(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
+    // if event is disabled we return
+    if_disabled_return!(Type::FileRename, ());
+
     let old_dir = co_re::path::from_ptr(ctx.arg(0).ok_or(ProbeError::KProbeArgFailure)?);
     let old_dentry = co_re::dentry::from_ptr(ctx.arg(1).ok_or(ProbeError::KProbeArgFailure)?);
     let new_dir = co_re::path::from_ptr(ctx.arg(2).ok_or(ProbeError::KProbeArgFailure)?);
@@ -259,6 +262,9 @@ pub fn fs_security_path_unlink(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
+    // if event is disabled we return
+    if_disabled_return!(Type::FileUnlink, ());
+
     let dir = co_re::path::from_ptr(kprobe_arg!(ctx, 0)?);
     let entry = co_re::dentry::from_ptr(kprobe_arg!(ctx, 1)?);
 
@@ -293,6 +299,9 @@ pub fn fs_exit_vfs_unlink(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
+    // if event is disabled we return
+    if_disabled_return!(Type::FileUnlink, ());
+
     let rc: c_int = ctx.ret().unwrap_or(-1);
 
     alloc::init()?;

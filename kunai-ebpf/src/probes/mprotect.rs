@@ -35,6 +35,9 @@ pub fn syscalls_sys_enter_mprotect(ctx: TracePointContext) -> u32 {
 }
 
 unsafe fn try_sys_enter_mprotect(ctx: &TracePointContext) -> ProbeResult<()> {
+    // early return if event is disabled
+    if_disabled_return!(Type::MprotectExec, ());
+
     let args = SysEnterArgs::<MprotectArgs>::from_context(ctx)?.args;
     if args.prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
         alloc::init()?;

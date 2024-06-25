@@ -23,6 +23,9 @@ pub fn net_security_socket_sendmsg(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
+    // returns early if event is disabled
+    if_disabled_return!(Type::SendData, ());
+
     // we get bpf configuration
     let c = get_cfg!()?;
 
