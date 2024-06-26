@@ -1,8 +1,11 @@
+use std::io;
+
 use chrono::{DateTime, Utc};
 use kunai_common::{
     bpf_events::{self, EventInfo},
     uuid::TaskUuid,
 };
+use thiserror::Error;
 
 use crate::{containers::Container, util::get_clk_tck};
 
@@ -23,11 +26,20 @@ impl From<TaskUuid> for TaskKey {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum KeyError {
+    #[error("procfs: {0}")]
+    ProcFs(#[from] procfs::ProcError),
+    #[error("io: {0}")]
+    Io(#[from] io::Error),
+}
+
 impl TryFrom<&procfs::process::Process> for TaskKey {
-    type Error = procfs::ProcError;
+    type Error = KeyError;
     fn try_from(p: &procfs::process::Process) -> Result<Self, Self::Error> {
         let stat = p.stat()?;
-        let clk_tck = get_clk_tck() as u64;
+        // panic here if we cannot get CLK_TCK
+        let clk_tck = get_clk_tck()? as u64;
 
         Ok(Self {
             start_time_sec: stat.starttime / clk_tck,

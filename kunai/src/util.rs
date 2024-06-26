@@ -3,7 +3,7 @@ use ip_network::IpNetwork;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
-use std::net::IpAddr;
+use std::{io, net::IpAddr};
 
 pub mod bpf;
 pub mod elf;
@@ -20,8 +20,33 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
-pub fn get_clk_tck() -> i64 {
-    unsafe { libc::sysconf(libc::_SC_CLK_TCK) }
+fn sysconf<T: From<i64>>(var: libc::c_int) -> Result<T, io::Error> {
+    let v = unsafe { libc::sysconf(var) };
+    if v == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(v.into())
+}
+
+#[inline]
+pub fn get_clk_tck() -> Result<i64, io::Error> {
+    sysconf(libc::_SC_CLK_TCK)
+}
+
+#[inline]
+pub fn page_size() -> Result<i64, io::Error> {
+    sysconf(libc::_SC_PAGESIZE)
+}
+
+#[inline]
+pub fn page_shift() -> Result<u64, io::Error> {
+    let page_size = page_size()?;
+    let mut page_shift = 0u64;
+
+    while (1 << page_shift) < page_size {
+        page_shift += 1
+    }
+    Ok(page_shift)
 }
 
 #[derive(Debug)]
@@ -77,6 +102,11 @@ pub fn sha512_data<T: AsRef<[u8]>>(data: T) -> String {
 
 #[cfg(test)]
 mod test {
+    use crate::util::*;
+
     #[test]
-    fn toast() {}
+    fn test_page_size() {
+        println!("PAGE_SIZE: {}", page_size().unwrap());
+        println!("PAGE_SHIFT: {}", page_shift().unwrap());
+    }
 }
