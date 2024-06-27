@@ -10,7 +10,7 @@ impl<const N: usize> Buffer<N> {
     #[inline(always)]
     pub unsafe fn fill_from_iov_iter<const MAX_NR_SEGS: usize>(
         &mut self,
-        iter: &iov_iter,
+        iter: iov_iter,
         count: Option<usize>,
     ) -> Result<(), Error> {
         let nr_segs = iter.nr_segs().ok_or(Error::NrSegsMissing)? as usize;
@@ -33,7 +33,7 @@ impl<const N: usize> Buffer<N> {
                 if self.is_full() || i >= nr_segs {
                     break;
                 }
-                self.append_iov(&iov.get(i), count)?;
+                self.append_iov(iov.get(i), count)?;
             }
         } else if iter.is_iter_bvec() {
             let bvec = iter.bvec().ok_or(Error::BvecMissing)?;
@@ -52,7 +52,7 @@ impl<const N: usize> Buffer<N> {
     }
 
     #[inline(always)]
-    unsafe fn append_iov(&mut self, iov: &iovec, count: Option<usize>) -> Result<(), Error> {
+    unsafe fn append_iov(&mut self, iov: iovec, count: Option<usize>) -> Result<(), Error> {
         let iov_len = iov.iov_len().ok_or(Error::IovLenMissing)?;
         let iov_base = iov.iov_base().ok_or(Error::IovBaseMissing)?;
 

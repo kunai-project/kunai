@@ -72,7 +72,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     let iov_iter = pmsg.msg_iter().ok_or(ProbeError::CoReFieldMissing)?;
-    if let Err(e) = iov_buf.fill_from_iov_iter::<128>(&iov_iter, None) {
+    if let Err(e) = iov_buf.fill_from_iov_iter::<128>(iov_iter, None) {
         match e {
             // buffer full is not a bad error it just tell we have no more space in our buffer
             kunai_common::buffer::Error::BufferFull => {}
