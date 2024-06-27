@@ -49,6 +49,9 @@ pub use core_clone_args::*;
 mod core_files_struct;
 pub use core_files_struct::*;
 
+mod core_page;
+pub use core_page::*;
+
 #[derive(Clone, Copy)]
 pub struct CoRe<P> {
     ptr: *const P,

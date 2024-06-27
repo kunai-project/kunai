@@ -4,7 +4,7 @@ use crate::kernel;
 use crate::version::kernel_version;
 
 use super::gen::{self, *};
-use super::{rust_shim_kernel_impl, rust_shim_user_impl, CoRe};
+use super::{page, rust_shim_kernel_impl, rust_shim_user_impl, CoRe};
 
 #[allow(non_camel_case_types)]
 pub type iovec = CoRe<gen::iovec>;
@@ -14,6 +14,20 @@ impl iovec {
     rust_shim_user_impl!(pub, iovec, iov_base, *mut c_void);
     rust_shim_kernel_impl!(pub, iovec, iov_len, u64);
     rust_shim_user_impl!(pub, iovec, iov_len, u64);
+
+    #[inline(always)]
+    pub unsafe fn get(&self, i: usize) -> Self {
+        self.as_ptr().add(i).into()
+    }
+}
+
+#[allow(non_camel_case_types)]
+pub type bio_vec = CoRe<gen::bio_vec>;
+
+impl bio_vec {
+    rust_shim_kernel_impl!(pub, bio_vec, bv_page, page);
+    rust_shim_kernel_impl!(pub, bio_vec, bv_len, u32);
+    rust_shim_kernel_impl!(pub, bio_vec, bv_offset, u32);
 
     #[inline(always)]
     pub unsafe fn get(&self, i: usize) -> Self {
@@ -93,6 +107,7 @@ impl iov_iter {
     rust_shim_kernel_impl!(pub, iov_iter, count, u64);
     rust_shim_kernel_impl!(pub, iov_iter, nr_segs, u64);
     rust_shim_kernel_impl!(pub, iov_iter, ubuf, *mut c_void);
+    rust_shim_kernel_impl!(pub, iov_iter, bvec, bio_vec);
     rust_shim_kernel_impl!(pub(self), _iov, iov_iter, iov, iovec);
     rust_shim_kernel_impl!(pub(self), ___iov, iov_iter, __iov, iovec);
 

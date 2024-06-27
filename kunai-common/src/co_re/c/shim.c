@@ -690,6 +690,22 @@ SHIM_ENUM_VALUE(iter_type, ITER_XARRAY);
 SHIM_ENUM_VALUE(iter_type, ITER_DISCARD);
 SHIM_ENUM_VALUE(iter_type, ITER_UBUF);
 
+struct page
+{
+	long unsigned int flags;
+} __attribute__((preserve_access_index));
+
+struct bio_vec
+{
+	struct page *bv_page;
+	unsigned int bv_len;
+	unsigned int bv_offset;
+} __attribute__((preserve_access_index));
+
+SHIM(bio_vec, bv_page);
+SHIM(bio_vec, bv_len);
+SHIM(bio_vec, bv_offset);
+
 struct iov_iter
 {
 	union
@@ -703,6 +719,7 @@ struct iov_iter
 		struct iovec *iov;
 		struct iovec *__iov;
 		void *ubuf;
+		struct bio_vec *bvec;
 	};
 
 	union
@@ -718,6 +735,7 @@ SHIM(iov_iter, nr_segs);
 SHIM(iov_iter, ubuf);
 SHIM(iov_iter, iov);
 SHIM(iov_iter, __iov);
+SHIM(iov_iter, bvec);
 
 struct msghdr
 {

@@ -1743,8 +1743,13 @@ const BPF_ELF: &[u8] = {
 };
 
 fn prepare_bpf(kernel: KernelVersion, conf: &Config, vll: VerifierLogLevel) -> anyhow::Result<Bpf> {
+    let page_size = page_size()? as u64;
+    let page_shift = page_shift()? as u64;
+
     let mut bpf = BpfLoader::new()
         .verifier_log_level(vll)
+        .set_global("PAGE_SHIFT", &page_shift, true)
+        .set_global("PAGE_SIZE", &page_size, true)
         .set_global("LINUX_KERNEL_VERSION", &kernel, true)
         .load(BPF_ELF)?;
 

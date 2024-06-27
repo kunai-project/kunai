@@ -1592,6 +1592,45 @@ extern "C" {
     pub fn shim_iter_type_ITER_UBUF_exists() -> bool;
 }
 #[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct page {
+    pub flags: ::core::ffi::c_ulong,
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct bio_vec {
+    pub bv_page: *mut page,
+    pub bv_len: ::core::ffi::c_uint,
+    pub bv_offset: ::core::ffi::c_uint,
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_page(bio_vec: *mut bio_vec) -> *mut page;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_page_user(bio_vec: *mut bio_vec) -> *mut page;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_page_exists(bio_vec: *mut bio_vec) -> bool;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_len(bio_vec: *mut bio_vec) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_len_user(bio_vec: *mut bio_vec) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_len_exists(bio_vec: *mut bio_vec) -> bool;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_offset(bio_vec: *mut bio_vec) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_offset_user(bio_vec: *mut bio_vec) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_bio_vec_bv_offset_exists(bio_vec: *mut bio_vec) -> bool;
+}
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct iov_iter {
     pub __bindgen_anon_1: iov_iter__bindgen_ty_1,
@@ -1611,6 +1650,7 @@ pub union iov_iter__bindgen_ty_2 {
     pub iov: *mut iovec,
     pub __iov: *mut iovec,
     pub ubuf: *mut ::core::ffi::c_void,
+    pub bvec: *mut bio_vec,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -1679,6 +1719,15 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_iov_iter___iov_exists(iov_iter: *mut iov_iter) -> bool;
+}
+extern "C" {
+    pub fn shim_iov_iter_bvec(iov_iter: *mut iov_iter) -> *mut bio_vec;
+}
+extern "C" {
+    pub fn shim_iov_iter_bvec_user(iov_iter: *mut iov_iter) -> *mut bio_vec;
+}
+extern "C" {
+    pub fn shim_iov_iter_bvec_exists(iov_iter: *mut iov_iter) -> bool;
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
