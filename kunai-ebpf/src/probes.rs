@@ -117,3 +117,34 @@ macro_rules! get_cfg {
 }
 
 use get_cfg;
+
+/// Helper macro to return Ok($ret) early if an event is disabled.
+/// If an error is met, it is returned instead of $ret.
+/// The first objective of this macro is to use it in
+/// high volume probes, mostly to save event throughput.
+///
+/// # Example
+///
+/// if event of [Type::SendData] is disabled in configuration
+/// the macro will return Ok(()).
+///
+/// ```
+/// if_disabled_return!(Type::SendData, ());
+/// ```
+macro_rules! if_disabled_return {
+    ($t:expr,$ret:expr) => {
+        match get_cfg!().map(|c| c.is_event_enabled($t)) {
+            // event activated we do nothing
+            Ok(true) => {}
+            // event disabled we abort
+            Ok(false) => {
+                return Ok($ret);
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+    };
+}
+
+use if_disabled_return;

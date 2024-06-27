@@ -126,6 +126,17 @@ pub enum Error {
     ShouldNotHappen,
     #[error("buffer full")]
     BufferFull,
+    // bvec related
+    #[error("iov_iter.bvec missing")]
+    BvecMissing,
+    #[error("bio_vec.page missing")]
+    BvecPageMissing,
+    #[error("bio_vec.bv_offset missing")]
+    BvecOffsetMissing,
+    #[error("bio_vec.bv_len missing")]
+    BvecLenMissing,
+    #[error("failed to read bio_vec")]
+    FailedToReadBioVec,
 }
 
 impl From<Error> for ProbeError {

@@ -1,5 +1,5 @@
 use aya::Pod;
-use core::fmt::Display;
+use core::fmt::{Debug, Display};
 
 use thiserror::Error;
 
@@ -12,7 +12,7 @@ impl Display for Type {
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EncodedEvent {
     event: Vec<u8>,
 }

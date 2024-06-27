@@ -29,6 +29,9 @@ pub fn syscalls_sys_enter_prctl(ctx: TracePointContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_enter_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
+    // early return if event is disabled
+    if_disabled_return!(Type::Prctl, ());
+
     let args = SysEnterArgs::<PrctlArgs>::from_context(ctx)?;
 
     // we ignore result as we can check something went wrong when we try to insert argument
@@ -50,6 +53,9 @@ pub fn syscalls_sys_exit_prctl(ctx: TracePointContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_exit_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
+    // early return if event is disabled
+    if_disabled_return!(Type::Prctl, ());
+
     let exit_args = SysExitArgs::from_context(ctx)?;
     let key = bpf_task_tracking_id();
 
