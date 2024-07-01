@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "kunai-ebpf"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "aya-ebpf",
  "kunai-common",
