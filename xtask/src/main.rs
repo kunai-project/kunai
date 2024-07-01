@@ -176,11 +176,13 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         Release(o) => {
-            if !o.ignore_ebpf {
+            // we process workspace first as eBPF code is using it
+            if !o.ignore_ws {
                 let mut cargo = std::process::Command::new("cargo");
-                cargo.current_dir(EBPF_DIR).arg("release").args(&o.args);
+                cargo.arg("release").args(&o.args);
 
                 let status = cargo.status()?;
+
                 if !status.success() {
                     return Err(anyhow!("cargo release failed: {status}"));
                 }
@@ -190,9 +192,9 @@ fn main() -> Result<(), anyhow::Error> {
                 }
             }
 
-            if !o.ignore_ws {
+            if !o.ignore_ebpf {
                 let mut cargo = std::process::Command::new("cargo");
-                cargo.arg("release").args(&o.args);
+                cargo.current_dir(EBPF_DIR).arg("release").args(&o.args);
 
                 let status = cargo.status()?;
                 if !status.success() {
