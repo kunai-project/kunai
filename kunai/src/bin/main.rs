@@ -1955,7 +1955,6 @@ fn main() -> Result<(), anyhow::Error> {
     };
 
     let cli: Cli = Cli::from_arg_matches(&c.get_matches())?;
-    //let cli = Cli::parse();
     let mut conf = Config::default();
 
     // Handling any CLI argument not needing to run eBPF
