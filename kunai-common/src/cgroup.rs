@@ -3,12 +3,11 @@ use kunai_macros::BpfError;
 
 not_bpf_target_code! {
     mod user;
-    
+
 }
 
 bpf_target_code! {
     mod bpf;
-    pub use bpf::*;
 }
 
 const CGROUP_PATH_MAX: usize = 128;
