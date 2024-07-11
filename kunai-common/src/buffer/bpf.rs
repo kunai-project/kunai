@@ -127,9 +127,7 @@ impl<const N: usize> Buffer<N> {
 
     #[inline(always)]
     pub unsafe fn read_user_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
-        let size = cap_size(size, N as u32);
-
-        let buf = &mut self.buf[..size as usize];
+        let buf = &mut self.buf[..size.clamp(0, N as u32) as usize];
         bpf_probe_read_user_buf(from as *const _, buf).map_err(|_| Error::FailedToRead)?;
 
         self.len = size as usize;
@@ -138,9 +136,7 @@ impl<const N: usize> Buffer<N> {
 
     #[inline(always)]
     pub unsafe fn read_kernel_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
-        let size = cap_size(size, N as u32);
-
-        let buf = &mut self.buf[..size as usize];
+        let buf = &mut self.buf[..size.clamp(0, N as u32) as usize];
         bpf_probe_read_kernel_buf(from as *const _, buf).map_err(|_| Error::FailedToRead)?;
 
         self.len = size as usize;

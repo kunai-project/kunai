@@ -244,19 +244,23 @@ impl Path {
 
     #[inline(always)]
     pub fn get_byte(&self, i: usize) -> core::result::Result<u8, Error> {
-        match self.mode {
-            Mode::Append => Ok(self.buffer[i]),
+        let i = match self.mode {
+            Mode::Append => i,
             Mode::Prepend => {
                 let len = self.len;
-                if len <= self.buffer.len() as u32 {
-                    let i = self.buffer.len() - len as usize + i;
-                    if i < self.buffer.len() {
-                        return Ok(self.buffer[i]);
-                    }
+                if len > self.buffer.len() as u32 {
+                    return Err(Error::OutOfBound);
                 }
-                Err(Error::OutOfBound)
+                self.buffer.len() - len as usize + i
             }
+        };
+
+        // bound checking
+        if i < self.buffer.len() {
+            return Ok(unsafe { *self.buffer.get_unchecked(i) });
         }
+
+        Err(Error::OutOfBound)
     }
 
     #[inline(always)]
@@ -274,10 +278,10 @@ impl Path {
             }
 
             let Ok(b) = self.get_byte(i) else {
-                        return false;
-                    };
+                return false;
+            };
 
-            if b != start[i] {
+            if b != unsafe { *start.get_unchecked(i) } {
                 return false;
             }
         }
