@@ -1786,12 +1786,6 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
             p.enable();
         }
 
-        info!(
-            "loading: {} {:?} with priority={}",
-            p.name,
-            p.prog_type(),
-            p.prio
-        );
 
         if !p.enable {
             warn!("{} probe has been disabled", p.name);
@@ -1808,6 +1802,13 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
             );
             continue;
         }
+
+        info!(
+            "loading: {} {:?} with priority={}",
+            p.name,
+            p.prog_type(),
+            p.prio
+        );
 
         p.load_and_attach()?;
     }
