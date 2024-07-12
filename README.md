@@ -34,53 +34,41 @@ On the implementation side, Kunai is written for its majority in Rust, leveragin
 
 * **Is it compatible with my OS/Kernel ?** : Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
 * **What kind of events can I get ?** : Please take a read to [events documentation](https://why.kunai.rocks/docs/category/kunai---events)
-* **Which version should I use ?**: If it is just to test the tool, use the latest build as it is always the best in terms of features and bug fix. However keep in mind that events in "non stable" version are subject to change.
+* **Which version should I use ?**: If it is just to test the tool, use the latest build as it is always the best in terms of features and bug fix. However keep in mind that events in **non stable** releases **are subject to change**.
 
 # How to build the project ?
 
 Before going further, I have to remind you that there is a distribution agnostic (built with **musl**) pre-compiled version of kunai available [in release page](https://github.com/0xrawsec/kunai/releases/latest). So if you just want to give a try to kunai, you probably don't need to build the project yourself.
-
-The project is a little bit tricky to build as it uses cutting edge Aya and [bpf-linker](https://github.com/aya-rs/bpf-linker) features. In order to provide a unique binary you can run on any kernel kunai uses **BPF CO-RE**, which requires `bpf-linker` to support Debugging Information to generate proper **BTF** information. To compile `bpf-linker` you will need also to compile a custom version of LLVM, which includes some specific patches. Please do not run away now, because we have made this process very easy.
 
 ## Requirements
 
 Before being able to build everything, you need to install a couple of tools.
 
 * to build many Rust projects (this one included), you need [`rustup`](https://www.rust-lang.org/tools/install)
-* to build bpf-linker/LLVM need: `cmake`, `ninja`, `git`, `clang`, `lld`
-* to build kunai you need: `clang`, `libbpf-dev`
+* to build kunai you need: `clang`, `libbpf-dev` and [`bpf-linker`](https://github.com/aya-rs/bpf-linker)
 
 Example of commands to install requirements on Ubuntu/Debian:
-```
+
+```bash
 sudo apt update
-sudo apt install -y cmake ninja-build clang lld git libbpf-dev
+sudo apt install -y clang libbpf-dev
+
+# assuming you have rustup and cargo installed
+cargo install bpf-linker
 ```
 
-## Building build-tools
+## Building Kunai
 
-Now the only thing you need is to run a command and brew a coffee because the first LLVM compilation takes time.
-
-```
-cargo xtask build-tools
-```
-
-After a little while, you get the custom `bpf-linker` installed in `build-tools` directory within **kunai's root directory**.
-Please note that this step absolutely does not remove any prior `bpf-linker` installation made with `cargo install bpf-linker`.
-
-**NB**: do not delete the `build-tools` directory, unless you want to compile bpf-linker/LLVM again from scratch.
-
-## Building kunai
-
-Once you have the **build-tools** ready, you don't need to build them again. You can now build the project with **xtask**, a cargo command (specific to this project) to make your life easier.
+Once you have the **requirements** installed, you are good to go. You can now build the project with **xtask**, a cargo command (specific to this project) to make your life easier.
 
 Building debug version
-```
+```bash
 cargo xtask build
 # find your executable in: ./target/x86_64-unknown-linux-musl/debug/kunai
 ```
 
 Building release version (harder, better, faster, stronger)
-```
+```bash
 cargo xtask build --release
 # find your executable in: ./target/x86_64-unknown-linux-musl/release/kunai
 ```
