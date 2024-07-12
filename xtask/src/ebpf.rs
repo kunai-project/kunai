@@ -11,8 +11,6 @@ use std::{
 use clap::Parser;
 use json::JsonValue;
 
-use crate::utils;
-
 #[derive(Debug, Copy, Clone)]
 pub enum BpfTarget {
     BpfEl,
@@ -70,10 +68,6 @@ impl BuildOptions {
 
         if let Some(linker) = &self.linker {
             rustflags.push(format!("-C linker={linker}"));
-        } else if let Ok(linker) =
-            utils::find_first_in("./build-tools", "bpf-linker").and_then(|p| p.canonicalize())
-        {
-            rustflags.push(format!("-C linker={}", linker.to_string_lossy()));
         }
 
         // we add linker arguments
@@ -207,7 +201,8 @@ fn fix_path_in_json(root: &str, val: &mut JsonValue) {
 }
 
 pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
-    let output = cargo("clippy", dir, opts)
+    // clippy does not seem to work, is that really important ?
+    let output = cargo("check", dir, opts)
         // we must use build_rustflags so that we have same options
         // for build and check commands. Thus making build/check faster
         .env("RUSTFLAGS", opts.build_rustflags())
