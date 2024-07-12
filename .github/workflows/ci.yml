@@ -50,3 +50,6 @@ jobs:
     - name: Linux Kernel LTS 6.1
       run: ./scripts/ci/test_kernel.sh 6.1
 
+    - name: Linux Kernel LTS 6.6
+      run: ./scripts/ci/test_kernel.sh 6.6
+
