@@ -10,54 +10,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-tools:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-
-    - name: Install system tools
-      run: |
-        sudo apt update
-        sudo apt install -y qemu-system-x86 cmake ninja-build clang lld git libbpf-dev
-
-    # we need to fetch rust deps first to speed up cargo xtask
-    - name: Cache Rust dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo
-          ~/.rustup
-          target
-        # if xtask changed maybe linker version changed so we don't want old objects to mess with new ones
-        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml', '**/xtask/') }}
-
-    - id: cache-key
-      run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
-
-    - name: Cache build tools
-      uses: actions/cache@v3
-      with:
-        path: |
-          build-tools/
-        key: ${{ steps.cache-key.outputs.cache-key }}
-
-    - name: Build-Tools (LLVM and bpf-linker)
-      run: cargo xtask build-tools --free-space
-              
   build:
-    needs: build-tools
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout
       uses: actions/checkout@v3
+    
+    - name: Install bpf-linker
+      run: cargo install bpf-linker
 
     - name: Install system tools
       run: |
         sudo apt update
-        sudo apt install -y qemu-system-x86 cmake ninja-build clang lld git libbpf-dev
+        sudo apt install -y qemu-system-x86 clang lld libbpf-dev
 
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
@@ -67,18 +33,7 @@ jobs:
           ~/.cargo
           ~/.rustup
           target
-        # if xtask changed maybe linker version changed so we don't want old objects to mess with new ones
-        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml', '**/xtask/') }}
-
-    - id: cache-key
-      run: echo "cache-key=$(cargo xtask build-tools --action-cache-key)" >> "$GITHUB_OUTPUT"
-
-    - name: Cache build tools
-      uses: actions/cache@v3
-      with:
-        path: |
-          build-tools/
-        key: ${{ steps.cache-key.outputs.cache-key }}
+        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
       
     - name: Build (eBPF and userland)
       run: cargo xtask build --release
