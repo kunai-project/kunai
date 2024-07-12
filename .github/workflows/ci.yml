@@ -16,9 +16,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v3
-    
-    - name: Install bpf-linker
-      run: cargo install bpf-linker
 
     - name: Install system tools
       run: |
@@ -34,6 +31,9 @@ jobs:
           ~/.rustup
           target
         key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+
+    - name: Install bpf-linker
+      run: cargo install bpf-linker
       
     - name: Build (eBPF and userland)
       run: cargo xtask build --release
