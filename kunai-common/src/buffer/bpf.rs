@@ -1,7 +1,7 @@
 use core::cmp::min;
 
 use crate::co_re::{bio_vec, iov_iter, iovec};
-use crate::utils::cap_size;
+use aya_ebpf::check_bounds_signed;
 use aya_ebpf::helpers::{gen, *};
 
 use super::{Buffer, Error};
@@ -56,29 +56,31 @@ impl<const N: usize> Buffer<N> {
         let iov_len = iov.iov_len().ok_or(Error::IovLenMissing)?;
         let iov_base = iov.iov_base().ok_or(Error::IovBaseMissing)?;
 
-        let len = cap_size(self.len, N);
+        let len = self.len as i64;
 
-        let mut size = min(iov_len as u32, N as u32);
+        let mut size = iov_len as i64;
 
         if let Some(count) = count {
-            size = min(count as u32, size);
+            size = min(count as i64, size);
         }
 
-        let left = cap_size((N - len) as u32, N as u32);
+        let left = N as i64 - len;
         if size > left {
             return Err(Error::BufferFull);
         }
 
-        if gen::bpf_probe_read_user(
-            self.buf[len as usize..N].as_mut_ptr() as *mut _,
-            cap_size(size, N as u32),
-            iov_base as *const _,
-        ) < 0
-        {
-            return Err(Error::FailedToReadIovBase);
-        }
+        if check_bounds_signed(len, 0, N as i64) && check_bounds_signed(size, 1, N as i64) {
+            if gen::bpf_probe_read_user(
+                self.buf[len as usize..N].as_mut_ptr() as *mut _,
+                size as u32,
+                iov_base as *const _,
+            ) < 0
+            {
+                return Err(Error::FailedToReadIovec);
+            }
 
-        self.len += size as usize;
+            self.len += size as usize;
+        }
 
         Ok(())
     }
@@ -91,29 +93,30 @@ impl<const N: usize> Buffer<N> {
 
         let bvec_base = (page.to_va() as u64).wrapping_add(bv_offset as u64);
 
-        let len = cap_size(self.len, N);
-
-        let mut size = min(bv_len as u32, N as u32);
+        let len = self.len as i64;
+        let mut size = bv_len as i64;
 
         if let Some(count) = count {
-            size = min(count as u32, size);
+            size = min(count as i64, size);
         }
 
-        let left = cap_size((N - len) as u32, N as u32);
+        let left = N as i64 - len;
         if size > left {
             return Err(Error::BufferFull);
         }
 
-        if gen::bpf_probe_read_kernel(
-            self.buf[len as usize..N].as_mut_ptr() as *mut _,
-            cap_size(size, N as u32),
-            bvec_base as *const _,
-        ) < 0
-        {
-            return Err(Error::FailedToReadBioVec);
-        }
+        if check_bounds_signed(len, 0, N as i64) && check_bounds_signed(size, 1, N as i64) {
+            if gen::bpf_probe_read_kernel(
+                self.buf[len as usize..N].as_mut_ptr() as *mut _,
+                size as u32,
+                bvec_base as *const _,
+            ) < 0
+            {
+                return Err(Error::FailedToReadBioVec);
+            }
 
-        self.len += size as usize;
+            self.len += size as usize;
+        }
 
         Ok(())
     }
@@ -127,8 +130,18 @@ impl<const N: usize> Buffer<N> {
 
     #[inline(always)]
     pub unsafe fn read_user_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
-        let buf = &mut self.buf[..size.clamp(0, N as u32) as usize];
-        bpf_probe_read_user_buf(from as *const _, buf).map_err(|_| Error::FailedToRead)?;
+        let size = (size as i64).clamp(0, N as i64);
+
+        if check_bounds_signed(size as i64, 0, N as i64) {
+            let ret = gen::bpf_probe_read_user(
+                self.buf.as_mut_ptr() as *mut _,
+                size as u32,
+                from as *const _,
+            );
+            if ret != 0 {
+                return Err(Error::FailedToRead);
+            }
+        }
 
         self.len = size as usize;
         Ok(())
@@ -136,8 +149,18 @@ impl<const N: usize> Buffer<N> {
 
     #[inline(always)]
     pub unsafe fn read_kernel_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
-        let buf = &mut self.buf[..size.clamp(0, N as u32) as usize];
-        bpf_probe_read_kernel_buf(from as *const _, buf).map_err(|_| Error::FailedToRead)?;
+        let size = (size as i64).clamp(0, N as i64);
+
+        if check_bounds_signed(size as i64, 0, N as i64) {
+            let ret = gen::bpf_probe_read_kernel(
+                self.buf.as_mut_ptr() as *mut _,
+                size as u32,
+                from as *const _,
+            );
+            if ret != 0 {
+                return Err(Error::FailedToRead);
+            }
+        }
 
         self.len = size as usize;
         Ok(())
