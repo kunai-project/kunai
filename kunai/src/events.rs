@@ -29,6 +29,7 @@ impl From<PathBuf> for File {
 }
 
 #[derive(FieldGetter, Serialize, Deserialize)]
+#[getter(use_serde_rename)]
 pub struct ContainerSection {
     pub name: String,
     #[serde(rename = "type")]
