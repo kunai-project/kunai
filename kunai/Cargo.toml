@@ -24,8 +24,8 @@ lru-st = { version = "0.1.1", features = ["sync"] }
 aya = { version = "0.12.0", features = ["async_tokio"] }
 
 # detection engine for events
-gene = { version = "0.1.3" }
-gene_derive = { version = "0.1.3" }
+gene = { version = "0.1.4" }
+gene_derive = { version = "0.1.4" }
 
 kunai-common = { path = "../kunai-common", features = ["user"] }
 kunai-macros = { path = "../kunai-common/src/kunai-macros" }
