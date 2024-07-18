@@ -32,10 +32,11 @@ use tokio::sync::mpsc::error::SendError;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use std::fs::{self, File};
+use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, Write};
 use std::net::IpAddr;
 
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -125,6 +126,49 @@ impl SystemInfo {
     }
 }
 
+pub enum Output {
+    Stdout(std::io::Stdout),
+    Stderr(std::io::Stderr),
+    // variant too big, boxing suggested by clippy
+    File(Box<firo::File>),
+}
+
+impl Output {
+    #[inline(always)]
+    fn stdout() -> Self {
+        Self::Stdout(std::io::stdout())
+    }
+
+    #[inline(always)]
+    fn stderr() -> Self {
+        Self::Stderr(std::io::stderr())
+    }
+}
+
+impl From<firo::File> for Output {
+    fn from(value: firo::File) -> Self {
+        Self::File(Box::new(value))
+    }
+}
+
+impl io::Write for Output {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Stdout(o) => o.write(buf),
+            Self::Stderr(o) => o.write(buf),
+            Self::File(o) => o.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Stdout(o) => o.flush(),
+            Self::Stderr(o) => o.flush(),
+            Self::File(o) => o.flush(),
+        }
+    }
+}
+
 struct EventConsumer {
     system_info: SystemInfo,
     engine: gene::Engine,
@@ -133,17 +177,51 @@ struct EventConsumer {
     cache: cache::Cache,
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
-    output: std::fs::File,
+    output: Output,
 }
 
 impl EventConsumer {
-    pub fn with_config(config: Config) -> anyhow::Result<Self> {
+    fn prepare_output(config: &Config) -> anyhow::Result<Output> {
         let output = match &config.output.as_str() {
             &"stdout" => String::from("/dev/stdout"),
             &"stderr" => String::from("/dev/stderr"),
             v => v.to_string(),
         };
 
+        let out = match output.as_str() {
+            "/dev/stdout" => Output::stdout(),
+            "/dev/stderr" => Output::stderr(),
+            v => {
+                let path = PathBuf::from(v);
+
+                if let Some(parent) = path.parent() {
+                    if !parent.exists() {
+                        // we only create parent directory
+                        DirBuilder::new().mode(0o700).create(parent).map_err(|e| {
+                            anyhow!("failed to create output directory {parent:?}: {e}")
+                        })?;
+                    }
+                }
+
+                match config.output_settings.as_ref() {
+                    Some(s) => firo::OpenOptions::new()
+                        .mode(0o600)
+                        .max_size(s.max_size)
+                        .trigger(s.rotate_size.into())
+                        .compression(firo::Compression::Gzip)
+                        .create_append(v)?
+                        .into(),
+                    None => firo::OpenOptions::new()
+                        .mode(0o600)
+                        .create_append(v)?
+                        .into(),
+                }
+            }
+        };
+        Ok(out)
+    }
+
+    pub fn with_config(config: Config) -> anyhow::Result<Self> {
         // building up system information
         let system_info = SystemInfo::from_sys()?.with_host_uuid(
             config
@@ -159,10 +237,7 @@ impl EventConsumer {
             cache: Cache::with_max_entries(10000),
             tasks: HashMap::new(),
             resolved: HashMap::new(),
-            output: std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(output)?,
+            output: Self::prepare_output(&config)?,
         };
 
         // loading rules in the engine
@@ -1785,7 +1860,6 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
         if !en_probes.is_empty() {
             p.enable();
         }
-
 
         if !p.enable {
             warn!("{} probe has been disabled", p.name);
