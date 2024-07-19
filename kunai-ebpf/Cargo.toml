@@ -1,6 +1,6 @@
 [package]
 name = "kunai-ebpf"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "Package containing eBPF code used by Kunai"
 authors = ["Quentin JEROME <qjerome@rawsec.lu>"]
