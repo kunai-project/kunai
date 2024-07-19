@@ -1,4 +1,5 @@
 use core::str::FromStr;
+use huby::ByteSize;
 use kunai_common::{
     bpf_events,
     config::{BpfConfig, Filter, Loader},
@@ -38,11 +39,18 @@ impl Event {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FileSettings {
+    pub rotate_size: ByteSize,
+    pub max_size: ByteSize,
+}
+
 /// Kunai configuration structure to be used in userland
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     host_uuid: Option<uuid::Uuid>,
     pub output: String,
+    pub output_settings: Option<FileSettings>,
     pub max_buffered_events: u16,
     pub send_data_min_len: Option<u64>,
     pub rules: Vec<String>,
@@ -68,6 +76,7 @@ impl Default for Config {
         Self {
             host_uuid: None,
             output: "/dev/stdout".into(),
+            output_settings: None,
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
             send_data_min_len: None,
             rules: vec![],
