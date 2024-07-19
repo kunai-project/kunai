@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Custom cargo command specific to the Kunai project"
 license.workspace = true
