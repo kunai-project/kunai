@@ -1,5 +1,5 @@
 use super::*;
-use aya_ebpf::{bpf_printk, programs::ProbeContext};
+use aya_ebpf::programs::ProbeContext;
 use kunai_common::{buffer::Buffer, net::IpPort};
 
 /*
