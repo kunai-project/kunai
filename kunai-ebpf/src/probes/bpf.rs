@@ -45,7 +45,7 @@ unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
     if let Some(bpf_prog) = BPF_PROG_TRACK.get(&key) {
         alloc::init()?;
 
-        let bpf_prog_aux = bpf_prog.aux().ok_or(ProbeError::CoReFieldMissing)?;
+        let bpf_prog_aux = core_read_kernel!(bpf_prog, aux)?;
 
         let event = alloc::alloc_zero::<BpfProgLoadEvent>()?;
 
