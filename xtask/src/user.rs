@@ -85,6 +85,11 @@ impl From<BuildOptions> for ebpf::BuildOptions {
 impl From<&BuildOptions> for ebpf::BuildOptions {
     fn from(value: &BuildOptions) -> Self {
         Self {
+            target_arch: value
+                .target
+                .split_once('-')
+                .map_or(&*value.target, |x| x.0)
+                .into(),
             target: value.bpf_target,
             release: value.release,
             linker: value.bpf_linker.clone(),
