@@ -33,12 +33,9 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let pmsg = co_re::msghdr::from_ptr(ctx.arg(1).ok_or(ProbeError::KProbeArgFailure)?);
 
-    let sk_common = psock
-        .sk()
-        .and_then(|sk| sk.sk_common())
-        .ok_or(ProbeError::CoReFieldMissing)?;
+    let sk_common = core_read_kernel!(psock, sk, sk_common)?;
 
-    let sa_family = sk_common.skc_family().ok_or(ProbeError::CoReFieldMissing)?;
+    let sa_family = core_read_kernel!(sk_common, skc_family)?;
 
     // we want to process only INET sock families
     if sa_family as u32 != AF_INET && sa_family as u32 != AF_INET6 {
@@ -50,11 +47,11 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
 
     event.init_from_current_task(Type::SendData)?;
 
-    let iov_iter = pmsg.msg_iter().ok_or(ProbeError::CoReFieldMissing)?;
+    let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
 
     let iov_buf = alloc::alloc_zero::<Buffer<ENCRYPT_DATA_MAX_BUFFER_SIZE>>()?;
 
-    let msg_size = iov_iter.count().ok_or(ProbeError::CoReFieldMissing)?;
+    let msg_size = core_read_kernel!(iov_iter, count)?;
 
     let ip_port = {
         // handle this particular case: https://elixir.bootlin.com/linux/v6.9.5/source/net/socket.c#L2180
@@ -71,7 +68,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
-    let iov_iter = pmsg.msg_iter().ok_or(ProbeError::CoReFieldMissing)?;
+    let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
     if let Err(e) = iov_buf.fill_from_iov_iter::<128>(iov_iter, None) {
         match e {
             // buffer full is not a bad error it just tell we have no more space in our buffer

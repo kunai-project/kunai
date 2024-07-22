@@ -70,7 +70,7 @@ macro_rules! core_read_kernel {
     ($struc:expr, $field:ident) => {
         $struc
             .$field()
-            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldRead)
     };
 
     ($struc:expr, $first:ident, $($rest: ident),*) => {
@@ -79,7 +79,7 @@ macro_rules! core_read_kernel {
             $(
             .and_then(|r| r.$rest())
             )*
-            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldRead)
     };
 }
 
@@ -91,7 +91,7 @@ macro_rules! core_read_user {
         paste::item!{
         $struc
             .[<$field _user>]()
-            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldRead)
         }
     };
 
@@ -102,7 +102,7 @@ macro_rules! core_read_user {
             $(
             .and_then(|r| r.[<$rest _user>]())
             )*
-            .ok_or(kunai_common::errors::ProbeError::CoReFieldMissing)
+            .ok_or(kunai_common::errors::ProbeError::CoReFieldRead)
         }
     };
 }

@@ -56,8 +56,8 @@ const _: bool = {
 pub enum ProbeError {
     #[error("failed to get configuration")]
     Config,
-    #[error("mandatory core field is missing")]
-    CoReFieldMissing,
+    #[error("failed to read core field")]
+    CoReFieldRead,
     #[error("failed to get kprobe arg")]
     KProbeArgFailure,
     #[error("unexpected null pointer")]

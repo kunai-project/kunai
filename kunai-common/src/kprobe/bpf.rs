@@ -1,4 +1,10 @@
-use aya_ebpf::{bindings::pt_regs, macros::*, maps::LruHashMap, programs::ProbeContext};
+#[cfg(bpf_target_arch = "riscv64")]
+use crate::bindings::user_regs_struct as pt_regs;
+#[cfg(not(any(bpf_target_arch = "aarch64", bpf_target_arch = "riscv64")))]
+use aya_ebpf::bindings::pt_regs;
+#[cfg(bpf_target_arch = "aarch64")]
+use aya_ebpf::bindings::user_pt_regs as pt_regs;
+use aya_ebpf::{macros::*, maps::LruHashMap, programs::ProbeContext};
 
 use crate::utils::bpf_task_tracking_id;
 

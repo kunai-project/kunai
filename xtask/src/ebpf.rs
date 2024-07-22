@@ -43,6 +43,8 @@ pub struct BuildOptions {
     /// Build the release target
     #[clap(long)]
     pub release: bool,
+    #[clap(long)]
+    pub target_arch: String,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub target: BpfTarget,
@@ -69,6 +71,14 @@ impl BuildOptions {
         if let Some(linker) = &self.linker {
             rustflags.push(format!("-C linker={linker}"));
         }
+
+        // setting specific config bpf_target_arch
+        // we do it here so that we don't have to do it in several build.rs files
+        rustflags.push(format!(r#"--cfg bpf_target_arch="{}""#, self.target_arch));
+        rustflags.push(
+            "--check-cfg=cfg(bpf_target_arch,values(\"x86_64\",\"arm\",\"aarch64\",\"riscv64\"))"
+                .into(),
+        );
 
         // we add linker arguments
         self.link_arg
