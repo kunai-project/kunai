@@ -1,3 +1,4 @@
+#![deny(unused_imports, clippy::all)]
 #![no_std]
 #![no_main]
 
