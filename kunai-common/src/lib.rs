@@ -1,3 +1,4 @@
+#![deny(unused_imports, clippy::all)]
 #![cfg_attr(target_arch = "bpf", no_std)]
 
 use macros::bpf_target_code;
