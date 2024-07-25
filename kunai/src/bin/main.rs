@@ -1973,7 +1973,7 @@ impl Command {
         EventConsumer::with_config(conf.clone())?.consume(receiver)?;
 
         // we spawn a task to reload producer when needed
-        task::spawn(async move {
+        let main = async move {
             loop {
                 info!("Starting event producer");
                 // we start producer
@@ -2002,12 +2002,14 @@ impl Command {
 
             #[allow(unreachable_code)]
             Ok::<_, anyhow::Error>(())
-        });
+        };
 
         info!("Waiting for Ctrl-C...");
-        signal::ctrl_c().await?;
-        info!("Exiting...");
-        Ok(())
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => Ok(()),
+            res = main => res
+
+        }
     }
 }
 
