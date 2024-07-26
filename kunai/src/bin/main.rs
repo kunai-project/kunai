@@ -1,4 +1,4 @@
-#![deny(unused_imports, clippy::all)]
+#![deny(warnings)]
 
 use anyhow::anyhow;
 use aya::maps::MapData;

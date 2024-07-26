@@ -1,4 +1,4 @@
-#![deny(unused_imports, clippy::all)]
+#![deny(warnings)]
 #![cfg_attr(target_arch = "bpf", no_std)]
 
 use macros::bpf_target_code;
@@ -25,7 +25,6 @@ pub mod path;
 pub mod consts;
 
 pub mod buffer;
-//pub mod transfer;
 
 pub mod uuid;
 

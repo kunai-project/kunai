@@ -1,4 +1,4 @@
-#![deny(unused_imports, clippy::all)]
+#![deny(warnings)]
 #![no_std]
 #![no_main]
 
