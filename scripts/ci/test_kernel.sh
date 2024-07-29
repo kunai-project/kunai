@@ -64,7 +64,7 @@ cache_dir="${cache_root}/amd64/${distro}/${image}"
 
 if [[ ! -d $cache_dir ]]
 then
-    if [[ $image =~ "*.deb$" ]]
+    if [[ $(grep -oP "\.deb$"<<<$image) ]]
     then
         curl -k ${base_url}${image} | dpkg --fsys-tarfile - | tar -C ${tmp_dir} --wildcards --extract "./boot/*vmlinuz*"
     else
