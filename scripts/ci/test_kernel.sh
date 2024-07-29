@@ -24,14 +24,31 @@ if [[ ! $image ]]
 then
     distro="ubuntu"
     base_url="$ubuntu_url"
-    image=$(curl $base_url | grep -oP 'linux-image-unsigned-.*?-generic.*?amd64.deb' | grep -F "linux-image-unsigned-${kernel}" | tail -n 1)
+    image=$(curl $base_url | grep -oP 'linux-image-unsigned-.*?-generic.*?amd64.deb' | grep -F "linux-image-unsigned-${kernel}" | tail -n 1  || true)
 
-    # no kernel found even in ubuntu repo
+    # we make download attempt in alpine repositories
     if [[ ! $image ]]
     then
-        echo "no image found for kernel ${kernel}"
-        exit 1
+        distro=alpine
+        
+        for i in {20..1}
+        do
+            base_url=https://dl-cdn.alpinelinux.org/alpine/v3.$i/main/x86_64/
+            image=$(curl -s $base_url | grep -oP "linux-lts-\d.*?\.apk" | sort -u)
+            if [[ $image =~ "$kernel" ]]
+            then
+                # we have found the most recent and good kernel image
+                break
+            fi
+        done
     fi
+fi
+
+# no kernel found even in Alpine repo
+if [[ ! $image ]]
+then
+    echo "no image found for kernel ${kernel}"
+    exit 1
 fi
 
 if [[ $(echo $@ | grep -c -- '--cache-key') > 0 ]]
@@ -47,7 +64,12 @@ cache_dir="${cache_root}/amd64/${distro}/${image}"
 
 if [[ ! -d $cache_dir ]]
 then
-    curl -k ${base_url}${image} | dpkg --fsys-tarfile - | tar -C ${tmp_dir} --wildcards --extract "./boot/*vmlinuz*"
+    if [[ $image =~ "*.deb$" ]]
+    then
+        curl -k ${base_url}${image} | dpkg --fsys-tarfile - | tar -C ${tmp_dir} --wildcards --extract "./boot/*vmlinuz*"
+    else
+        curl -k ${base_url}${image} | tar -zC ${tmp_dir} --wildcards --extract "boot/*vmlinuz*" 2>/dev/null
+    fi
     # we create cache dir
     mkdir -p $cache_dir
     mv ${tmp_dir}/boot/vmlinuz* $cache_dir
