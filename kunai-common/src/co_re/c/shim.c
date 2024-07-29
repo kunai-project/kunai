@@ -8,9 +8,7 @@
 /*
 IMPORTANT: it seems defining and using typedefs (for structs) in shim
 makes it fail at linking, so don't do it.
-
-* Using anonymous structs seems to make the linking fail
-
+Using anonymous structs seems to make the linking fail
 */
 
 // this just a simple C macro to make easier shim definition
@@ -97,14 +95,11 @@ struct kgid_t
 {
 	gid_t val;
 } __attribute__((preserve_access_index));
-// SHIM(kgid_t, val);
 
 struct kuid_t
 {
 	uid_t val;
 } __attribute__((preserve_access_index));
-
-// SHIM(kuid_t, val);
 
 // Defining shim for cred struct
 // We just need to define the fields we need to access
@@ -117,10 +112,6 @@ struct cred
 
 _SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_uid(struct cred *pcred), pcred, uid.val);
 _SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_gid(struct cred *pcred), pcred, gid.val);
-// SHIM_WITH_NAME(cred, uid.val, uid);
-// SHIM_WITH_NAME(cred, gid.val, gid);
-// SHIM_REF(cred, uid);
-// SHIM_REF(cred, gid);
 
 struct qstr
 {
@@ -218,18 +209,15 @@ struct inode
 	unsigned long i_ino;
 	struct super_block *i_sb;
 	loff_t i_size;
-	union
-	{
+	union {
 		struct timespec64 i_atime;
 		struct timespec64 __i_atime;
 	};
-	union
-	{
+	union {
 		struct timespec64 i_mtime;
 		struct timespec64 __i_mtime;
 	};
-	union
-	{
+	union {
 		struct timespec64 i_ctime;
 		struct timespec64 __i_ctime;
 	};
@@ -391,8 +379,7 @@ struct task_struct
 	pid_t pid;
 	__u64 start_time;
 	// attempt to make compatible with older kernels
-	union
-	{
+	union {
 		__u64 start_boottime;
 		__u64 real_start_time;
 	};
@@ -532,8 +519,7 @@ typedef __u32 __portpair;
 
 struct in6_addr
 {
-	union
-	{
+	union {
 		__u8 u6_addr8[16];
 		__be16 u6_addr16[8];
 		__be32 u6_addr32[4];
@@ -584,13 +570,11 @@ SHIM_REF(sockaddr_in6, sin6_addr);
 
 struct sock_common
 {
-	union
-	{
+	union {
 		__addrpair skc_addrpair;
 	};
 
-	union
-	{
+	union {
 		__portpair skc_portpair;
 	};
 
@@ -603,7 +587,6 @@ struct sock_common
 
 SHIM(sock_common, skc_family);
 SHIM(sock_common, skc_addrpair);
-// SHIM(sock_common, struct_skc_addrpair.skc_daddr);
 SHIM(sock_common, skc_portpair);
 SHIM_REF(sock_common, skc_v6_daddr);
 SHIM_REF(sock_common, skc_v6_rcv_saddr);
@@ -633,7 +616,6 @@ struct sk_buff_head
 	struct sk_buff_list list;
 
 	__u32 qlen;
-	// spinlock_t lock; // unused for the moment
 } __attribute__((preserve_access_index));
 
 SHIM(sk_buff_head, next);
@@ -708,22 +690,19 @@ SHIM(bio_vec, bv_offset);
 
 struct iov_iter
 {
-	union
-	{
+	union {
 		u8 iter_type;
 		unsigned int type;
 	};
 	size_t count;
-	union
-	{
+	union {
 		struct iovec *iov;
 		struct iovec *__iov;
 		void *ubuf;
 		struct bio_vec *bvec;
 	};
 
-	union
-	{
+	union {
 		unsigned long nr_segs;
 	};
 } __attribute__((preserve_access_index));

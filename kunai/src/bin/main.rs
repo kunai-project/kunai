@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 use anyhow::anyhow;
 use aya::maps::MapData;
 use bytes::BytesMut;
@@ -52,13 +54,13 @@ use aya::{
     util::online_cpus,
     Bpf,
 };
-#[allow(unused_imports)]
+
 use aya::{BpfLoader, VerifierLogLevel};
 
 use log::{debug, error, info, warn};
 
 use tokio::sync::{mpsc, Barrier, Mutex};
-use tokio::{signal, task, time};
+use tokio::{task, time};
 
 use kunai::cache::*;
 
@@ -2008,7 +2010,6 @@ impl Command {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => Ok(()),
             res = main => res
-
         }
     }
 }
