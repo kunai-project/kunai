@@ -1729,8 +1729,8 @@ const ABOUT_KUNAI: &str = r#"
  \   |   /
   \  |  /  This software is licensed under the GNU General Public License version 3.0 (GPL-3.0).
    \   /   You are free to use, modify, and distribute this software under the terms of
-    |-|     the GPL-3.0 license. For more details, please refer to the full text of the
-    |\|     license at: https://www.gnu.org/licenses/gpl-3.0.html
+    |-|    the GPL-3.0 license. For more details, please refer to the full text of the
+    |\|    license at: https://www.gnu.org/licenses/gpl-3.0.html
     |\|
     |\|
     |-|
@@ -1741,26 +1741,75 @@ const ABOUT_KUNAI: &str = r#"
 #[command(author, version, about = ABOUT_KUNAI, long_about = None)]
 struct Cli {
     /// Enable debugging
-    #[arg(long)]
+    #[arg(short, long)]
     debug: bool,
 
-    /// Number of worker threads used by kunai. By default kunai runs
-    /// in a single threaded mode. If you want to use all available
-    /// threads, set this option to 0.
+    /// Silents out debug, info, error logging.
     #[arg(short, long)]
-    jobs: Option<usize>,
+    silent: bool,
 
+    /// Set verbosity level, repeat option for more verbosity.
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Specify a kunai command (if any)
+    #[clap(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Parser)]
+struct ReplayOpt {
     /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// Prints a default configuration to stdout.
-    #[arg(long)]
-    dump_config: bool,
+    /// Detection/filtering rule file. Supersedes configuration file.
+    #[arg(short, long, value_name = "FILE")]
+    rule_file: Option<Vec<String>>,
 
-    /// Show details about configurable events on stdout.
-    #[arg(long)]
-    show_events: bool,
+    /// File containing IoCs (json line).
+    #[arg(short, long, value_name = "FILE")]
+    ioc_file: Option<Vec<String>>,
+
+    log_files: Vec<String>,
+}
+
+impl TryFrom<ReplayOpt> for Config {
+    type Error = anyhow::Error;
+    fn try_from(opt: ReplayOpt) -> Result<Self, Self::Error> {
+        let mut conf = Self::default();
+
+        if let Some(conf_file) = opt.config {
+            conf = Self::from_toml(std::fs::read_to_string(conf_file)?)?;
+        }
+
+        // command line supersedes configuration
+
+        // supersedes configuration
+        if let Some(rules) = opt.rule_file {
+            conf.rules = rules;
+        }
+
+        // supersedes configuration
+        if let Some(iocs) = opt.ioc_file {
+            conf.iocs = iocs;
+        }
+
+        Ok(conf)
+    }
+}
+
+#[derive(Debug, Parser)]
+struct RunOpt {
+    /// Number of worker threads used by kunai. By default kunai runs
+    /// in a single threaded mode. If you want to use all available
+    /// threads, set this option to 0.
+    #[arg(short, long)]
+    workers: Option<usize>,
+
+    /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
 
     /// Exclude events by name (comma separated).
     #[arg(long)]
@@ -1786,29 +1835,78 @@ struct Cli {
     /// File containing IoCs (json line).
     #[arg(short, long, value_name = "FILE")]
     ioc_file: Option<Vec<String>>,
-
-    /// Set verbosity level, repeat option for more verbosity.
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
-
-    /// Silents out debug, info, error logging.
-    #[arg(short, long)]
-    silent: bool,
-
-    /// Specify a kunai command (if any)
-    #[clap(subcommand)]
-    command: Option<Command>,
 }
 
-#[derive(Debug, Parser)]
-struct ReplayOpt {
-    log_files: Vec<String>,
+impl TryFrom<RunOpt> for Config {
+    type Error = anyhow::Error;
+    fn try_from(opt: RunOpt) -> Result<Self, Self::Error> {
+        let mut conf = Self::default();
+
+        if let Some(conf_file) = opt.config {
+            conf = Self::from_toml(std::fs::read_to_string(conf_file)?)?;
+        }
+
+        // command line supersedes configuration
+
+        // supersedes configuration
+        if let Some(rules) = opt.rule_file {
+            conf.rules = rules;
+        }
+
+        // supersedes configuration
+        if let Some(iocs) = opt.ioc_file {
+            conf.iocs = iocs;
+        }
+
+        // we want to increase max_buffered_events
+        if opt.max_buffered_events.is_some() {
+            conf.max_buffered_events = opt.max_buffered_events.unwrap();
+        }
+
+        // we configure min len for send_data events
+        conf.send_data_min_len = opt.send_data_min_len;
+
+        // we exclude events
+        if let Some(exclude) = opt.exclude {
+            let exclude: Vec<&str> = exclude.split(',').collect();
+            if exclude.iter().any(|&s| s == "all") {
+                conf.disable_all()
+            } else {
+                for exc in exclude {
+                    if let Some(e) = conf.events.iter_mut().find(|e| e.name() == exc) {
+                        e.disable()
+                    }
+                }
+            }
+        }
+
+        // we include events
+        if let Some(include) = opt.include {
+            let include: Vec<&str> = include.split(',').collect();
+            if include.iter().any(|&s| s == "all") {
+                conf.enable_all()
+            } else {
+                for inc in include {
+                    if let Some(e) = conf.events.iter_mut().find(|e| e.name() == inc) {
+                        e.enable()
+                    }
+                }
+            }
+        }
+        Ok(conf)
+    }
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Run kunai with custom options
+    Run(RunOpt),
     /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
     Replay(ReplayOpt),
+    /// Dump a default configuration
+    Config,
+    /// Show information about Kunai events
+    Events,
 }
 
 const BPF_ELF: &[u8] = {
@@ -1893,9 +1991,12 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
 }
 
 impl Command {
-    fn replay(conf: Config, o: ReplayOpt) -> anyhow::Result<()> {
+    fn replay(o: ReplayOpt) -> anyhow::Result<()> {
+        let log_files = o.log_files.clone();
+        let conf: Config = o.try_into()?;
+
         let mut p = EventConsumer::with_config(conf.stdout_output())?;
-        for f in o.log_files {
+        for f in log_files {
             let f = {
                 if f == "-" {
                     "/dev/stdin".into()
@@ -1958,59 +2059,92 @@ impl Command {
         Ok(())
     }
 
-    async fn run(conf: Config, vll: VerifierLogLevel) -> anyhow::Result<()> {
+    fn run(opt_ro: Option<RunOpt>, vll: VerifierLogLevel) -> anyhow::Result<()> {
         // checking that we are running as root
         if get_current_uid() != 0 {
             return Err(anyhow::Error::msg(
                 "You need to be root to run this program, this is necessary to load eBPF programs",
             ));
         }
+
         let current_kernel = Utsname::kernel_version()?;
-
-        // we start event reader and event processor before loading the programs
-        // if we load the programs first we might have some event lost errors
-        let (sender, receiver) = mpsc::channel(512);
-
-        // we start consumer
-        EventConsumer::with_config(conf.clone())?.consume(receiver)?;
-
-        // we spawn a task to reload producer when needed
-        let main = async move {
-            loop {
-                info!("Starting event producer");
-                // we start producer
-                let mut bpf = prepare_bpf(current_kernel, &conf, vll)?;
-                let arc_prod = EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?
-                    .produce()
-                    .await;
-
-                // we load and attach bpf programs
-                load_and_attach_bpf(current_kernel, &mut bpf)?;
-
-                loop {
-                    // block make sure lock is dropped before sleeping
-                    if arc_prod.lock().await.reload {
-                        info!("Reloading event producer");
-                        arc_prod.lock().await.stop();
-                        // we wait for event producer to be ready
-                        EventProducer::arc_join(&arc_prod, Duration::from_millis(500)).await?;
-
-                        // we do not need to unload programs as this will be done at drop
-                        break;
-                    }
-                    time::sleep(Duration::from_millis(500)).await;
-                }
-            }
-
-            #[allow(unreachable_code)]
-            Ok::<_, anyhow::Error>(())
+        let conf: Config = match opt_ro {
+            Some(ro) => ro.try_into()?,
+            None => Config::default(),
         };
 
-        info!("Waiting for Ctrl-C...");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => Ok(()),
-            res = main => res
-        }
+        // create the tokio runtime builder
+        let mut builder = {
+            match conf.workers {
+                Some(workers) => {
+                    let mut b = tokio::runtime::Builder::new_multi_thread();
+                    // if number of workers is positive we set desired
+                    // number of workers. If not tokio default will be
+                    // taken (i.e. number of available threads).
+                    if workers > 0 {
+                        b.worker_threads(workers);
+                    }
+                    b
+                }
+                None => tokio::runtime::Builder::new_current_thread(),
+            }
+        };
+
+        // creating tokio runtime
+        let runtime = builder
+            // the thread must drop CLONE_FS in order to be able to navigate in mnt namespaces
+            .on_thread_start(|| unshare(libc::CLONE_FS).unwrap())
+            .enable_all()
+            .build()
+            .unwrap();
+
+        runtime.block_on(async move {
+            // we start event reader and event processor before loading the programs
+            // if we load the programs first we might have some event lost errors
+            let (sender, receiver) = mpsc::channel(512);
+
+            // we start consumer
+            EventConsumer::with_config(conf.clone())?.consume(receiver)?;
+
+            // we spawn a task to reload producer when needed
+            let main = async move {
+                loop {
+                    info!("Starting event producer");
+                    // we start producer
+                    let mut bpf = prepare_bpf(current_kernel, &conf, vll)?;
+                    let arc_prod =
+                        EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?
+                            .produce()
+                            .await;
+
+                    // we load and attach bpf programs
+                    load_and_attach_bpf(current_kernel, &mut bpf)?;
+
+                    loop {
+                        // block make sure lock is dropped before sleeping
+                        if arc_prod.lock().await.reload {
+                            info!("Reloading event producer");
+                            arc_prod.lock().await.stop();
+                            // we wait for event producer to be ready
+                            EventProducer::arc_join(&arc_prod, Duration::from_millis(500)).await?;
+
+                            // we do not need to unload programs as this will be done at drop
+                            break;
+                        }
+                        time::sleep(Duration::from_millis(500)).await;
+                    }
+                }
+
+                #[allow(unreachable_code)]
+                Ok::<_, anyhow::Error>(())
+            };
+
+            info!("Waiting for Ctrl-C...");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => Ok(()),
+                res = main => res
+            }
+        })
     }
 }
 
@@ -2033,7 +2167,6 @@ fn main() -> Result<(), anyhow::Error> {
     };
 
     let cli: Cli = Cli::from_arg_matches(&c.get_matches())?;
-    let mut conf = Config::default();
 
     // Handling any CLI argument not needing to run eBPF
     // setting log level according to the verbosity level
@@ -2069,105 +2202,24 @@ fn main() -> Result<(), anyhow::Error> {
     // building the logger
     Builder::new().filter_level(log_level).init();
 
-    // dumping configuration
-    if cli.dump_config {
-        let mut conf = Config::default();
-        conf.generate_host_uuid();
-        println!("{}", conf.to_toml()?);
-        return Ok(());
-    }
-
-    // show events
-    if cli.show_events {
-        for v in bpf_events::Type::variants() {
-            if v.is_configurable() {
-                let pad = 25 - v.as_str().len();
-                println!("{}: {:>pad$}", v.as_str(), v as u32)
-            }
-        }
-        return Ok(());
-    }
-
-    if let Some(conf_file) = cli.config {
-        conf = Config::from_toml(std::fs::read_to_string(conf_file)?)?;
-    }
-
-    // command line supersedes configuration
-
-    // supersedes configuration
-    if let Some(rules) = cli.rule_file {
-        conf.rules = rules;
-    }
-
-    // supersedes configuration
-    if let Some(iocs) = cli.ioc_file {
-        conf.iocs = iocs;
-    }
-
-    // we want to increase max_buffered_events
-    if cli.max_buffered_events.is_some() {
-        conf.max_buffered_events = cli.max_buffered_events.unwrap();
-    }
-
-    // we configure min len for send_data events
-    conf.send_data_min_len = cli.send_data_min_len;
-
-    // we exclude events
-    if let Some(exclude) = cli.exclude {
-        let exclude: Vec<&str> = exclude.split(',').collect();
-        if exclude.iter().any(|&s| s == "all") {
-            conf.disable_all()
-        } else {
-            for exc in exclude {
-                if let Some(e) = conf.events.iter_mut().find(|e| e.name() == exc) {
-                    e.disable()
-                }
-            }
-        }
-    }
-
-    // we include events
-    if let Some(include) = cli.include {
-        let include: Vec<&str> = include.split(',').collect();
-        if include.iter().any(|&s| s == "all") {
-            conf.enable_all()
-        } else {
-            for inc in include {
-                if let Some(e) = conf.events.iter_mut().find(|e| e.name() == inc) {
-                    e.enable()
-                }
-            }
-        }
-    }
-
-    // create the tokio runtime builder
-    let mut builder = {
-        match cli.jobs {
-            Some(workers) => {
-                let mut b = tokio::runtime::Builder::new_multi_thread();
-                // if number of workers is positive we set desired
-                // number of workers. If not tokio default will be
-                // taken (i.e. number of available threads).
-                if workers > 0 {
-                    b.worker_threads(workers);
-                }
-                b
-            }
-            None => tokio::runtime::Builder::new_current_thread(),
-        }
-    };
-
-    // creating tokio runtime
-    let runtime = builder
-        // the thread must drop CLONE_FS in order to be able to navigate in mnt namespaces
-        .on_thread_start(|| unshare(libc::CLONE_FS).unwrap())
-        .enable_all()
-        .build()
-        .unwrap();
-
-    // We finished preparing config
     match cli.command {
-        Some(Command::Replay(o)) => Command::replay(conf, o),
-        _ => runtime.block_on(Command::run(conf, verifier_level)),
+        Some(Command::Events) => {
+            for v in bpf_events::Type::variants() {
+                if v.is_configurable() {
+                    let pad = 25 - v.as_str().len();
+                    println!("{}: {:>pad$}", v.as_str(), v as u32)
+                }
+            }
+            Ok(())
+        }
+        Some(Command::Config) => {
+            let mut conf = Config::default();
+            conf.generate_host_uuid();
+            println!("{}", conf.to_toml()?);
+            Ok(())
+        }
+        Some(Command::Replay(o)) => Command::replay(o),
+        Some(Command::Run(o)) => Command::run(Some(o), verifier_level),
+        None => Command::run(None, verifier_level),
     }
 }
