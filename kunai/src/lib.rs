@@ -1,3 +1,4 @@
+#![deny(warnings)]
 use compat::Programs;
 use kunai_common::{kernel, version::KernelVersion};
 
