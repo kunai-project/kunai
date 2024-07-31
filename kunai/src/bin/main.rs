@@ -30,6 +30,8 @@ use kunai_common::version::KernelVersion;
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::error::SendError;
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -42,7 +44,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use std::process;
 use std::time::Duration;
@@ -59,7 +61,7 @@ use aya::{BpfLoader, VerifierLogLevel};
 
 use log::{debug, error, info, warn};
 
-use tokio::sync::{mpsc, Barrier, Mutex};
+use tokio::sync::{mpsc, Barrier, Mutex, RwLock};
 use tokio::{task, time};
 
 use kunai::cache::*;
@@ -180,6 +182,7 @@ struct EventConsumer {
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
     output: Output,
+    task: Option<JoinHandle<Result<(), anyhow::Error>>>,
 }
 
 impl EventConsumer {
@@ -240,6 +243,7 @@ impl EventConsumer {
             tasks: HashMap::new(),
             resolved: HashMap::new(),
             output: Self::prepare_output(&config)?,
+            task: None,
         };
 
         // loading rules in the engine
@@ -276,7 +280,7 @@ impl EventConsumer {
     }
 
     /// Listen for events on the receiver
-    pub fn consume(
+    pub async fn consume(
         self,
         mut receiver: mpsc::Receiver<EncodedEvent>,
     ) -> anyhow::Result<Arc<RwLock<EventConsumer>>> {
@@ -285,15 +289,15 @@ impl EventConsumer {
         let shared = Arc::clone(&ep);
 
         // we spawn thread only if there is a receiver
-        tokio::spawn(async move {
+        ep.write().await.task = Some(tokio::spawn(async move {
             while let Some(mut enc) = receiver.recv().await {
                 // lock error is a symptom of implementation mistake so we panic
-                let mut ep = shared.write().unwrap();
+                let mut ep = shared.write().await;
                 ep.handle_event(&mut enc);
             }
 
             Ok::<(), anyhow::Error>(())
-        });
+        }));
 
         Ok(ep)
     }
@@ -1696,12 +1700,10 @@ impl EventProducer {
     }
 
     async fn join(&mut self) -> anyhow::Result<()> {
-        while let Some(t) = self.tasks.pop() {
+        for t in self.tasks.iter_mut() {
             if t.is_finished() {
                 t.await??;
-                continue;
             }
-            self.tasks.push(t)
         }
         Ok(())
     }
@@ -1847,6 +1849,7 @@ impl TryFrom<RunOpt> for Config {
         }
 
         // command line supersedes configuration
+        conf.workers = opt.workers;
 
         // supersedes configuration
         if let Some(rules) = opt.rule_file {
@@ -2104,7 +2107,9 @@ impl Command {
             let (sender, receiver) = mpsc::channel(512);
 
             // we start consumer
-            EventConsumer::with_config(conf.clone())?.consume(receiver)?;
+            let cons = EventConsumer::with_config(conf.clone())?
+                .consume(receiver)
+                .await?;
 
             // we spawn a task to reload producer when needed
             let main = async move {
@@ -2131,6 +2136,28 @@ impl Command {
                             // we do not need to unload programs as this will be done at drop
                             break;
                         }
+
+                        // we check if task spawned by consumer failed
+                        // if yes we make it panic
+                        let mut cons = cons.write().await;
+                        if let Ok(res) =
+                            timeout(Duration::from_nanos(1), cons.task.as_mut().unwrap()).await
+                        {
+                            res.unwrap().unwrap();
+                        }
+                        // don't keep lock on consumer
+                        drop(cons);
+
+                        // we check if a task spawned by the producer failed
+                        // if yes we make it panic
+                        for t in arc_prod.lock().await.tasks.iter_mut() {
+                            // we go really quick on awaiting as
+                            // we just wanna know if the task failed
+                            if let Ok(res) = timeout(Duration::from_nanos(1), t).await {
+                                res.unwrap().unwrap();
+                            }
+                        }
+
                         time::sleep(Duration::from_millis(500)).await;
                     }
                 }
