@@ -38,7 +38,7 @@ aya-obj = { version = "0.1.0" }
 anyhow = "1.0.68"
 env_logger = "0.10"
 log = "0.4"
-tokio = { version = "1.24", features = [
+tokio = { version = "1.39", features = [
     "macros",
     "rt",
     "rt-multi-thread",
