@@ -133,7 +133,7 @@ fn build(opts: &BuildOptions) -> Result<(), anyhow::Error> {
 }
 
 /// Build the project
-pub fn check(opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
+pub fn clippy(opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     cargo("clippy", opts)
 }
 

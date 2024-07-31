@@ -211,7 +211,7 @@ fn fix_path_in_json(root: &str, val: &mut JsonValue) {
     }
 }
 
-pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
+pub fn clippy(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     let output = cargo("clippy", dir, opts)
         // we must use build_rustflags so that we have same options
         // for build and check commands. Thus making build/check faster
