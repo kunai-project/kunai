@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![deny(unused_imports)]
 #![cfg_attr(target_arch = "bpf", no_std)]
 
 use macros::bpf_target_code;

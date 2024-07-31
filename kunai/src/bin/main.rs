@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![deny(unused_imports)]
 
 use anyhow::anyhow;
 use aya::maps::MapData;

@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![deny(unused_imports)]
 #![no_std]
 #![no_main]
 

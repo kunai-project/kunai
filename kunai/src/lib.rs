@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![deny(unused_imports)]
 use compat::Programs;
 use kunai_common::{kernel, version::KernelVersion};
 
