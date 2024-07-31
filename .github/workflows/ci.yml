@@ -32,6 +32,9 @@ jobs:
           target
         key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
+    - name: Run clippy on full project
+      run: cargo xtask clippy -- --workspace -- -D warnings
+
     - name: Install bpf-linker
       run: cargo install bpf-linker
       

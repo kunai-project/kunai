@@ -3,7 +3,7 @@
   "rust-analyzer.check.overrideCommand": [
     "cargo",
     "xtask",
-    "check",
+    "clippy",
     "--",
     "--workspace",
     "--quiet",
@@ -20,12 +20,11 @@
   "rust-analyzer.cargo.buildScripts.overrideCommand": [
     "cargo",
     "xtask",
-    "check",
+    "clippy",
     "--",
     "--workspace",
     "--quiet",
     "--message-format=json",
-    "--all-targets",
   ],
   // if set to workspace it tries to run cargo xtask inside
   // kunai-ebpf which is problematic as xtask doesnt exists in there 

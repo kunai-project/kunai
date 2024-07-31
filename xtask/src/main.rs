@@ -34,7 +34,7 @@ enum Command {
     /// Compile and run the project
     Run(user::RunOptions),
     /// Cargo check the full project (eBPF and userland)
-    Check(user::BuildOptions),
+    Clippy(user::BuildOptions),
     /// Run cargo release on the full project (includes eBPF code)
     Release(ReleaseOptions),
 }
@@ -49,7 +49,7 @@ fn main() -> Result<(), anyhow::Error> {
         BuildEbpf(mut opts) => ebpf::build(EBPF_DIR, &mut opts)?,
         Build(opts) => user::build_all(EBPF_DIR, &opts)?,
         Run(opts) => user::run(EBPF_DIR, &opts)?,
-        Check(mut opts) => {
+        Clippy(mut opts) => {
             // preparing for eBPF check
             // build arguments are not propagated by into() method so we need
             // to set them explicitely
@@ -75,9 +75,9 @@ fn main() -> Result<(), anyhow::Error> {
             }
 
             // checking userland code
-            user::check(&mut opts)?;
+            user::clippy(&mut opts)?;
             // checking ebpf code
-            ebpf::check(EBPF_DIR, &mut bpf_build_opt.build_args(bpf_check_args))?;
+            ebpf::clippy(EBPF_DIR, &mut bpf_build_opt.build_args(bpf_check_args))?;
         }
 
         Release(o) => {

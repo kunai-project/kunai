@@ -161,11 +161,12 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
         .for_each(|arg| args.push(arg.clone()));
 
     // Command::new creates a child process which inherits all env variables. This means env
-    // vars set by the cargo xtask command are also inherited. RUSTUP_TOOLCHAIN is removed
+    // vars set by the cargo xtask command are also inherited. RUSTUP_TOOLCHAIN and CARGO are removed
     // so the rust-toolchain.toml file in the -ebpf folder is honored.
     let mut cmd = Command::new("cargo");
     cmd.current_dir(dir)
         .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("CARGO")
         .args(&args);
     cmd
 }
@@ -210,9 +211,8 @@ fn fix_path_in_json(root: &str, val: &mut JsonValue) {
     }
 }
 
-pub fn check(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
-    // clippy does not seem to work, is that really important ?
-    let output = cargo("check", dir, opts)
+pub fn clippy(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
+    let output = cargo("clippy", dir, opts)
         // we must use build_rustflags so that we have same options
         // for build and check commands. Thus making build/check faster
         .env("RUSTFLAGS", opts.build_rustflags())
