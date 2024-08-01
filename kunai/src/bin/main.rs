@@ -1849,7 +1849,9 @@ impl TryFrom<RunOpt> for Config {
         }
 
         // command line supersedes configuration
-        conf.workers = opt.workers;
+        if let Some(workers) = opt.workers {
+            conf.workers = Some(workers);
+        }
 
         // supersedes configuration
         if let Some(rules) = opt.rule_file {
