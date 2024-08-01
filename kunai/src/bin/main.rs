@@ -2160,6 +2160,8 @@ impl Command {
                             }
                         }
 
+                        let a = 0;
+
                         time::sleep(Duration::from_millis(500)).await;
                     }
                 }
