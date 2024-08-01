@@ -41,6 +41,9 @@ pub fn syscalls_sys_enter_mmap(ctx: TracePointContext) -> u32 {
 }
 
 unsafe fn try_sys_enter_mmap(ctx: &TracePointContext) -> ProbeResult<()> {
+    // early return if event is disabled
+    if_disabled_return!(Type::MmapExec, ());
+
     let mmap_args = SysEnterArgs::<MmapArgs>::from_context(ctx)?.args;
     let fd = mmap_args.fd as i32;
 
