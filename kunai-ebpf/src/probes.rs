@@ -25,6 +25,7 @@ mod execve;
 mod exit;
 mod fs;
 mod init_module;
+mod kill;
 mod mmap;
 mod mprotect;
 mod prctl;

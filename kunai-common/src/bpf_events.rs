@@ -71,6 +71,8 @@ pub enum Type {
     Clone,
     #[str("prctl")]
     Prctl,
+    #[str("kill")]
+    Kill,
 
     // stuff loaded in kernel
     #[str("init_module")]
@@ -171,15 +173,23 @@ pub struct TaskInfo {
 }
 
 impl TaskInfo {
+    #[inline(always)]
     pub fn comm_str(&self) -> &str {
         unsafe { core::str::from_utf8_unchecked(&self.comm[..]) }
     }
 
+    #[inline(always)]
     pub fn is_kernel_thread(&self) -> bool {
         test_flag!(self.flags, 0x00200000)
     }
 
+    #[inline(always)]
+    pub fn set_uuid_random(&mut self, rand: u32) {
+        self.tg_uuid.random = rand;
+    }
+
     not_bpf_target_code! {
+        #[inline(always)]
         pub fn comm_string(&self) -> std::string::String {
             crate::utils::cstr_to_string(self.comm)
         }
@@ -207,8 +217,8 @@ pub struct EventInfo {
 impl EventInfo {
     pub fn set_uuid_random(&mut self, rand: u32) {
         // this is used for final Uuid calculation
-        self.process.tg_uuid.random = rand;
-        self.parent.tg_uuid.random = rand;
+        self.process.set_uuid_random(rand);
+        self.parent.set_uuid_random(rand);
     }
 
     pub fn switch_type(&mut self, new: Type) {

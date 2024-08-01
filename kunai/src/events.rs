@@ -74,7 +74,7 @@ impl From<&StdEventInfo> for EventSection {
     }
 }
 
-#[derive(FieldGetter, Serialize, Deserialize)]
+#[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct NamespaceInfo {
     mnt: u32,
 }
@@ -85,7 +85,7 @@ impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
     }
 }
 
-#[derive(FieldGetter, Serialize, Deserialize)]
+#[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct TaskSection {
     name: String,
     pid: i32,
@@ -458,6 +458,22 @@ def_user_data!(
 );
 
 impl_std_iocs!(PrctlData);
+
+#[derive(Debug, FieldGetter, Serialize, Deserialize)]
+pub struct TargetTask {
+    pub command_line: String,
+    pub exe: File,
+    pub task: TaskSection,
+}
+
+def_user_data!(
+    pub struct KillData {
+        pub signal: String,
+        pub target: TargetTask,
+    }
+);
+
+impl_std_iocs!(KillData);
 
 def_user_data!(
     pub struct MmapExecData {

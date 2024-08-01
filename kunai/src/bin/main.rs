@@ -12,16 +12,17 @@ use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MmapExecData,
-    MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
-    UserEvent,
+    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KillData, KunaiEvent,
+    MmapExecData, MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData,
+    SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
+    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, Type,
+    MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::{BpfConfig, Filter};
 use kunai_common::inspect_err;
@@ -626,6 +627,38 @@ impl EventConsumer {
     }
 
     #[inline]
+    fn kill_event(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::KillEvent,
+    ) -> UserEvent<KillData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        let signal = Signal::from_uint_to_string(event.data.signal);
+
+        // we need to set uuid part of target task
+        let mut target = event.data.target;
+        target.set_uuid_random(self.random);
+
+        // get the command line
+        let tk = TaskKey::from(target.tg_uuid);
+
+        let data = KillData {
+            ancestors: self.get_ancestors_string(&info),
+            exe: exe.into(),
+            command_line,
+            signal,
+            target: TargetTask {
+                command_line: self.get_command_line(tk),
+                exe: self.get_exe(tk).into(),
+                task: target.into(),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline]
     fn mmap_exec_event(
         &mut self,
         info: StdEventInfo,
@@ -1206,6 +1239,14 @@ impl EventConsumer {
             Type::Prctl => match event!(enc_event, bpf_events::PrctlEvent) {
                 Ok(e) => {
                     let mut e = self.prctl_event(std_info, e);
+                    self.scan_and_print(&mut e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            Type::Kill => match event!(enc_event, bpf_events::KillEvent) {
+                Ok(e) => {
+                    let mut e = self.kill_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -2033,6 +2074,7 @@ impl Command {
                         Type::Execve | Type::ExecveScript => scan_event!(p, ExecveData),
                         Type::Clone => scan_event!(p, CloneData),
                         Type::Prctl => scan_event!(p, PrctlData),
+                        Type::Kill => unimplemented!(),
                         Type::MmapExec => scan_event!(p, MmapExecData),
                         Type::MprotectExec => scan_event!(p, MprotectData),
                         Type::Connect => scan_event!(p, ConnectData),
