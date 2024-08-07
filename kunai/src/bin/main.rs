@@ -25,7 +25,7 @@ use kunai_common::bpf_events::{
     MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::{BpfConfig, Filter};
-use kunai_common::inspect_err;
+use kunai_common::{inspect_err, kernel};
 
 use kunai_common::version::KernelVersion;
 use log::LevelFilter;
@@ -2135,6 +2135,21 @@ impl Command {
             Some(ro) => ro.try_into()?,
             None => Config::default(),
         };
+
+        // checks on harden mode
+        if conf.harden {
+            if current_kernel < kernel!(5, 7, 0) {
+                return Err(anyhow!(
+                    "harden mode is not supported for kernels below 5.7.0"
+                ));
+            }
+
+            if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
+                return Err(anyhow!(
+                    "trying to run in harden mode but BPF LSM is not enabled"
+                ));
+            }
+        }
 
         // create the tokio runtime builder
         let mut builder = {

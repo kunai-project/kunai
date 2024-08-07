@@ -1,7 +1,12 @@
 use anyhow::anyhow;
 use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
 use env_logger::Builder;
-use kunai::{compat::Programs, config::Config, util::uname::Utsname};
+use kunai::{
+    compat::Programs,
+    config::Config,
+    util::{is_bpf_lsm_enabled, uname::Utsname},
+};
+use kunai_common::kernel;
 use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::{error, info, warn};
 use std::{ffi::CString, panic};
@@ -44,6 +49,8 @@ fn integration() -> anyhow::Result<()> {
     mount("none", "/sys", "sysfs")?;
     info!("mounting tracefs");
     mount("none", "/sys/kernel/tracing", "tracefs")?;
+    info!("mounting securityfs");
+    mount("none", "/sys/kernel/security", "securityfs")?;
 
     let bpf_elf = {
         #[cfg(debug_assertions)]
@@ -62,6 +69,18 @@ fn integration() -> anyhow::Result<()> {
     let btf = Btf::from_sys_fs()?;
     let mut programs = Programs::with_bpf(&mut bpf).with_elf_info(bpf_elf)?;
     let conf = Config::default_hardened();
+
+    if conf.harden {
+        if current_kernel < kernel!(5, 7, 0) {
+            warn!("hardened mode does not work below kernel 5.7.0")
+        }
+
+        if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
+            return Err(anyhow!(
+                "trying to run in hardened mode but BPF LSM is not enabled"
+            ));
+        }
+    }
 
     kunai::configure_probes(&conf, &mut programs, current_kernel);
 
