@@ -5,9 +5,6 @@ cargo xtask build --release -- --bin tests
 
 tmp_dir=$(mktemp -d)
 kernel="${!#}"
-debian_url="https://ftp.us.debian.org/debian/pool/main/l/linux/"
-# there is no https for ubuntu.com !!!!
-ubuntu_url="http://security.ubuntu.com/ubuntu/pool/main/l/linux/"
 initramfs=${tmp_dir}/initramfs.img
 
 
@@ -15,36 +12,19 @@ initramfs=${tmp_dir}/initramfs.img
 cp target/x86_64-unknown-linux-musl/release/tests $tmp_dir/init
 echo "init" | cpio -D $tmp_dir -o -H newc > $initramfs
 
-distro="debian"
-base_url="$debian_url"
-
-image=$(curl -k $base_url | grep -oP "linux-image-.*?-cloud-amd64-unsigned.*?.deb" | grep -F "linux-image-${kernel}" | tail -n 1 || true)
-
-if [[ ! $image ]]
-then
-    distro="ubuntu"
-    base_url="$ubuntu_url"
-    image=$(curl $base_url | grep -oP 'linux-image-unsigned-.*?-generic.*?amd64.deb' | grep -F "linux-image-unsigned-${kernel}" | tail -n 1  || true)
-
-    # we make download attempt in alpine repositories
-    if [[ ! $image ]]
+distro="ubuntu"
+while read version
+do
+    base_url=https://kernel.ubuntu.com/mainline/${version}/amd64/
+    image=$(curl -L $base_url | grep -oP 'linux-image-unsigned-.*?-generic.*?amd64.deb' | grep -F "linux-image-unsigned-${kernel}" | tail -n 1  || true)
+    if [[ $image ]]
     then
-        distro=alpine
-        
-        for i in {20..1}
-        do
-            base_url=https://dl-cdn.alpinelinux.org/alpine/v3.$i/main/x86_64/
-            image=$(curl -s $base_url | grep -oP "linux-lts-\d.*?\.apk" | sort -u)
-            if [[ $image =~ "$kernel" ]]
-            then
-                # we have found the most recent and good kernel image
-                break
-            fi
-        done
+        break
     fi
-fi
+done < <(curl https://kernel.ubuntu.com/mainline/ | grep -oP 'href="v\d+\.\d+(\.\d+)?/"' | cut -d '"' -f 2 | tr -d '/' | sort -rV | grep "v${kernel}")
+        
 
-# no kernel found even in Alpine repo
+# no kernel found
 if [[ ! $image ]]
 then
     echo "no image found for kernel ${kernel}"
@@ -83,7 +63,7 @@ then
     QEMU_ARGS+=(-accel kvm)
 fi
 
-qemu-system-x86_64 -kernel ${cache_dir}/vmlinuz* -m 512m -initrd $initramfs -append console=ttyS0 -nographic ${QEMU_ARGS[@]} | tee ${kernel_logs}
+qemu-system-x86_64 -kernel ${cache_dir}/vmlinuz* -m 512m -initrd $initramfs -append "lsm=bpf console=ttyS0" -nographic ${QEMU_ARGS[@]} | tee ${kernel_logs}
 
 tail -n 30 $kernel_logs | grep 'SUCCESS' > /dev/null
 
