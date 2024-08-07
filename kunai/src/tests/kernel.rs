@@ -1,7 +1,7 @@
 use anyhow::anyhow;
-use aya::{include_bytes_aligned, BpfLoader, VerifierLogLevel};
+use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
 use env_logger::Builder;
-use kunai::{compat::Programs, util::uname::Utsname};
+use kunai::{compat::Programs, config::Config, util::uname::Utsname};
 use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::{error, info, warn};
 use std::{ffi::CString, panic};
@@ -59,19 +59,14 @@ fn integration() -> anyhow::Result<()> {
         .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
         .load(bpf_elf)?;
 
+    let btf = Btf::from_sys_fs()?;
     let mut programs = Programs::with_bpf(&mut bpf).with_elf_info(bpf_elf)?;
+    let conf = Config::default_hardened();
 
-    kunai::configure_probes(&mut programs, current_kernel);
+    kunai::configure_probes(&conf, &mut programs, current_kernel);
 
     // generic program loader
     for (_, mut p) in programs.into_vec_sorted_by_prio() {
-        info!(
-            "loading: {} {:?} with priority={}",
-            p.name,
-            p.prog_type(),
-            p.prio
-        );
-
         if !p.enable {
             warn!("{} probe has been disabled", p.name);
             continue;
@@ -88,7 +83,14 @@ fn integration() -> anyhow::Result<()> {
             continue;
         }
 
-        p.load_and_attach()?;
+        info!(
+            "loading: {} {:?} with priority={}",
+            p.name,
+            p.prog_type(),
+            p.prio
+        );
+
+        p.load_and_attach(&btf)?;
     }
 
     Ok(())

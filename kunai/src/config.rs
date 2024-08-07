@@ -56,6 +56,7 @@ pub struct Config {
     pub send_data_min_len: Option<u64>,
     pub rules: Vec<String>,
     pub iocs: Vec<String>,
+    pub harden: bool,
     pub events: Vec<Event>,
 }
 
@@ -83,6 +84,7 @@ impl Default for Config {
             send_data_min_len: None,
             rules: vec![],
             iocs: vec![],
+            harden: false,
             events,
         }
     }
@@ -104,6 +106,13 @@ fn host_uuid() -> Option<uuid::Uuid> {
 }
 
 impl Config {
+    pub fn default_hardened() -> Self {
+        Self {
+            harden: true,
+            ..Default::default()
+        }
+    }
+
     pub fn host_uuid(&self) -> Option<uuid::Uuid> {
         // host_uuid in config supersedes system host_uuid
         self.host_uuid.or(host_uuid())

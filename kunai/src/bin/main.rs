@@ -58,7 +58,7 @@ use aya::{
     Bpf,
 };
 
-use aya::{BpfLoader, VerifierLogLevel};
+use aya::{BpfLoader, Btf, VerifierLogLevel};
 
 use log::{debug, error, info, warn};
 
@@ -1844,15 +1844,21 @@ impl TryFrom<ReplayOpt> for Config {
 
 #[derive(Debug, Parser)]
 struct RunOpt {
+    /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
     /// Number of worker threads used by kunai. By default kunai runs
     /// in a single threaded mode. If you want to use all available
     /// threads, set this option to 0.
     #[arg(short, long)]
     workers: Option<usize>,
 
-    /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
+    /// Harden Kunai at runtime by preventing process tampering attempts.
+    /// If Kunai is run as a service, the only way to stop it may be
+    /// to disable the service and then reboot the machine.
+    #[arg(long)]
+    harden: bool,
 
     /// Exclude events by name (comma separated).
     #[arg(long)]
@@ -1902,6 +1908,11 @@ impl TryFrom<RunOpt> for Config {
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
             conf.iocs = iocs;
+        }
+
+        // supersedes configuration if true
+        if opt.harden {
+            conf.harden = opt.harden
         }
 
         // we want to increase max_buffered_events
@@ -1980,7 +1991,11 @@ fn prepare_bpf(kernel: KernelVersion, conf: &Config, vll: VerifierLogLevel) -> a
     Ok(bpf)
 }
 
-fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<Programs<'_>> {
+fn load_and_attach_bpf<'a>(
+    conf: &'a Config,
+    kernel: KernelVersion,
+    bpf: &'a mut Bpf,
+) -> anyhow::Result<Programs<'a>> {
     // make possible probe selection in debug
     #[allow(unused_mut)]
     let mut en_probes: Vec<String> = vec![];
@@ -1991,8 +2006,9 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
 
     // We need to parse eBPF ELF to extract section names
     let mut programs = Programs::with_bpf(bpf).with_elf_info(BPF_ELF)?;
+    let btf = Btf::from_sys_fs()?;
 
-    kunai::configure_probes(&mut programs, kernel);
+    kunai::configure_probes(conf, &mut programs, kernel);
 
     // generic program loader
     for (_, p) in programs.sorted_by_prio() {
@@ -2030,7 +2046,7 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
             p.prio
         );
 
-        p.load_and_attach()?;
+        p.load_and_attach(&btf)?;
     }
 
     Ok(programs)
@@ -2167,7 +2183,7 @@ impl Command {
                             .await;
 
                     // we load and attach bpf programs
-                    load_and_attach_bpf(current_kernel, &mut bpf)?;
+                    load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
 
                     loop {
                         // block make sure lock is dropped before sleeping

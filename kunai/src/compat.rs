@@ -1,6 +1,8 @@
 use aya::{
-    programs::{self, kprobe::KProbeLinkId, trace_point::TracePointLinkId, ProgramError},
-    Bpf,
+    programs::{
+        self, kprobe::KProbeLinkId, lsm::LsmLinkId, trace_point::TracePointLinkId, ProgramError,
+    },
+    Bpf, Btf,
 };
 use aya_obj::generated::bpf_prog_type;
 use kunai_common::version::KernelVersion;
@@ -99,6 +101,7 @@ impl<'a> Programs<'a> {
 pub enum LinkId {
     KProbe(KProbeLinkId),
     Tracepoint(TracePointLinkId),
+    Lsm(LsmLinkId),
 }
 
 impl TryFrom<LinkId> for KProbeLinkId {
@@ -116,6 +119,16 @@ impl TryFrom<LinkId> for TracePointLinkId {
     fn try_from(value: LinkId) -> Result<Self, Self::Error> {
         match value {
             LinkId::Tracepoint(l) => Ok(l),
+            _ => Err(Error::WrongLinkId),
+        }
+    }
+}
+
+impl TryFrom<LinkId> for LsmLinkId {
+    type Error = Error;
+    fn try_from(value: LinkId) -> Result<Self, Self::Error> {
+        match value {
+            LinkId::Lsm(l) => Ok(l),
             _ => Err(Error::WrongLinkId),
         }
     }
@@ -200,6 +213,11 @@ impl<'a> Program<'a> {
         self
     }
 
+    pub fn prio(&mut self, prio: u8) -> &mut Self {
+        self.prio = prio;
+        self
+    }
+
     pub fn prog_type(&self) -> bpf_prog_type {
         self.program.prog_type()
     }
@@ -226,15 +244,25 @@ impl<'a> Program<'a> {
         }
     }
 
-    pub fn enable(&mut self) {
-        self.enable = true
+    pub fn enable(&mut self) -> &mut Self {
+        self.enable = true;
+        self
     }
 
-    pub fn disable(&mut self) {
-        self.enable = false
+    pub fn disable(&mut self) -> &mut Self {
+        self.enable = false;
+        self
     }
 
-    pub fn load(&mut self) -> Result<(), Error> {
+    pub fn disable_if(&mut self, condition: bool) -> &mut Self {
+        if condition {
+            self.enable = false
+        }
+        self
+    }
+
+    pub fn load(&mut self, btf: &Btf) -> Result<(), Error> {
+        let hook = self.attach_func();
         let program = self.prog_mut();
 
         match program {
@@ -243,6 +271,10 @@ impl<'a> Program<'a> {
             }
             programs::Program::KProbe(p) => {
                 p.load()?;
+            }
+            programs::Program::Lsm(p) => {
+                let attach = hook.unwrap();
+                p.load(&attach, btf)?;
             }
             _ => {
                 unimplemented!()
@@ -260,6 +292,9 @@ impl<'a> Program<'a> {
                 p.unload()?;
             }
             programs::Program::KProbe(p) => {
+                p.unload()?;
+            }
+            programs::Program::Lsm(p) => {
                 p.unload()?;
             }
             _ => {
@@ -287,6 +322,9 @@ impl<'a> Program<'a> {
                 let attach = kernel_attach_fn.ok_or(Error::NoAttachFn(program_name))?;
                 self.link_id = Some(LinkId::KProbe(p.attach(attach, 0)?));
             }
+            programs::Program::Lsm(p) => {
+                self.link_id = Some(LinkId::Lsm(p.attach()?));
+            }
             _ => {
                 unimplemented!()
             }
@@ -295,8 +333,8 @@ impl<'a> Program<'a> {
         Ok(())
     }
 
-    pub fn load_and_attach(&mut self) -> Result<(), Error> {
-        self.load()?;
+    pub fn load_and_attach(&mut self, btf: &Btf) -> Result<(), Error> {
+        self.load(btf)?;
         self.attach()
     }
 
@@ -305,6 +343,7 @@ impl<'a> Program<'a> {
             match self.prog_mut() {
                 programs::Program::TracePoint(p) => p.detach(link_id.try_into()?)?,
                 programs::Program::KProbe(p) => p.detach(link_id.try_into()?)?,
+                programs::Program::Lsm(p) => p.detach(link_id.try_into()?)?,
                 _ => {
                     unimplemented!()
                 }
