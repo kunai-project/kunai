@@ -1654,7 +1654,7 @@ impl EventProducer {
                                     );
                                 }
                             }
-                            // drop er
+                            // drop producer
                         }
                     }
 
