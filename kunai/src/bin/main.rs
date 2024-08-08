@@ -12,19 +12,20 @@ use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KunaiEvent, MmapExecData,
-    MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData, SocketInfo, UnlinkData,
-    UserEvent,
+    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KillData, KunaiEvent,
+    MmapExecData, MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData,
+    SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Type, MAX_BPF_EVENT_SIZE,
+    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, Type,
+    MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::{BpfConfig, Filter};
-use kunai_common::inspect_err;
+use kunai_common::{inspect_err, kernel};
 
 use kunai_common::version::KernelVersion;
 use log::LevelFilter;
@@ -57,7 +58,7 @@ use aya::{
     Bpf,
 };
 
-use aya::{BpfLoader, VerifierLogLevel};
+use aya::{BpfLoader, Btf, VerifierLogLevel};
 
 use log::{debug, error, info, warn};
 
@@ -620,6 +621,38 @@ impl EventConsumer {
             arg4: event.data.arg4,
             arg5: event.data.arg5,
             success: event.data.success,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline]
+    fn kill_event(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::KillEvent,
+    ) -> UserEvent<KillData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        let signal = Signal::from_uint_to_string(event.data.signal);
+
+        // we need to set uuid part of target task
+        let mut target = event.data.target;
+        target.set_uuid_random(self.random);
+
+        // get the command line
+        let tk = TaskKey::from(target.tg_uuid);
+
+        let data = KillData {
+            ancestors: self.get_ancestors_string(&info),
+            exe: exe.into(),
+            command_line,
+            signal,
+            target: TargetTask {
+                command_line: self.get_command_line(tk),
+                exe: self.get_exe(tk).into(),
+                task: target.into(),
+            },
         };
 
         UserEvent::new(data, info)
@@ -1211,6 +1244,14 @@ impl EventConsumer {
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
+            Type::Kill => match event!(enc_event, bpf_events::KillEvent) {
+                Ok(e) => {
+                    let mut e = self.kill_event(std_info, e);
+                    self.scan_and_print(&mut e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
             Type::MmapExec => match event!(enc_event, bpf_events::MmapExecEvent) {
                 Ok(e) => {
                     let mut e = self.mmap_exec_event(std_info, e);
@@ -1613,7 +1654,7 @@ impl EventProducer {
                                     );
                                 }
                             }
-                            // drop er
+                            // drop producer
                         }
                     }
 
@@ -1803,15 +1844,21 @@ impl TryFrom<ReplayOpt> for Config {
 
 #[derive(Debug, Parser)]
 struct RunOpt {
+    /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
     /// Number of worker threads used by kunai. By default kunai runs
     /// in a single threaded mode. If you want to use all available
     /// threads, set this option to 0.
     #[arg(short, long)]
     workers: Option<usize>,
 
-    /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
+    /// Harden Kunai at runtime by preventing process tampering attempts.
+    /// If Kunai is run as a service, the only way to stop it may be
+    /// to disable the service and then reboot the machine.
+    #[arg(long)]
+    harden: bool,
 
     /// Exclude events by name (comma separated).
     #[arg(long)]
@@ -1861,6 +1908,11 @@ impl TryFrom<RunOpt> for Config {
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
             conf.iocs = iocs;
+        }
+
+        // supersedes configuration if true
+        if opt.harden {
+            conf.harden = opt.harden
         }
 
         // we want to increase max_buffered_events
@@ -1939,7 +1991,11 @@ fn prepare_bpf(kernel: KernelVersion, conf: &Config, vll: VerifierLogLevel) -> a
     Ok(bpf)
 }
 
-fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<Programs<'_>> {
+fn load_and_attach_bpf<'a>(
+    conf: &'a Config,
+    kernel: KernelVersion,
+    bpf: &'a mut Bpf,
+) -> anyhow::Result<Programs<'a>> {
     // make possible probe selection in debug
     #[allow(unused_mut)]
     let mut en_probes: Vec<String> = vec![];
@@ -1950,8 +2006,9 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
 
     // We need to parse eBPF ELF to extract section names
     let mut programs = Programs::with_bpf(bpf).with_elf_info(BPF_ELF)?;
+    let btf = Btf::from_sys_fs()?;
 
-    kunai::configure_probes(&mut programs, kernel);
+    kunai::configure_probes(conf, &mut programs, kernel);
 
     // generic program loader
     for (_, p) in programs.sorted_by_prio() {
@@ -1989,7 +2046,7 @@ fn load_and_attach_bpf(kernel: KernelVersion, bpf: &mut Bpf) -> anyhow::Result<P
             p.prio
         );
 
-        p.load_and_attach()?;
+        p.load_and_attach(&btf)?;
     }
 
     Ok(programs)
@@ -2033,6 +2090,7 @@ impl Command {
                         Type::Execve | Type::ExecveScript => scan_event!(p, ExecveData),
                         Type::Clone => scan_event!(p, CloneData),
                         Type::Prctl => scan_event!(p, PrctlData),
+                        Type::Kill => unimplemented!(),
                         Type::MmapExec => scan_event!(p, MmapExecData),
                         Type::MprotectExec => scan_event!(p, MprotectData),
                         Type::Connect => scan_event!(p, ConnectData),
@@ -2077,6 +2135,21 @@ impl Command {
             Some(ro) => ro.try_into()?,
             None => Config::default(),
         };
+
+        // checks on harden mode
+        if conf.harden {
+            if current_kernel < kernel!(5, 7, 0) {
+                return Err(anyhow!(
+                    "harden mode is not supported for kernels below 5.7.0"
+                ));
+            }
+
+            if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
+                return Err(anyhow!(
+                    "trying to run in harden mode but BPF LSM is not enabled"
+                ));
+            }
+        }
 
         // create the tokio runtime builder
         let mut builder = {
@@ -2125,7 +2198,7 @@ impl Command {
                             .await;
 
                     // we load and attach bpf programs
-                    load_and_attach_bpf(current_kernel, &mut bpf)?;
+                    load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
 
                     loop {
                         // block make sure lock is dropped before sleeping

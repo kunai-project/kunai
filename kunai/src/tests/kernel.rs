@@ -1,7 +1,12 @@
 use anyhow::anyhow;
-use aya::{include_bytes_aligned, BpfLoader, VerifierLogLevel};
+use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
 use env_logger::Builder;
-use kunai::{compat::Programs, util::uname::Utsname};
+use kunai::{
+    compat::Programs,
+    config::Config,
+    util::{is_bpf_lsm_enabled, uname::Utsname},
+};
+use kunai_common::kernel;
 use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::{error, info, warn};
 use std::{ffi::CString, panic};
@@ -44,6 +49,8 @@ fn integration() -> anyhow::Result<()> {
     mount("none", "/sys", "sysfs")?;
     info!("mounting tracefs");
     mount("none", "/sys/kernel/tracing", "tracefs")?;
+    info!("mounting securityfs");
+    mount("none", "/sys/kernel/security", "securityfs")?;
 
     let bpf_elf = {
         #[cfg(debug_assertions)]
@@ -59,19 +66,26 @@ fn integration() -> anyhow::Result<()> {
         .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
         .load(bpf_elf)?;
 
+    let btf = Btf::from_sys_fs()?;
     let mut programs = Programs::with_bpf(&mut bpf).with_elf_info(bpf_elf)?;
+    let conf = Config::default_hardened();
 
-    kunai::configure_probes(&mut programs, current_kernel);
+    if conf.harden {
+        if current_kernel < kernel!(5, 7, 0) {
+            warn!("hardened mode does not work below kernel 5.7.0")
+        }
+
+        if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
+            return Err(anyhow!(
+                "trying to run in hardened mode but BPF LSM is not enabled"
+            ));
+        }
+    }
+
+    kunai::configure_probes(&conf, &mut programs, current_kernel);
 
     // generic program loader
     for (_, mut p) in programs.into_vec_sorted_by_prio() {
-        info!(
-            "loading: {} {:?} with priority={}",
-            p.name,
-            p.prog_type(),
-            p.prio
-        );
-
         if !p.enable {
             warn!("{} probe has been disabled", p.name);
             continue;
@@ -88,7 +102,14 @@ fn integration() -> anyhow::Result<()> {
             continue;
         }
 
-        p.load_and_attach()?;
+        info!(
+            "loading: {} {:?} with priority={}",
+            p.name,
+            p.prog_type(),
+            p.prio
+        );
+
+        p.load_and_attach(&btf)?;
     }
 
     Ok(())

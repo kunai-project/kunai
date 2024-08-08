@@ -3,7 +3,7 @@ use ip_network::IpNetwork;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
-use std::{io, net::IpAddr};
+use std::{fs, io, net::IpAddr};
 
 pub mod bpf;
 pub mod elf;
@@ -98,6 +98,13 @@ pub fn sha512_data<T: AsRef<[u8]>>(data: T) -> String {
     let mut h = Sha512::new();
     h.update(data.as_ref());
     hex::encode(h.finalize())
+}
+
+#[inline]
+pub fn is_bpf_lsm_enabled() -> Result<bool, io::Error> {
+    Ok(fs::read_to_string("/sys/kernel/security/lsm")?
+        .split(',')
+        .any(|s| s == "bpf"))
 }
 
 #[cfg(test)]
