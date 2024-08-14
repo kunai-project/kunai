@@ -1143,6 +1143,36 @@ impl EventConsumer {
     }
 
     #[inline(always)]
+    fn handle_actions<T: Serialize + KunaiEvent>(
+        &mut self,
+        event: &T,
+        actions: &HashSet<String>,
+        is_detection: bool,
+    ) {
+        // some actions are allowed only for detections
+        #[allow(clippy::collapsible_if)]
+        if is_detection {
+            // for the moment we only support killing the
+            // task itself and not its parent. Additional
+            // care must be taken to the parent as we need
+            // to be sure we are not killing something critical.
+            // Generally speaking killing action must be done with
+            // care as sending a SIGKILL to a critical process
+            // might impact the system.
+            if actions.contains("kill") {
+                let pid = event.info().task.pid;
+                // this is the kind of information we want to have
+                // at all time so we put this as a warning not to
+                // be disabled by the default logging policy
+                warn!("sending SIGKILL to PID={pid}");
+                if let Err(e) = kill(pid, libc::SIGKILL) {
+                    error!("error sending SIGKILL to PID={pid}: {e}")
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
     fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) {
         macro_rules! serialize {
             ($event:expr) => {
@@ -1164,8 +1194,13 @@ impl EventConsumer {
             if sr.is_detection() {
                 event.set_detection(sr);
                 serialize!(event);
+                // get_detection will always be false for filters
+                if let Some(sr) = event.get_detection() {
+                    self.handle_actions(event, &sr.actions, true)
+                }
             } else if sr.is_only_filter() {
                 serialize!(event);
+                self.handle_actions(event, &sr.actions, false);
             }
         }
     }

@@ -72,6 +72,13 @@ pub fn getrandom<T: Sized>() -> Result<T, RandError> {
     Ok(unsafe { t.assume_init() })
 }
 
+pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
+    if unsafe { libc::kill(pid, sig) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 #[inline]
 pub fn md5_data<T: AsRef<[u8]>>(data: T) -> String {
     let mut h = Md5::new();
