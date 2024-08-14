@@ -146,11 +146,11 @@ impl Key {
         k.accessed = ebpf_meta.atime.into_system_time();
 
         if k.size != meta.size() {
-            return Err(Error::FileModSinceKernelEvent("inode changed"));
+            return Err(Error::FileModSinceKernelEvent("sized changed"));
         }
 
         if ebpf_meta.ino != meta.ino() {
-            return Err(Error::FileModSinceKernelEvent("sized changed"));
+            return Err(Error::FileModSinceKernelEvent("inode changed"));
         }
 
         if let Ok(mtime) = meta.modified() {
