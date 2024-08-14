@@ -48,18 +48,18 @@ impl From<ContainerInfo> for ContainerSection {
 #[derive(FieldGetter, Serialize, Deserialize)]
 pub struct HostSection {
     #[getter(skip)]
-    uuid: uuid::Uuid,
-    name: String,
-    container: Option<ContainerSection>,
+    pub uuid: uuid::Uuid,
+    pub name: String,
+    pub container: Option<ContainerSection>,
 }
 
 #[derive(FieldGetter, Serialize, Deserialize)]
 pub struct EventSection {
-    source: String,
-    id: u32,
-    name: String,
-    uuid: String,
-    batch: usize,
+    pub source: String,
+    pub id: u32,
+    pub name: String,
+    pub uuid: String,
+    pub batch: usize,
 }
 
 impl From<&StdEventInfo> for EventSection {
@@ -87,15 +87,15 @@ impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct TaskSection {
-    name: String,
-    pid: i32,
-    tgid: i32,
-    guuid: String,
-    uid: u32,
-    gid: u32,
-    namespaces: Option<NamespaceInfo>,
+    pub name: String,
+    pub pid: i32,
+    pub tgid: i32,
+    pub guuid: String,
+    pub uid: u32,
+    pub gid: u32,
+    pub namespaces: Option<NamespaceInfo>,
     #[serde(with = "u32_hex")]
-    flags: u32,
+    pub flags: u32,
 }
 
 impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
@@ -281,6 +281,8 @@ impl ScanResult {
 
 pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter {
     fn set_detection(&mut self, sr: ScanResult);
+    fn get_detection(&self) -> &Option<ScanResult>;
+    fn info(&self) -> &EventInfo;
 }
 
 #[derive(Event, FieldGetter, Serialize, Deserialize)]
@@ -305,8 +307,19 @@ impl<T> KunaiEvent for UserEvent<T>
 where
     T: FieldGetter + IocGetter,
 {
+    #[inline(always)]
     fn set_detection(&mut self, sr: ScanResult) {
         self.detection = Some(sr)
+    }
+
+    #[inline(always)]
+    fn get_detection(&self) -> &Option<ScanResult> {
+        &self.detection
+    }
+
+    #[inline(always)]
+    fn info(&self) -> &EventInfo {
+        &self.info
     }
 }
 
