@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use clap::Parser;
 
 use crate::ebpf::{self, BpfTarget};
+use crate::utils::vec_rustflags;
 
 #[derive(Debug, Parser)]
 pub struct RunOptions {
@@ -11,7 +12,7 @@ pub struct RunOptions {
     #[clap(long)]
     pub release: bool,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-musl", long)]
+    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
     pub target: String,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
@@ -56,7 +57,7 @@ pub struct BuildOptions {
     #[clap(long)]
     pub release: bool,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-musl", long)]
+    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
     pub target: String,
     /// Set the linker to use to when building userland application
     /// this option is useful when cross-compiling
@@ -107,7 +108,7 @@ fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
         args.push("--release")
     }
 
-    let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
+    let mut rustflags = vec_rustflags()?;
 
     if let Some(linker) = opts.linker.as_ref() {
         rustflags.push(format!("-C linker={linker}"))
@@ -118,11 +119,13 @@ fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
 
     opts.build_args.iter().for_each(|ba| args.push(ba));
 
-    let status = Command::new("cargo")
-        .env("RUSTFLAGS", rustflags.join(" "))
-        .args(&args)
-        .status()
-        .expect("failed to build userspace");
+    let mut cmd = Command::new("cargo");
+    if !rustflags.is_empty() {
+        cmd.env("RUSTFLAGS", rustflags.join(" "));
+        println!("setting up rustflag")
+    }
+
+    let status = cmd.args(&args).status().expect("failed to build userspace");
     assert!(status.success());
     Ok(())
 }
