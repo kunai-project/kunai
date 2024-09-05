@@ -6,6 +6,7 @@ use sha2::{Sha256, Sha512};
 use std::{fs, io, net::IpAddr};
 
 pub mod bpf;
+pub mod defer;
 pub mod elf;
 pub mod namespaces;
 pub mod uname;
