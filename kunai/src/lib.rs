@@ -11,6 +11,7 @@ pub mod events;
 pub mod info;
 pub mod ioc;
 pub mod util;
+pub mod yara;
 
 /// function that responsible of probe priorities and compatibily across kernels
 /// panic: if a given probe name is not found
