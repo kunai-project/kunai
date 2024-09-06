@@ -93,6 +93,10 @@ struct Task {
     cgroups: Vec<String>,
     nodename: Option<String>,
     parent_key: Option<TaskKey>,
+    child_count: u32,
+    // flag telling if this task comes from procfs
+    // parsing at kunai start
+    procfs: bool,
 }
 
 impl Task {
@@ -263,7 +267,7 @@ impl<'s> EventConsumer<'s> {
             iocs: HashSet::new(),
             random: util::getrandom::<u32>().unwrap(),
             cache: Cache::with_max_entries(10000),
-            tasks: HashMap::new(),
+            tasks: HashMap::with_capacity(512),
             resolved: HashMap::new(),
             output: Self::prepare_output(&config)?,
             file_scanner: None,
@@ -446,6 +450,8 @@ impl<'s> EventConsumer<'s> {
             cgroups,
             nodename: None,
             parent_key,
+            child_count: 0,
+            procfs: true,
         };
 
         self.tasks.insert(tk, task);
@@ -1023,12 +1029,21 @@ impl<'s> EventConsumer<'s> {
         if (matches!(etype, Type::Exit) && info.info.process.pid == info.info.process.tgid)
             || matches!(etype, Type::ExitGroup)
         {
-            // find a more elaborated way to save space
-            // we need to keep some minimal correlations
-            // maybe through cached ancestors and parent_image
+            // we are exiting so our parent has one child less
             self.tasks
-                .entry(info.task_key())
-                .and_modify(|t| t.free_memory());
+                .entry(info.parent_key())
+                .and_modify(|t| t.child_count = t.child_count.saturating_sub(1));
+
+            let tk = info.task_key();
+
+            if let Some(true) = self.tasks.get(&tk).map(|t| t.child_count == 0 && !t.procfs) {
+                // if the task has no child and is not coming from procfs
+                // we can remove it from the table.
+                self.tasks.remove(&tk);
+            } else {
+                // we can free up some memory that won't use anymore
+                self.tasks.entry(tk).and_modify(|t| t.free_memory());
+            }
         }
 
         UserEvent::new(data, info)
@@ -1102,6 +1117,10 @@ impl<'s> EventConsumer<'s> {
             }
         };
 
+        self.tasks
+            .entry(info.parent_key())
+            .and_modify(|e| e.child_count += 1);
+
         // we insert only if not existing
         self.tasks.entry(ck).or_insert(Task {
             image,
@@ -1113,6 +1132,8 @@ impl<'s> EventConsumer<'s> {
             cgroups,
             nodename: event.data.nodename(),
             parent_key: Some(info.parent_key()),
+            child_count: 0,
+            procfs: false,
         });
     }
 
