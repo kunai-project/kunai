@@ -97,6 +97,7 @@ struct Task {
     // flag telling if this task comes from procfs
     // parsing at kunai start
     procfs: bool,
+    exit: bool,
 }
 
 impl Task {
@@ -111,10 +112,13 @@ impl Task {
         self.command_line.join(" ")
     }
 
+    // run on task exit
     #[inline(always)]
-    fn free_memory(&mut self) {
+    fn on_exit(&mut self) {
         // this does not allocate the new map
-        self.resolved = HashMap::new();
+        self.resolved.clear();
+        self.resolved.shrink_to_fit();
+        self.exit = true;
     }
 }
 
@@ -206,6 +210,7 @@ struct EventConsumer<'s> {
     cache: cache::Cache,
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
+    exited_tasks: u64,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
     // used to check if we must generate FileScan events
@@ -268,6 +273,7 @@ impl<'s> EventConsumer<'s> {
             random: util::getrandom::<u32>().unwrap(),
             cache: Cache::with_max_entries(10000),
             tasks: HashMap::with_capacity(512),
+            exited_tasks: 0,
             resolved: HashMap::new(),
             output: Self::prepare_output(&config)?,
             file_scanner: None,
@@ -452,6 +458,7 @@ impl<'s> EventConsumer<'s> {
             parent_key,
             child_count: 0,
             procfs: true,
+            exit: false,
         };
 
         self.tasks.insert(tk, task);
@@ -1041,9 +1048,19 @@ impl<'s> EventConsumer<'s> {
                 // we can remove it from the table.
                 self.tasks.remove(&tk);
             } else {
-                // we can free up some memory that won't use anymore
-                self.tasks.entry(tk).and_modify(|t| t.free_memory());
+                // we can free up some memory and tag the task as exitted
+                self.tasks.entry(tk).and_modify(|t| t.on_exit());
             }
+
+            // we trigger some very specific cleanup
+            if self.exited_tasks % 1000 == 0 {
+                // we remove shadow tasks exited with no child
+                self.tasks.retain(|_, t| !(t.exit && t.child_count == 0));
+                // shrinking tasks HashMap
+                self.tasks.shrink_to_fit();
+            }
+
+            self.exited_tasks = self.exited_tasks.wrapping_add(1);
         }
 
         UserEvent::new(data, info)
@@ -1134,6 +1151,7 @@ impl<'s> EventConsumer<'s> {
             parent_key: Some(info.parent_key()),
             child_count: 0,
             procfs: false,
+            exit: false,
         });
     }
 
