@@ -26,16 +26,24 @@ pub struct Event {
 }
 
 impl Event {
+    #[inline(always)]
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    #[inline(always)]
     pub fn disable(&mut self) {
         self.enable = false
     }
 
+    #[inline(always)]
     pub fn enable(&mut self) {
         self.enable = true
+    }
+
+    #[inline(always)]
+    pub fn is_enabled(&self) -> bool {
+        self.enable
     }
 }
 
@@ -56,6 +64,7 @@ pub struct Config {
     pub send_data_min_len: Option<u64>,
     pub rules: Vec<String>,
     pub iocs: Vec<String>,
+    pub yara: Vec<String>,
     pub harden: bool,
     pub events: Vec<Event>,
 }
@@ -84,6 +93,7 @@ impl Default for Config {
             send_data_min_len: None,
             rules: vec![],
             iocs: vec![],
+            yara: vec![],
             harden: false,
             events,
         }
