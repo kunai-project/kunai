@@ -4,3 +4,28 @@ target = ["bpfel-unknown-none"]
 
 [unstable]
 build-std = ["core"]
+
+# moved profile out of Cargo.toml
+# so that profiles also applies to
+# dependencies
+
+[profile.dev]
+opt-level = 3
+# enable DI
+debug = 2
+debug-assertions = false
+overflow-checks = false
+lto = true
+panic = "abort"
+incremental = false
+codegen-units = 1
+rpath = false
+
+[profile.release]
+opt-level = 3
+# enable DI
+debug = 2
+debug-assertions = false
+lto = true
+panic = "abort"
+codegen-units = 1

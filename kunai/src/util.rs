@@ -6,6 +6,7 @@ use sha2::{Sha256, Sha512};
 use std::{fs, io, net::IpAddr};
 
 pub mod bpf;
+pub mod defer;
 pub mod elf;
 pub mod namespaces;
 pub mod uname;
@@ -70,6 +71,13 @@ pub fn getrandom<T: Sized>() -> Result<T, RandError> {
         return Err(RandError::PartiallyRandomized);
     }
     Ok(unsafe { t.assume_init() })
+}
+
+pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
+    if unsafe { libc::kill(pid, sig) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[inline]

@@ -7,6 +7,12 @@ pub struct Time {
     pub nsec: i64,
 }
 
+impl Time {
+    pub fn new(sec: i64, nsec: i64) -> Self {
+        Self { sec, nsec }
+    }
+}
+
 not_bpf_target_code! {
     use std::time::{SystemTime, UNIX_EPOCH};
     use core::time::Duration;

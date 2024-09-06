@@ -1,5 +1,6 @@
 mod ebpf;
 mod user;
+mod utils;
 
 use std::fs;
 use std::path::PathBuf;

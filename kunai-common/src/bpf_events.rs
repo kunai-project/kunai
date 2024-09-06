@@ -113,9 +113,14 @@ pub enum Type {
     #[str("file_unlink")]
     FileUnlink,
 
-    // Materialize end of possible events
-    #[str("end_event")]
-    EndEvents = 1000,
+    // specific userland events
+    // those should never be used in eBPF
+    #[str("file_scan")]
+    FileScan = 500,
+
+    // Materialize the end of configurable events
+    #[str("end_configurable")]
+    EndConfigurable = 1000,
 
     // specific events
     #[str("correlation")]
@@ -140,10 +145,10 @@ impl Default for Type {
 
 impl Type {
     pub fn is_configurable(&self) -> bool {
-        *self > Self::Unknown && *self < Self::EndEvents
+        *self > Self::Unknown && *self < Self::EndConfigurable
     }
 
-    pub fn id(&self) -> u32 {
+    pub const fn id(&self) -> u32 {
         *self as u32
     }
 }

@@ -1,17 +1,21 @@
-use std::{os::unix::process::CommandExt, process::Command};
+use std::{borrow::Cow, os::unix::process::CommandExt, process::Command};
 
 use anyhow::Context as _;
 use clap::Parser;
 
 use crate::ebpf::{self, BpfTarget};
+use crate::utils::vec_rustflags;
 
 #[derive(Debug, Parser)]
 pub struct RunOptions {
     /// Build and run the release target
     #[clap(long)]
     pub release: bool,
+    /// Build and run profile
+    #[clap(long)]
+    pub profile: Option<String>,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-musl", long)]
+    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
     pub target: String,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
@@ -40,6 +44,7 @@ impl From<&RunOptions> for BuildOptions {
     fn from(value: &RunOptions) -> Self {
         Self {
             target: value.target.clone(),
+            profile: value.profile.clone(),
             linker: None,
             bpf_target: value.bpf_target,
             bpf_linker: value.bpf_linker.clone(),
@@ -52,11 +57,14 @@ impl From<&RunOptions> for BuildOptions {
 
 #[derive(Debug, Parser, Clone)]
 pub struct BuildOptions {
-    /// Build and run the release target
+    /// Build the release target
     #[clap(long)]
     pub release: bool,
+    /// Build profile
+    #[clap(long)]
+    pub profile: Option<String>,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-musl", long)]
+    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
     pub target: String,
     /// Set the linker to use to when building userland application
     /// this option is useful when cross-compiling
@@ -102,27 +110,33 @@ impl From<&BuildOptions> for ebpf::BuildOptions {
 }
 
 fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
-    let mut args = vec![command];
+    let mut opts = opts.clone();
+    let mut args = vec![command.to_string()];
+
     if opts.release {
-        args.push("--release")
+        opts.profile = Some("release".into());
     }
 
-    let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
+    if let Some(profile) = opts.profile.as_ref() {
+        args.push(format!("--profile={}", profile));
+    }
+
+    let mut rustflags = vec_rustflags()?;
 
     if let Some(linker) = opts.linker.as_ref() {
         rustflags.push(format!("-C linker={linker}"))
     }
 
-    let target = format!("--target={}", opts.target);
-    args.push(&target);
+    args.push(format!("--target={}", opts.target));
 
-    opts.build_args.iter().for_each(|ba| args.push(ba));
+    opts.build_args.iter().for_each(|ba| args.push(ba.clone()));
 
-    let status = Command::new("cargo")
-        .env("RUSTFLAGS", rustflags.join(" "))
-        .args(&args)
-        .status()
-        .expect("failed to build userspace");
+    let mut cmd = Command::new("cargo");
+    if !rustflags.is_empty() {
+        cmd.env("RUSTFLAGS", rustflags.join(" "));
+    }
+
+    let status = cmd.args(&args).status().expect("failed to build userspace");
     assert!(status.success());
     Ok(())
 }
@@ -149,7 +163,10 @@ pub fn run(ebpf_dir: &str, opts: &RunOptions) -> Result<(), anyhow::Error> {
     build_all(ebpf_dir, &opts.into())?;
 
     // profile we are building (release or debug)
-    let profile = if opts.release { "release" } else { "debug" };
+    let profile = match opts.profile.as_ref() {
+        Some(profile) => Cow::Borrowed(profile.as_str()),
+        _ => "debug".into(),
+    };
 
     // we get the binary path
     let bin_path = format!("target/{}/{profile}/kunai", opts.target);

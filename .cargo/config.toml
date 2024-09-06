@@ -1,8 +1,6 @@
 [build]
-# specifying the two targets here seems necessary to enable
-# VSCode having code analysis for both the targets in workspace
-# members (needed for kunai-common)
-target = ["x86_64-unknown-linux-gnu", "bpfel-unknown-none"]
+# make final binary statically linked against libc
+rustflags = ["-Ctarget-feature=+crt-static"]
 
 [alias]
 # replace with the target triple you are developing on must be the same as
@@ -11,8 +9,3 @@ xtask = "run -q --target=x86_64-unknown-linux-gnu --package xtask --release --"
 xrun = "xtask run"
 xbuild = "xtask build"
 xrelease = "xtask release"
-
-[profile.release]
-lto = true
-codegen-units = 1
-strip = true

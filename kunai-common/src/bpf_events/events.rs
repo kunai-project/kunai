@@ -79,9 +79,15 @@ const fn max_bpf_event_size() -> usize {
             }
             Type::FileRename => FileRenameEvent::size_of(),
             Type::FileUnlink => UnlinkEvent::size_of(),
-            Type::Unknown | Type::EndEvents | Type::Correlation | Type::CacheHash | Type::Max => 0,
             Type::Error => ErrorEvent::size_of(),
             Type::SyscoreResume => SysCoreResumeEvent::size_of(),
+            // these are event types only used in user land
+            Type::Unknown
+            | Type::EndConfigurable
+            | Type::Correlation
+            | Type::CacheHash
+            | Type::Max
+            | Type::FileScan => 0,
             // never handle _ pattern otherwise this function loses all interest
         };
         if size > max {

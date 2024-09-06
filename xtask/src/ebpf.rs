@@ -11,6 +11,8 @@ use std::{
 use clap::Parser;
 use json::JsonValue;
 
+use crate::utils::vec_rustflags;
+
 #[derive(Debug, Copy, Clone)]
 pub enum BpfTarget {
     BpfEl,
@@ -65,8 +67,8 @@ impl BuildOptions {
         self
     }
 
-    fn mandatory_rustflags(&self) -> Vec<String> {
-        let mut rustflags = vec![std::env::var("RUSTFLAGS").unwrap_or_default()];
+    fn mandatory_rustflags(&self) -> anyhow::Result<Vec<String>> {
+        let mut rustflags = vec_rustflags()?;
 
         if let Some(linker) = &self.linker {
             rustflags.push(format!("-C linker={linker}"));
@@ -88,11 +90,11 @@ impl BuildOptions {
         // enable BTF emission
         rustflags.push("-C link-arg=--btf".into());
 
-        rustflags
+        Ok(rustflags)
     }
 
-    fn build_rustflags(&self) -> String {
-        let mut rustflags = self.mandatory_rustflags();
+    fn build_rustflags(&self) -> anyhow::Result<String> {
+        let mut rustflags = self.mandatory_rustflags()?;
 
         // profile we are building (release or debug)
         let profile = if self.release { "release" } else { "debug" };
@@ -135,7 +137,7 @@ impl BuildOptions {
             }
         }
 
-        rustflags.join(" ")
+        Ok(rustflags.join(" "))
     }
 }
 
@@ -173,7 +175,7 @@ fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Command {
 
 pub fn build(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     let status = cargo("build", dir, opts)
-        .env("RUSTFLAGS", opts.build_rustflags())
+        .env("RUSTFLAGS", opts.build_rustflags()?)
         .status()
         .expect("failed to build bpf program");
 
@@ -215,7 +217,7 @@ pub fn clippy(dir: &str, opts: &mut BuildOptions) -> Result<(), anyhow::Error> {
     let output = cargo("clippy", dir, opts)
         // we must use build_rustflags so that we have same options
         // for build and check commands. Thus making build/check faster
-        .env("RUSTFLAGS", opts.build_rustflags())
+        .env("RUSTFLAGS", opts.build_rustflags()?)
         .output()
         .expect("failed to run cargo check");
 

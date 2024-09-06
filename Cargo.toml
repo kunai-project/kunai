@@ -7,3 +7,12 @@ authors = ["Quentin JEROME <qjerome@rawsec.lu>"]
 license = "GPL-3.0"
 license-file = "LICENSE"
 repository = "https://github.com/kunai-project/kunai"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev-opt]
+inherits = "dev"
+opt-level = 3

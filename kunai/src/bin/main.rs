@@ -7,18 +7,21 @@ use bytes::BytesMut;
 use clap::builder::styling;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
+use fs_walk::WalkOptions;
 use gene::rules::MAX_SEVERITY;
 use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    ExecveData, ExitData, FileRenameData, FilterInfo, InitModuleData, KillData, KunaiEvent,
-    MmapExecData, MprotectData, NetworkInfo, PrctlData, RWData, ScanResult, SendDataData,
-    SocketInfo, TargetTask, UnlinkData, UserEvent,
+    EventInfo, ExecveData, ExitData, FileRenameData, FileScanData, FilterInfo, InitModuleData,
+    KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData, RWData, ScanResult,
+    SendDataData, SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
+
+use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
     self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, Type,
@@ -28,10 +31,11 @@ use kunai_common::config::{BpfConfig, Filter};
 use kunai_common::{inspect_err, kernel};
 
 use kunai_common::version::KernelVersion;
+use kunai_macros::StrEnum;
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
+
 use tokio::sync::mpsc::error::SendError;
-use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use std::borrow::Cow;
@@ -43,6 +47,7 @@ use std::net::IpAddr;
 
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+
 use std::str::FromStr;
 
 use std::sync::Arc;
@@ -62,7 +67,7 @@ use aya::{BpfLoader, Btf, VerifierLogLevel};
 
 use log::{debug, error, info, warn};
 
-use tokio::sync::{mpsc, Barrier, Mutex, RwLock};
+use tokio::sync::{mpsc, Barrier, Mutex};
 use tokio::{task, time};
 
 use kunai::cache::*;
@@ -174,7 +179,22 @@ impl io::Write for Output {
     }
 }
 
-struct EventConsumer {
+/// enum of supported actions
+#[derive(StrEnum)]
+enum Actions {
+    #[str("kill")]
+    Kill,
+    #[str("scan-files")]
+    ScanFiles,
+}
+
+impl std::fmt::Display for Actions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+struct EventConsumer<'s> {
     system_info: SystemInfo,
     engine: gene::Engine,
     iocs: HashSet<String>,
@@ -183,10 +203,12 @@ struct EventConsumer {
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
     output: Output,
-    task: Option<JoinHandle<Result<(), anyhow::Error>>>,
+    file_scanner: Option<Scanner<'s>>,
+    // used to check if we must generate FileScan events
+    scan_events_enabled: bool,
 }
 
-impl EventConsumer {
+impl<'s> EventConsumer<'s> {
     fn prepare_output(config: &Config) -> anyhow::Result<Output> {
         let output = match &config.output.as_str() {
             &"stdout" => String::from("/dev/stdout"),
@@ -244,8 +266,15 @@ impl EventConsumer {
             tasks: HashMap::new(),
             resolved: HashMap::new(),
             output: Self::prepare_output(&config)?,
-            task: None,
+            file_scanner: None,
+            scan_events_enabled: config
+                .events
+                .iter()
+                .any(|e| e.name() == Type::FileScan.as_str() && e.is_enabled()),
         };
+
+        // initializing yara rules
+        ep.init_file_scanner(&config)?;
 
         // loading rules in the engine
         if !config.rules.is_empty() {
@@ -280,27 +309,42 @@ impl EventConsumer {
         Ok(ep)
     }
 
-    /// Listen for events on the receiver
-    pub async fn consume(
-        self,
-        mut receiver: mpsc::Receiver<EncodedEvent>,
-    ) -> anyhow::Result<Arc<RwLock<EventConsumer>>> {
-        let ep = Arc::new(RwLock::new(self));
+    #[inline(always)]
+    fn init_file_scanner(&mut self, config: &Config) -> anyhow::Result<()> {
+        let wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // will list only files
+            // with following extensions
+            .extension("yar")
+            .extension("yara")
+            // don't go recursive
+            .max_depth(0);
 
-        let shared = Arc::clone(&ep);
+        let mut c = yara_x::Compiler::new();
 
-        // we spawn thread only if there is a receiver
-        ep.write().await.task = Some(tokio::spawn(async move {
-            while let Some(mut enc) = receiver.recv().await {
-                // lock error is a symptom of implementation mistake so we panic
-                let mut ep = shared.write().await;
-                ep.handle_event(&mut enc);
+        let mut files_loaded = 0;
+        for p in config.yara.iter() {
+            debug!("looking for yara rules in: {}", p);
+            let w = wo.clone().walk(p);
+            for r in w {
+                let rule_file = r?;
+                info!(
+                    "loading yara rule(s) from file: {}",
+                    rule_file.to_string_lossy()
+                );
+                let src = SourceCode::from_rule_file(rule_file)?;
+                c.add_source(src.to_native())?;
+                files_loaded += 1;
             }
+        }
 
-            Ok::<(), anyhow::Error>(())
-        }));
+        // we don't actually initialize an empty scanner
+        if files_loaded > 0 {
+            self.file_scanner = Some(Scanner::with_rules(c.build()));
+        }
 
-        Ok(ep)
+        Ok(())
     }
 
     fn load_iocs<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
@@ -522,25 +566,25 @@ impl EventConsumer {
     }
 
     #[inline]
-    fn get_hashes_with_ns(
-        &mut self,
-        ns: Option<Namespace>,
-        p: &kunai_common::path::Path,
-    ) -> Hashes {
+    fn get_hashes_with_ns(&mut self, ns: Option<Namespace>, p: &cache::Path) -> Hashes {
         if let Some(ns) = ns {
             match self.cache.get_or_cache_in_ns(ns, p) {
                 Ok(h) => h,
                 Err(e) => Hashes {
-                    file: p.to_path_buf(),
-                    error: Some(format!("{e}")),
-                    ..Default::default()
+                    file: p.to_path_buf().clone(),
+                    meta: FileMeta {
+                        error: Some(format!("{e}")),
+                        ..Default::default()
+                    },
                 },
             }
         } else {
             Hashes {
-                file: p.to_path_buf(),
-                error: Some("unknown namespace".into()),
-                ..Default::default()
+                file: p.to_path_buf().clone(),
+                meta: FileMeta {
+                    error: Some("unknown namespace".into()),
+                    ..Default::default()
+                },
             }
         }
     }
@@ -572,12 +616,14 @@ impl EventConsumer {
             ancestors: ancestors.join("|"),
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
-            exe: self.get_hashes_with_ns(opt_mnt_ns, &event.data.executable),
+            exe: self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
             interpreter: None,
         };
 
         if event.data.executable != event.data.interpreter {
-            data.interpreter = Some(self.get_hashes_with_ns(opt_mnt_ns, &event.data.interpreter))
+            data.interpreter = Some(
+                self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.interpreter)),
+            )
         }
 
         UserEvent::new(data, info)
@@ -666,7 +712,7 @@ impl EventConsumer {
     ) -> UserEvent<kunai::events::MmapExecData> {
         let filename = event.data.filename;
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
-        let mmapped_hashes = self.get_hashes_with_ns(opt_mnt_ns, &filename);
+        let mmapped_hashes = self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&filename));
 
         let ck = info.task_key();
 
@@ -1073,7 +1119,7 @@ impl EventConsumer {
     #[inline]
     fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
         let opt_mnt_ns = Self::task_mnt_ns(&info.info);
-        self.get_hashes_with_ns(opt_mnt_ns, &event.data.path);
+        self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.path));
     }
 
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
@@ -1143,6 +1189,106 @@ impl EventConsumer {
     }
 
     #[inline(always)]
+    fn handle_actions<T: Serialize + KunaiEvent>(
+        &mut self,
+        event: &T,
+        actions: &HashSet<String>,
+        is_detection: bool,
+    ) {
+        // some actions are allowed only for detections
+        #[allow(clippy::collapsible_if)]
+        if is_detection {
+            // for the moment we only support killing the
+            // task itself and not its parent. Additional
+            // care must be taken to the parent as we need
+            // to be sure we are not killing something critical.
+            // Generally speaking killing action must be done with
+            // care as sending a SIGKILL to a critical process
+            // might impact the system.
+            if actions.contains(Actions::Kill.as_str()) {
+                let pid = event.info().task.pid;
+                // this is the kind of information we want to have
+                // at all time so we put this as a warning not to
+                // be disabled by the default logging policy
+                warn!("sending SIGKILL to PID={pid}");
+                if let Err(e) = kill(pid, libc::SIGKILL) {
+                    error!("error sending SIGKILL to PID={pid}: {e}")
+                }
+            }
+        }
+
+        // if action contains scan-file and if scan events are enabled
+        if self.scan_events_enabled && actions.contains(Actions::ScanFiles.as_str()) {
+            let _ = self
+                .action_scan_files(event)
+                .inspect_err(|e| error!("{} action failed: {e}", Actions::ScanFiles));
+        }
+    }
+
+    #[inline(always)]
+    fn file_scan_event<T: Serialize + KunaiEvent>(
+        &mut self,
+        event: &T,
+        ns: Namespace,
+        p: &Path,
+    ) -> UserEvent<FileScanData> {
+        // if the scanner is None, signatures will be an empty Vec
+        let (sigs, err) = match self.file_scanner.as_mut() {
+            Some(s) => match self
+                .cache
+                .get_sig_or_cache(ns, &cache::Path::from(p.to_path_buf()), s)
+            {
+                Ok(sigs) => (sigs, None),
+                Err(e) => (vec![], Some(format!("{e}"))),
+            },
+            None => (vec![], None),
+        };
+
+        let pos = sigs.len();
+        let mut data = FileScanData::from_hashes(
+            self.get_hashes_with_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
+        );
+        data.source_event = event.info().event.uuid.clone();
+        data.signatures = sigs;
+        data.positives = pos;
+        data.scan_error = err;
+
+        let info = EventInfo::from_other_with_type(event.info().clone(), Type::FileScan);
+        UserEvent::with_data_and_info(data, info)
+    }
+
+    #[inline(always)]
+    fn action_scan_files<T: Serialize + KunaiEvent>(&mut self, event: &T) -> anyhow::Result<()> {
+        // this check prevents infinite loop for FileScan events
+        if event.info().event.id == Type::FileScan.id() {
+            return Ok(());
+        }
+
+        let ns = match event.info().task.namespaces.as_ref() {
+            Some(ns) => Namespace::mnt(ns.mnt),
+            None => return Err(anyhow!("namespace not found")),
+        };
+
+        for p in event.scannable_files() {
+            let mut event = self.file_scan_event(event, ns, &p);
+            // print a warning if a positive scan happens so that a trace
+            // is kept in system logs
+            if event.data.positives > 0 {
+                warn!(
+                    "file={} matches detection signatures={:?} triggered by event uuid={}",
+                    p.to_string_lossy(),
+                    &event.data.signatures,
+                    &event.info().event.uuid,
+                )
+            }
+            // we run through event scanning engine
+            self.scan_and_print(&mut event);
+        }
+
+        Ok(())
+    }
+
+    #[inline(always)]
     fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) {
         macro_rules! serialize {
             ($event:expr) => {
@@ -1164,8 +1310,13 @@ impl EventConsumer {
             if sr.is_detection() {
                 event.set_detection(sr);
                 serialize!(event);
+                // get_detection will always be false for filters
+                if let Some(sr) = event.get_detection() {
+                    self.handle_actions(event, &sr.actions, true)
+                }
             } else if sr.is_only_filter() {
                 serialize!(event);
+                self.handle_actions(event, &sr.actions, false);
             }
         }
     }
@@ -1198,7 +1349,7 @@ impl EventConsumer {
             Type::Unknown => {
                 error!("Unknown event type: {}", etype as u64)
             }
-            Type::Max | Type::EndEvents | Type::TaskSched => {}
+            Type::Max | Type::EndConfigurable | Type::TaskSched | Type::FileScan => {}
             Type::Execve | Type::ExecveScript => {
                 match event!(enc_event, bpf_events::ExecveEvent) {
                     Ok(e) => {
@@ -1884,6 +2035,10 @@ struct RunOpt {
     /// File containing IoCs (json line).
     #[arg(short, long, value_name = "FILE")]
     ioc_file: Option<Vec<String>>,
+
+    /// Yara rules dir/file. Supersedes configuration file.
+    #[arg(short, long, value_name = "FILE")]
+    yara_rules: Option<Vec<String>>,
 }
 
 impl TryFrom<RunOpt> for Config {
@@ -1908,6 +2063,11 @@ impl TryFrom<RunOpt> for Config {
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
             conf.iocs = iocs;
+        }
+
+        // supersedes configuration
+        if let Some(yara_rules) = opt.yara_rules {
+            conf.yara = yara_rules;
         }
 
         // supersedes configuration if true
@@ -2105,12 +2265,13 @@ impl Command {
                         Type::BpfProgLoad => scan_event!(p, BpfProgLoadData),
                         Type::BpfSocketFilter => scan_event!(p, BpfSocketFilterData),
                         Type::Exit | Type::ExitGroup => scan_event!(p, ExitData),
+                        Type::FileScan => scan_event!(p, FileScanData),
 
                         Type::Unknown
                         | Type::CacheHash
                         | Type::Correlation
                         | Type::Error
-                        | Type::EndEvents
+                        | Type::EndConfigurable
                         | Type::TaskSched
                         | Type::SyscoreResume
                         | Type::Max => {}
@@ -2176,16 +2337,21 @@ impl Command {
             .build()
             .unwrap();
 
+        // we start event reader and event processor before loading the programs
+        // if we load the programs first we might have some event lost errors
+        let (sender, mut receiver) = mpsc::channel(512);
+
+        // we start consumer
+        let mut cons = EventConsumer::with_config(conf.clone())?;
+        let mut cons_task = runtime.spawn(async move {
+            while let Some(mut enc) = receiver.recv().await {
+                cons.handle_event(&mut enc);
+            }
+
+            Ok::<(), anyhow::Error>(())
+        });
+
         runtime.block_on(async move {
-            // we start event reader and event processor before loading the programs
-            // if we load the programs first we might have some event lost errors
-            let (sender, receiver) = mpsc::channel(512);
-
-            // we start consumer
-            let cons = EventConsumer::with_config(conf.clone())?
-                .consume(receiver)
-                .await?;
-
             // we spawn a task to reload producer when needed
             let main = async move {
                 loop {
@@ -2214,14 +2380,10 @@ impl Command {
 
                         // we check if task spawned by consumer failed
                         // if yes we make it panic
-                        let mut cons = cons.write().await;
-                        if let Ok(res) =
-                            timeout(Duration::from_nanos(1), cons.task.as_mut().unwrap()).await
-                        {
+                        let cons = &mut cons_task;
+                        if let Ok(res) = timeout(Duration::from_nanos(1), cons).await {
                             res.unwrap().unwrap();
                         }
-                        // don't keep lock on consumer
-                        drop(cons);
 
                         // we check if a task spawned by the producer failed
                         // if yes we make it panic

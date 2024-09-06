@@ -9,10 +9,12 @@ use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
 use gene::{Event, FieldGetter, FieldValue};
 use gene_derive::{Event, FieldGetter};
 
+use kunai_common::bpf_events;
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
+use uuid::Uuid;
 
 use crate::{
-    cache::Hashes,
+    cache::{FileMeta, Hashes},
     containers::Container,
     info::{ContainerInfo, StdEventInfo},
 };
@@ -28,7 +30,7 @@ impl From<PathBuf> for File {
     }
 }
 
-#[derive(FieldGetter, Serialize, Deserialize)]
+#[derive(FieldGetter, Serialize, Deserialize, Clone)]
 #[getter(use_serde_rename)]
 pub struct ContainerSection {
     pub name: String,
@@ -45,21 +47,21 @@ impl From<ContainerInfo> for ContainerSection {
     }
 }
 
-#[derive(FieldGetter, Serialize, Deserialize)]
+#[derive(FieldGetter, Serialize, Deserialize, Clone)]
 pub struct HostSection {
     #[getter(skip)]
-    uuid: uuid::Uuid,
-    name: String,
-    container: Option<ContainerSection>,
+    pub uuid: uuid::Uuid,
+    pub name: String,
+    pub container: Option<ContainerSection>,
 }
 
-#[derive(FieldGetter, Serialize, Deserialize)]
+#[derive(FieldGetter, Serialize, Deserialize, Clone)]
 pub struct EventSection {
-    source: String,
-    id: u32,
-    name: String,
-    uuid: String,
-    batch: usize,
+    pub source: String,
+    pub id: u32,
+    pub name: String,
+    pub uuid: String,
+    pub batch: usize,
 }
 
 impl From<&StdEventInfo> for EventSection {
@@ -74,9 +76,9 @@ impl From<&StdEventInfo> for EventSection {
     }
 }
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize)]
+#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct NamespaceInfo {
-    mnt: u32,
+    pub mnt: u32,
 }
 
 impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
@@ -85,17 +87,17 @@ impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
     }
 }
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize)]
+#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct TaskSection {
-    name: String,
-    pid: i32,
-    tgid: i32,
-    guuid: String,
-    uid: u32,
-    gid: u32,
-    namespaces: Option<NamespaceInfo>,
+    pub name: String,
+    pub pid: i32,
+    pub tgid: i32,
+    pub guuid: String,
+    pub uid: u32,
+    pub gid: u32,
+    pub namespaces: Option<NamespaceInfo>,
     #[serde(with = "u32_hex")]
-    flags: u32,
+    pub flags: u32,
 }
 
 impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
@@ -113,6 +115,7 @@ impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
     }
 }
 
+#[derive(Clone)]
 pub struct UtcDateTime(DateTime<Utc>);
 
 impl From<DateTime<Utc>> for UtcDateTime {
@@ -173,7 +176,7 @@ impl FieldGetter for UtcDateTime {
     }
 }
 
-#[derive(FieldGetter, Serialize, Deserialize)]
+#[derive(FieldGetter, Serialize, Deserialize, Clone)]
 pub struct EventInfo {
     pub host: HostSection,
     pub event: EventSection,
@@ -205,8 +208,25 @@ impl From<StdEventInfo> for EventInfo {
     }
 }
 
+impl EventInfo {
+    pub fn from_other_with_type(mut other: EventInfo, ty: bpf_events::Type) -> Self {
+        other.event.name = ty.to_string();
+        other.event.id = ty.id();
+        other.event.uuid = Uuid::new_v4().to_string();
+        other
+    }
+}
+
+/// Trait providing a function returning all the IoCs
+/// the implementer can provide for IoC checking purposes.
 pub trait IocGetter {
     fn iocs(&mut self) -> Vec<Cow<'_, str>>;
+}
+
+/// Trait to represent the fact that an event may be
+/// scanned by a file scanner.
+pub trait Scannable {
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>>;
 }
 
 macro_rules! impl_std_iocs {
@@ -279,8 +299,10 @@ impl ScanResult {
     }
 }
 
-pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter {
+pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannable {
     fn set_detection(&mut self, sr: ScanResult);
+    fn get_detection(&self) -> &Option<ScanResult>;
+    fn info(&self) -> &EventInfo;
 }
 
 #[derive(Event, FieldGetter, Serialize, Deserialize)]
@@ -296,17 +318,39 @@ impl<T> IocGetter for UserEvent<T>
 where
     T: IocGetter,
 {
+    #[inline(always)]
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         self.data.iocs()
     }
 }
 
+impl<T> Scannable for UserEvent<T>
+where
+    T: Scannable,
+{
+    #[inline(always)]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        self.data.scannable_files()
+    }
+}
+
 impl<T> KunaiEvent for UserEvent<T>
 where
-    T: FieldGetter + IocGetter,
+    T: FieldGetter + IocGetter + Scannable,
 {
+    #[inline(always)]
     fn set_detection(&mut self, sr: ScanResult) {
         self.detection = Some(sr)
+    }
+
+    #[inline(always)]
+    fn get_detection(&self) -> &Option<ScanResult> {
+        &self.detection
+    }
+
+    #[inline(always)]
+    fn info(&self) -> &EventInfo {
+        &self.info
     }
 }
 
@@ -316,6 +360,14 @@ impl<T> UserEvent<T> {
             data,
             detection: None,
             info: info.into(),
+        }
+    }
+
+    pub fn with_data_and_info(data: T, info: EventInfo) -> Self {
+        Self {
+            data,
+            detection: None,
+            info,
         }
     }
 }
@@ -416,6 +468,17 @@ pub struct ExecveData {
     pub interpreter: Option<Hashes>,
 }
 
+impl Scannable for ExecveData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        let mut v = vec![Cow::Borrowed(&self.exe.file)];
+        if let Some(interp) = self.interpreter.as_ref() {
+            v.push(Cow::Borrowed(&interp.file));
+        }
+        v
+    }
+}
+
 impl IocGetter for ExecveData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         // parent_exe path
@@ -440,6 +503,13 @@ def_user_data!(
     }
 );
 
+impl Scannable for CloneData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 impl_std_iocs!(CloneData);
 
 def_user_data!(
@@ -459,6 +529,13 @@ def_user_data!(
 
 impl_std_iocs!(PrctlData);
 
+impl Scannable for PrctlData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct TargetTask {
     pub command_line: String,
@@ -473,6 +550,13 @@ def_user_data!(
     }
 );
 
+impl Scannable for KillData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 impl_std_iocs!(KillData);
 
 def_user_data!(
@@ -480,6 +564,16 @@ def_user_data!(
         pub mapped: Hashes,
     }
 );
+
+impl Scannable for MmapExecData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![
+            Cow::Borrowed(&self.exe.file),
+            Cow::Borrowed(&self.mapped.file),
+        ]
+    }
+}
 
 impl IocGetter for MmapExecData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
@@ -497,6 +591,13 @@ def_user_data!(
         pub prot: u64,
     }
 );
+
+impl Scannable for MprotectData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
 
 impl_std_iocs!(MprotectData);
 
@@ -540,6 +641,13 @@ def_user_data!(
         pub connected: bool,
     }
 );
+
+impl Scannable for ConnectData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
 
 impl IocGetter for ConnectData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
@@ -588,6 +696,13 @@ impl DnsQueryData {
     }
 }
 
+impl Scannable for DnsQueryData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 impl IocGetter for DnsQueryData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         // we build up responses if needed
@@ -618,6 +733,13 @@ def_user_data!(
     }
 );
 
+impl Scannable for SendDataData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 impl IocGetter for SendDataData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         let mut v = vec![self.exe.file.to_string_lossy()];
@@ -643,6 +765,13 @@ impl IocGetter for InitModuleData {
     }
 }
 
+impl Scannable for InitModuleData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 def_user_data!(
     pub struct RWData {
         pub path: PathBuf,
@@ -652,6 +781,13 @@ def_user_data!(
 impl IocGetter for RWData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
+    }
+}
+
+impl Scannable for RWData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file), Cow::Borrowed(&self.path)]
     }
 }
 
@@ -665,6 +801,13 @@ def_user_data!(
 impl IocGetter for UnlinkData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
+    }
+}
+
+impl Scannable for UnlinkData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
     }
 }
 
@@ -682,6 +825,13 @@ impl IocGetter for FileRenameData {
             self.old.to_string_lossy(),
             self.new.to_string_lossy(),
         ]
+    }
+}
+
+impl Scannable for FileRenameData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file), Cow::Borrowed(&self.new)]
     }
 }
 
@@ -726,6 +876,13 @@ impl IocGetter for BpfProgLoadData {
     }
 }
 
+impl Scannable for BpfProgLoadData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct SocketInfo {
     pub domain: String,
@@ -751,6 +908,13 @@ def_user_data!(
     }
 );
 
+impl Scannable for BpfSocketFilterData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 impl IocGetter for BpfSocketFilterData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
@@ -769,4 +933,50 @@ def_user_data!(
     }
 );
 
+impl Scannable for ExitData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.file)]
+    }
+}
+
 impl_std_iocs!(ExitData);
+
+#[derive(Default, Debug, Serialize, Deserialize, FieldGetter)]
+pub struct FileScanData {
+    pub file: PathBuf,
+    pub meta: FileMeta,
+    #[getter(skip)]
+    pub signatures: Vec<String>,
+    pub positives: usize,
+    pub source_event: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_error: Option<String>,
+}
+
+impl FileScanData {
+    pub fn from_hashes(h: Hashes) -> Self {
+        Self {
+            file: h.file,
+            meta: h.meta,
+            ..Default::default()
+        }
+    }
+}
+
+impl Scannable for FileScanData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![]
+    }
+}
+
+impl IocGetter for FileScanData {
+    // we might want to scan hashes against IoCs later than execve
+    #[inline(always)]
+    fn iocs(&mut self) -> Vec<Cow<'_, str>> {
+        let mut v = vec![self.file.to_string_lossy()];
+        v.extend(self.meta.iocs());
+        v
+    }
+}
