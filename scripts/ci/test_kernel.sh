@@ -9,7 +9,7 @@ initramfs=${tmp_dir}/initramfs.img
 
 
 # building initramfs with our test binary as init
-cp target/x86_64-unknown-linux-musl/release/tests $tmp_dir/init
+cp target/x86_64-unknown-linux-gnu/release/tests $tmp_dir/init
 echo "init" | cpio -D $tmp_dir -o -H newc > $initramfs
 
 distro="ubuntu"
