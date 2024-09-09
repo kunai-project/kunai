@@ -1576,9 +1576,10 @@ struct EventProducer {
 }
 
 #[inline(always)]
-fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) -> usize {
-    let c = (max_event_size * n_events) / page_size;
-    2usize.pow(c.ilog2() + 1)
+const fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) -> usize {
+    // Aya's PerfBuffer expects a page_count being a power of two
+    // this is something required by the linux kernel
+    ((max_event_size * n_events) / page_size).next_power_of_two()
 }
 
 impl EventProducer {
