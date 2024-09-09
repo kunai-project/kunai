@@ -196,7 +196,7 @@ impl TaskInfo {
     not_bpf_target_code! {
         #[inline(always)]
         pub fn comm_string(&self) -> std::string::String {
-            crate::utils::cstr_to_string(self.comm)
+            self.comm_str().into()
         }
     }
 }
