@@ -265,6 +265,11 @@ impl Cache {
     }
 
     #[inline]
+    pub fn uncache_ns(&mut self, ns: &Namespace) {
+        let _ = self.namespaces.remove(ns);
+    }
+
+    #[inline]
     pub fn get_sig_or_cache(
         &mut self,
         ns: Namespace,

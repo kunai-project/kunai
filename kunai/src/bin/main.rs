@@ -1048,7 +1048,7 @@ impl<'s> EventConsumer<'s> {
                 // we can remove it from the table.
                 self.tasks.remove(&tk);
             } else {
-                // we can free up some memory and tag the task as exitted
+                // we can free up some memory and tag the task as exited
                 self.tasks.entry(tk).and_modify(|t| t.on_exit());
             }
 
@@ -1058,6 +1058,12 @@ impl<'s> EventConsumer<'s> {
                 self.tasks.retain(|_, t| !(t.exit && t.child_count == 0));
                 // shrinking tasks HashMap
                 self.tasks.shrink_to_fit();
+            }
+
+            // we need to cleanup cached namespaces otherwise we exhaust opened fds
+            if let Some(nss) = info.info.process.namespaces {
+                let mnt_ns = Namespace::mnt(nss.mnt);
+                self.cache.uncache_ns(&mnt_ns);
             }
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
