@@ -1,4 +1,4 @@
-use std::{borrow::Cow, os::unix::process::CommandExt, process::Command};
+use std::{os::unix::process::CommandExt, process::Command};
 
 use anyhow::Context as _;
 use clap::Parser;
@@ -6,7 +6,7 @@ use clap::Parser;
 use crate::ebpf::{self, BpfTarget};
 use crate::utils::vec_rustflags;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct RunOptions {
     /// Build and run the release target
     #[clap(long)]
@@ -51,6 +51,19 @@ impl From<&RunOptions> for BuildOptions {
             release: value.release,
             bpf_link_arg: value.bpf_link_arg.clone(),
             build_args: vec![],
+        }
+    }
+}
+
+impl RunOptions {
+    pub(crate) fn profile(&self) -> Option<&str> {
+        if self.release {
+            return Some("release");
+        }
+
+        match self.profile.as_ref() {
+            Some(prof) => Some(prof),
+            None => None,
         }
     }
 }
@@ -109,15 +122,23 @@ impl From<&BuildOptions> for ebpf::BuildOptions {
     }
 }
 
+impl BuildOptions {
+    pub(crate) fn profile(&self) -> Option<&str> {
+        if self.release {
+            return Some("release");
+        }
+
+        match self.profile.as_ref() {
+            Some(prof) => Some(prof),
+            None => None,
+        }
+    }
+}
+
 fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
-    let mut opts = opts.clone();
     let mut args = vec![command.to_string()];
 
-    if opts.release {
-        opts.profile = Some("release".into());
-    }
-
-    if let Some(profile) = opts.profile.as_ref() {
+    if let Some(profile) = opts.profile() {
         args.push(format!("--profile={}", profile));
     }
 
@@ -162,14 +183,12 @@ pub fn build_all(ebpf_dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Erro
 pub fn run(ebpf_dir: &str, opts: &RunOptions) -> Result<(), anyhow::Error> {
     build_all(ebpf_dir, &opts.into())?;
 
-    // profile we are building (release or debug)
-    let profile = match opts.profile.as_ref() {
-        Some(profile) => Cow::Borrowed(profile.as_str()),
-        _ => "debug".into(),
-    };
-
     // we get the binary path
-    let bin_path = format!("target/{}/{profile}/kunai", opts.target);
+    let bin_path = format!(
+        "target/{}/{}/kunai",
+        opts.target,
+        opts.profile().unwrap_or("debug")
+    );
 
     // arguments to pass to the application
     let mut run_args: Vec<_> = opts.run_args.iter().map(String::as_str).collect();
