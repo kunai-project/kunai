@@ -91,6 +91,18 @@ MUSL target, it may work using `lld` as linker and it works for `aarch64-unknown
 **NB:** specifying `--linker` option is just a shortcut for setting appropriate RUSTFLAGS env variable when building userland
 application.
 
+# Memory Profiling
+
+If one believes Kunai has an issue with memory, here is a way to profile it.
+
+```bash
+# compile kunai with debug information for all packages
+RUSTFLAGS="-g" cargo xbuild
+
+# use heaptrack
+sudo heaptrack kunai
+```
+
 # Related Work
 
 Sysmon For Linux: https://github.com/Sysinternals/SysmonForLinux
