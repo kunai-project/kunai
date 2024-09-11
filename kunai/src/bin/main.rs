@@ -39,6 +39,7 @@ use tokio::sync::mpsc::error::SendError;
 use tokio::time::timeout;
 
 use std::borrow::Cow;
+use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use std::fs::{self, DirBuilder, File};
@@ -205,7 +206,7 @@ impl std::fmt::Display for Actions {
 struct EventConsumer<'s> {
     system_info: SystemInfo,
     engine: gene::Engine,
-    iocs: HashSet<String>,
+    iocs: HashMap<String, u8>,
     random: u32,
     cache: cache::Cache,
     tasks: HashMap<TaskKey, Task>,
@@ -269,7 +270,7 @@ impl<'s> EventConsumer<'s> {
         let mut ep = Self {
             system_info,
             engine: Engine::new(),
-            iocs: HashSet::new(),
+            iocs: HashMap::new(),
             random: util::getrandom::<u32>().unwrap(),
             cache: Cache::with_max_entries(10000),
             tasks: HashMap::with_capacity(512),
@@ -364,7 +365,10 @@ impl<'s> EventConsumer<'s> {
         for line in f.lines() {
             let line = line?;
             let ioc: IoC = serde_json::from_str(&line)?;
-            self.iocs.insert(ioc.value);
+            self.iocs
+                .entry(ioc.value)
+                .and_modify(|e| *e = max(*e, ioc.severity))
+                .or_insert(ioc.severity);
         }
 
         Ok(())
@@ -1054,12 +1058,12 @@ impl<'s> EventConsumer<'s> {
                 }
 
                 if t.threads.is_empty() && !t.procfs {
-                // if the task has no child and is not coming from procfs
-                // we can remove it from the table.
-                self.tasks.remove(&tk);
-            } else {
-                // we can free up some memory and tag the task as exited
-                self.tasks.entry(tk).and_modify(|t| t.on_exit());
+                    // if the task has no child and is not coming from procfs
+                    // we can remove it from the table.
+                    self.tasks.remove(&tk);
+                } else {
+                    // we can free up some memory and tag the task as exited
+                    self.tasks.entry(tk).and_modify(|t| t.on_exit());
                 }
             }
 
@@ -1238,9 +1242,14 @@ impl<'s> EventConsumer<'s> {
         let matching_iocs = event
             .iocs()
             .iter()
-            .filter(|ioc| self.iocs.contains(&ioc.to_string()))
+            .filter(|ioc| self.iocs.contains_key(&ioc.to_string()))
             .map(|ioc| ioc.to_string())
             .collect::<HashSet<String>>();
+
+        let ioc_severity: usize = matching_iocs
+            .iter()
+            .map(|ioc| self.iocs.get(ioc).map(|e| *e as usize).unwrap_or_default())
+            .sum();
 
         if !matching_iocs.is_empty() {
             // we create a new ScanResult if necessary
@@ -1251,9 +1260,7 @@ impl<'s> EventConsumer<'s> {
             // we add ioc matching to the list of matching rules
             if let Some(sr) = scan_result.as_mut() {
                 sr.iocs = matching_iocs;
-                // if we match an ioc we consider the event is of
-                // the higher severity
-                sr.severity = MAX_SEVERITY;
+                sr.severity = ioc_severity.clamp(0, MAX_SEVERITY as usize) as u8;
             }
         }
 
