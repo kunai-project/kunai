@@ -20,7 +20,7 @@ thiserror = "1.0"
 procfs = "0.16"
 ip_network = "0.4"
 
-lru-st = { version = "0.1.1", features = ["sync"] }
+lru-st = { version = "0.2", features = ["sync"] }
 aya = { version = "0.12.0", features = ["async_tokio"] }
 
 # detection engine for events
