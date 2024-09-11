@@ -1,11 +1,6 @@
 use core::ops::Rem;
 
-use crate::macros::{bpf_target_code, not_bpf_target_code};
-
-not_bpf_target_code! {
-    mod user;
-    pub use user::*;
-}
+use crate::macros::bpf_target_code;
 
 bpf_target_code! {
     mod bpf;

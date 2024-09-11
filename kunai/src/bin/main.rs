@@ -93,6 +93,11 @@ struct Task {
     cgroups: Vec<String>,
     nodename: Option<String>,
     parent_key: Option<TaskKey>,
+    threads: HashSet<TaskKey>,
+    // flag telling if this task comes from procfs
+    // parsing at kunai start
+    procfs: bool,
+    exit: bool,
 }
 
 impl Task {
@@ -107,10 +112,13 @@ impl Task {
         self.command_line.join(" ")
     }
 
+    // run on task exit
     #[inline(always)]
-    fn free_memory(&mut self) {
+    fn on_exit(&mut self) {
         // this does not allocate the new map
-        self.resolved = HashMap::new();
+        self.resolved.clear();
+        self.resolved.shrink_to_fit();
+        self.exit = true;
     }
 }
 
@@ -202,6 +210,7 @@ struct EventConsumer<'s> {
     cache: cache::Cache,
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
+    exited_tasks: u64,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
     // used to check if we must generate FileScan events
@@ -263,7 +272,8 @@ impl<'s> EventConsumer<'s> {
             iocs: HashSet::new(),
             random: util::getrandom::<u32>().unwrap(),
             cache: Cache::with_max_entries(10000),
-            tasks: HashMap::new(),
+            tasks: HashMap::with_capacity(512),
+            exited_tasks: 0,
             resolved: HashMap::new(),
             output: Self::prepare_output(&config)?,
             file_scanner: None,
@@ -446,6 +456,9 @@ impl<'s> EventConsumer<'s> {
             cgroups,
             nodename: None,
             parent_key,
+            threads: HashSet::new(),
+            procfs: true,
+            exit: false,
         };
 
         self.tasks.insert(tk, task);
@@ -1023,12 +1036,60 @@ impl<'s> EventConsumer<'s> {
         if (matches!(etype, Type::Exit) && info.info.process.pid == info.info.process.tgid)
             || matches!(etype, Type::ExitGroup)
         {
-            // find a more elaborated way to save space
-            // we need to keep some minimal correlations
-            // maybe through cached ancestors and parent_image
-            self.tasks
-                .entry(info.task_key())
-                .and_modify(|t| t.free_memory());
+            let tk = info.task_key();
+
+            // we are exiting so our parent has one child less
+            self.tasks.entry(info.parent_key()).and_modify(|t| {
+                t.threads.remove(&tk);
+            });
+
+            // hashset of threads to be removed
+            let mut remove_threads = HashSet::new();
+
+            if let Some(t) = self.tasks.get(&tk) {
+                // in case on exit_group we need to clean child
+                // threads properly
+                if matches!(etype, Type::ExitGroup) {
+                    remove_threads.extend(t.threads.clone());
+                }
+
+                if t.threads.is_empty() && !t.procfs {
+                // if the task has no child and is not coming from procfs
+                // we can remove it from the table.
+                self.tasks.remove(&tk);
+            } else {
+                // we can free up some memory and tag the task as exited
+                self.tasks.entry(tk).and_modify(|t| t.on_exit());
+                }
+            }
+
+            if !remove_threads.is_empty() {
+                // as parent we can decrease the number of our children
+                self.tasks
+                    .entry(tk)
+                    .and_modify(|t| t.threads.retain(|k| !remove_threads.contains(k)));
+
+                // for every child, we mark it as exited
+                for c in remove_threads {
+                    self.tasks.entry(c).and_modify(|t| t.on_exit());
+                }
+            }
+
+            // we trigger some very specific cleanup
+            if self.exited_tasks % 1000 == 0 {
+                // we remove shadow tasks exited with no child
+                self.tasks.retain(|_, t| !(t.exit && t.threads.is_empty()));
+                // shrinking tasks HashMap
+                self.tasks.shrink_to_fit();
+            }
+
+            // we need to cleanup cached namespaces otherwise we exhaust opened fds
+            if let Some(nss) = info.info.process.namespaces {
+                let mnt_ns = Namespace::mnt(nss.mnt);
+                self.cache.uncache_ns(&mnt_ns);
+            }
+
+            self.exited_tasks = self.exited_tasks.wrapping_add(1);
         }
 
         UserEvent::new(data, info)
@@ -1102,6 +1163,14 @@ impl<'s> EventConsumer<'s> {
             }
         };
 
+        // we update parent's information
+        if matches!(event.data.origin, Type::Clone) {
+            // the source is a Clone event so our task has spawned a child thread
+            self.tasks.entry(info.parent_key()).and_modify(|e| {
+                e.threads.insert(info.task_key());
+            });
+        }
+
         // we insert only if not existing
         self.tasks.entry(ck).or_insert(Task {
             image,
@@ -1113,6 +1182,9 @@ impl<'s> EventConsumer<'s> {
             cgroups,
             nodename: event.data.nodename(),
             parent_key: Some(info.parent_key()),
+            threads: HashSet::new(),
+            procfs: false,
+            exit: false,
         });
     }
 
@@ -1329,21 +1401,16 @@ impl<'s> EventConsumer<'s> {
             debug!("skipping our event");
         }
 
-        if let Some(ns) = i.process.namespaces {
+        let etype = i.etype;
+
+        if let Some(mnt_ns) = Self::task_mnt_ns(i) {
             let pid = i.process.pid;
-            let mnt = Namespace::mnt(ns.mnt);
-            if let Err(e) = self.cache.cache_ns(pid, mnt) {
-                debug!("failed to cache namespace pid={pid} ns={mnt}: {e}");
+            if let Err(e) = self.cache.cache_ns(pid, mnt_ns) {
+                debug!("failed to cache namespace pid={pid} ns={mnt_ns}: {e}");
             }
-        } else {
-            // the few cases where we expect namespaces to be unknown
-            // is for parent's task
-            error!("namespaces are supposed to be known for task")
         }
 
         let std_info = self.build_std_event_info(*i);
-
-        let etype = std_info.info.etype;
 
         match etype {
             Type::Unknown => {
@@ -1537,9 +1604,10 @@ struct EventProducer {
 }
 
 #[inline(always)]
-fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) -> usize {
-    let c = (max_event_size * n_events) / page_size;
-    2usize.pow(c.ilog2() + 1)
+const fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) -> usize {
+    // Aya's PerfBuffer expects a page_count being a power of two
+    // this is something required by the linux kernel
+    ((max_event_size * n_events) / page_size).next_power_of_two()
 }
 
 impl EventProducer {
@@ -2267,6 +2335,7 @@ impl Command {
                         Type::Exit | Type::ExitGroup => scan_event!(p, ExitData),
                         Type::FileScan => scan_event!(p, FileScanData),
 
+                        // types that shound never be seen in replay
                         Type::Unknown
                         | Type::CacheHash
                         | Type::Correlation

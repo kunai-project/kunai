@@ -1,7 +1,8 @@
 use aya_obj::generated::{bpf_attr, bpf_cmd, bpf_prog_info, bpf_prog_type};
 use core::ffi::c_long;
+use std::fs::File;
 use std::io;
-use std::os::fd::RawFd;
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use thiserror::Error;
 
 pub(crate) type SysResult = Result<c_long, io::Error>;
@@ -15,21 +16,24 @@ pub(crate) fn sys_bpf(cmd: bpf_cmd, attr: &bpf_attr) -> SysResult {
     Ok(rc)
 }
 
-pub(crate) fn bpf_prog_get_fd_by_id(prog_id: u32) -> Result<RawFd, io::Error> {
+#[inline]
+pub(crate) fn bpf_prog_get_fd_by_id(prog_id: u32) -> Result<File, io::Error> {
     let mut attr = unsafe { core::mem::zeroed::<bpf_attr>() };
 
     attr.__bindgen_anon_6.__bindgen_anon_1.prog_id = prog_id;
 
     match sys_bpf(bpf_cmd::BPF_PROG_GET_FD_BY_ID, &attr) {
-        Ok(v) => Ok(v as RawFd),
+        // use a File from raw fd to close fd when File goes out of scope
+        Ok(v) => Ok(unsafe { File::from_raw_fd(v as RawFd) }),
         Err(e) => Err(e),
     }
 }
 
-fn bpf_prog_get_info(prog_fd: RawFd, info: &bpf_prog_info) -> Result<(), io::Error> {
+#[inline]
+fn bpf_obj_get_info_by_fd(prog: &File, info: &bpf_prog_info) -> Result<(), io::Error> {
     let mut attr = unsafe { core::mem::zeroed::<bpf_attr>() };
 
-    attr.info.bpf_fd = prog_fd as u32;
+    attr.info.bpf_fd = prog.as_raw_fd() as u32;
     attr.info.info = info as *const _ as u64;
     attr.info.info_len = core::mem::size_of::<bpf_prog_info>() as u32;
 
@@ -37,11 +41,12 @@ fn bpf_prog_get_info(prog_fd: RawFd, info: &bpf_prog_info) -> Result<(), io::Err
     Ok(())
 }
 
-pub(crate) fn bpf_prog_get_info_by_fd(prog_fd: RawFd) -> Result<bpf_prog_info, io::Error> {
+#[inline]
+pub(crate) fn bpf_prog_get_info(prog: &File) -> Result<bpf_prog_info, io::Error> {
     // info gets entirely populated by the kernel
     let info = unsafe { core::mem::zeroed::<bpf_prog_info>() };
 
-    bpf_prog_get_info(prog_fd, &info)?;
+    bpf_obj_get_info_by_fd(prog, &info)?;
     Ok(info)
 }
 
@@ -62,10 +67,11 @@ impl Error {
     }
 }
 
+#[inline]
 pub fn bpf_dump_xlated_by_id_and_tag(prog_id: u32, prog_tag: [u8; 8]) -> Result<Vec<u8>, Error> {
-    let raw_fd = bpf_prog_get_fd_by_id(prog_id)?;
+    let fd = bpf_prog_get_fd_by_id(prog_id)?;
     // we first issue a call to get information about program
-    let info = bpf_prog_get_info_by_fd(raw_fd)?;
+    let info = bpf_prog_get_info(&fd)?;
 
     // verifying that tag is correct
     if info.tag != prog_tag {
@@ -82,11 +88,12 @@ pub fn bpf_dump_xlated_by_id_and_tag(prog_id: u32, prog_tag: [u8; 8]) -> Result<
     info.xlated_prog_len = xlated_prog_len;
 
     // we issue a new request to get instructions
-    bpf_prog_get_info(raw_fd, &info)?;
+    bpf_obj_get_info_by_fd(&fd, &info)?;
 
     Ok(insns)
 }
 
+#[inline]
 pub fn bpf_type_to_string(t: u32) -> String {
     if t > 31 {
         return "unknown".into();

@@ -9,7 +9,6 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fs::File,
     io::{self, BufReader, Read},
     os::unix::prelude::MetadataExt,
@@ -237,7 +236,7 @@ struct CachedNs {
 }
 
 pub struct Cache {
-    namespaces: HashMap<Namespace, CachedNs>,
+    namespaces: LruHashMap<Namespace, CachedNs>,
     hashes: LruHashMap<Key, Hashes>,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
@@ -250,7 +249,7 @@ impl Cache {
     // Constructs a new Hcache
     pub fn with_max_entries(cap: usize) -> Self {
         Cache {
-            namespaces: HashMap::new(),
+            namespaces: LruHashMap::with_max_entries(128),
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
@@ -258,10 +257,20 @@ impl Cache {
 
     #[inline]
     pub fn cache_ns(&mut self, pid: i32, ns: Namespace) -> Result<(), Error> {
-        self.namespaces.entry(ns).or_insert(CachedNs {
-            switcher: Switcher::new(ns.kind, pid as u32).map_err(Error::Namespace)?,
-        });
+        if !self.namespaces.contains_key(&ns) {
+            self.namespaces.insert(
+                ns,
+                CachedNs {
+                    switcher: Switcher::new(ns.kind, pid as u32).map_err(Error::Namespace)?,
+                },
+            );
+        }
         Ok(())
+    }
+
+    #[inline]
+    pub fn uncache_ns(&mut self, ns: &Namespace) {
+        let _ = self.namespaces.remove(ns);
     }
 
     #[inline]

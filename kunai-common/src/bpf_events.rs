@@ -180,6 +180,10 @@ pub struct TaskInfo {
 impl TaskInfo {
     #[inline(always)]
     pub fn comm_str(&self) -> &str {
+        // comm string may or may not contain null byte so CStr are not appropriate
+        if let Some(first) = self.comm.split(|&b| b == b'\0').next() {
+            return unsafe { core::str::from_utf8_unchecked(first) };
+        }
         unsafe { core::str::from_utf8_unchecked(&self.comm[..]) }
     }
 
@@ -196,7 +200,7 @@ impl TaskInfo {
     not_bpf_target_code! {
         #[inline(always)]
         pub fn comm_string(&self) -> std::string::String {
-            crate::utils::cstr_to_string(self.comm)
+            self.comm_str().into()
         }
     }
 }
