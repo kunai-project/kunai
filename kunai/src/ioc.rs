@@ -5,4 +5,5 @@ pub struct IoC {
     pub source: String,
     pub uuid: uuid::Uuid,
     pub value: String,
+    pub severity: u8,
 }
