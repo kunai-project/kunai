@@ -307,10 +307,6 @@ impl<'s> EventConsumer<'s> {
             info!("number of IoCs loaded: {}", ep.iocs.len());
         }
 
-        config
-            .host_uuid()
-            .ok_or(anyhow!("failed to read host_uuid"))?;
-
         // should not raise any error, we just print it
         let _ = inspect_err! {
             ep.init_tasks_from_procfs(),
