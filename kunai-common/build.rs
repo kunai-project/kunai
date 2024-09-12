@@ -12,6 +12,7 @@ fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q) {
         .size_t_is_usize(false) // --no-size_t-is-usize
         .clang_arg("-target")
         .clang_arg("bpf")
+        .disable_header_comment()
         .generate()
         .expect("failed at generating bindings");
 

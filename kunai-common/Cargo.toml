@@ -1,8 +1,8 @@
 [package]
 name = "kunai-common"
-version = "0.2.6"
 edition = "2021"
 description = "Package providing shared structures between eBPF and userland"
+version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -13,7 +13,7 @@ default = []
 user = ["aya", "dns-parser", "uuid", "tokio", "bytes", "futures", "thiserror"]
 
 [build-dependencies]
-bindgen = "0.69.2"
+bindgen = "0.69"
 
 [dependencies]
 # Non Aya deps

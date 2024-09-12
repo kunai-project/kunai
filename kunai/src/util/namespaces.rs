@@ -4,10 +4,8 @@ use std::num::ParseIntError;
 use std::os::unix::io::RawFd;
 
 use std::path::PathBuf;
-use std::sync::LazyLock;
-use std::time::Duration;
+use std::process;
 use std::{fs::File, os::fd::AsRawFd};
-use std::{process, thread};
 
 use kunai_macros::StrEnum;
 use libc::{c_int, pid_t, syscall, SYS_pidfd_open, CLONE_NEWNS};
@@ -98,30 +96,6 @@ pub enum NsError {
     Io(#[from] IoError),
 }
 
-static PROC_MNT_NS: LazyLock<Namespace> = LazyLock::new(|| {
-    // we wait max 1s that the file appear
-    let p = Kind::path(&Kind::Mnt, process::id());
-    for _ in 0..1000 {
-        if p.exists() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(1))
-    }
-    Namespace::from_pid(Kind::Mnt, process::id()).unwrap()
-});
-
-static PROC_MNT_NS_FILE: LazyLock<File> = LazyLock::new(|| {
-    // we wait max 1s that the file appear
-    let p = Kind::path(&Kind::Mnt, process::id());
-    for _ in 0..1000 {
-        if p.exists() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(1))
-    }
-    Namespace::open(Kind::Mnt, process::id()).unwrap()
-});
-
 impl Namespace {
     #[inline(always)]
     pub const fn new(kind: Kind, inum: u32) -> Namespace {
@@ -173,11 +147,6 @@ impl Namespace {
         self.kind == kind
     }
 
-    #[inline(always)]
-    pub fn is_process_ns(&self) -> bool {
-        self.eq(&PROC_MNT_NS)
-    }
-
     #[inline]
     pub fn from_pid(kind: Kind, pid: u32) -> Result<Self, NsError> {
         let link = kind.path(pid).read_link()?;
@@ -207,6 +176,7 @@ impl Namespace {
 #[derive(Debug)]
 pub struct Switcher {
     pub namespace: Namespace,
+    src: File,
     dst: File,
 }
 
@@ -220,31 +190,31 @@ pub enum Error {
 
 impl Switcher {
     pub fn new(kind: Kind, pid: u32) -> Result<Self, Error> {
+        let self_pid = process::id();
         let ns = Namespace::from_pid(kind, pid)?;
 
+        // namespace of the current process
+        let src = Namespace::open(kind, self_pid)?;
         // namespace of the target process
         let dst = Namespace::open(kind, pid)?;
 
-        Ok(Self { namespace: ns, dst })
+        Ok(Self {
+            namespace: ns,
+            src,
+            dst,
+        })
     }
 
     #[inline]
     pub fn enter(&self) -> Result<(), Error> {
-        if self.namespace.is_process_ns() {
-            return Ok(());
-        }
         // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
         setns(self.dst.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
     }
 
     #[inline]
     pub fn exit(&self) -> Result<(), Error> {
-        if self.namespace.is_process_ns() {
-            return Ok(());
-        }
         // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
-        setns(PROC_MNT_NS_FILE.as_raw_fd(), CLONE_NEWNS)
-            .map_err(|e| Error::SetNs(self.namespace, e))
+        setns(self.src.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
     }
 }
 

@@ -314,17 +314,17 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.69.2"
+version = "0.69.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4c69fae65a523209d34240b60abe0c42d33d1045d445c0839d8a4894a736e2d"
+checksum = "a00dc851838a2120612785d195287475a3ac45514741da670b735818822129a0"
 dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
- "peeking_take_while",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -1479,7 +1479,7 @@ checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
 
 [[package]]
 name = "kunai"
-version = "0.2.6"
+version = "0.3.0-alpha.1"
 dependencies = [
  "anyhow",
  "aya",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "kunai-common"
-version = "0.2.6"
+version = "0.3.0-alpha.1"
 dependencies = [
  "aya",
  "aya-ebpf",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "kunai-macros"
-version = "0.1.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1964,12 +1964,6 @@ name = "paste"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f746c4065a8fa3fe23974dd82f15431cc8d40779821001404d10d2e79ca7d79"
-
-[[package]]
-name = "peeking_take_while"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
 
 [[package]]
 name = "pem-rfc7468"
@@ -2499,17 +2493,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_repr"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c64451ba24fc7a6a2d60fc75dd9c83c90903b19028d4eff35e88fc1e86564e9"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.77",
-]
-
-[[package]]
 name = "serde_spanned"
 version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2724,16 +2707,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.77",
-]
-
-[[package]]
-name = "syscalls"
-version = "0.6.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43d0e35dc7d73976a53c7e6d7d177ef804a0c0ee774ec77bcc520c2216fd7cbe"
-dependencies = [
- "serde",
- "serde_repr",
 ]
 
 [[package]]
@@ -3549,7 +3522,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.2.4"
+version = "0.3.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3565,8 +3538,9 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yara-x"
-version = "0.7.0"
-source = "git+https://github.com/VirusTotal/yara-x.git#c07380bbf5c862779ff30c29f10e816c9629b29d"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "babe9fd0df3608dac37de3a6784353f0bc12b73033ed099bbccd7ce924c68170"
 dependencies = [
  "aho-corasick",
  "annotate-snippets",
@@ -3613,7 +3587,6 @@ dependencies = [
  "sha1",
  "sha2",
  "smallvec",
- "syscalls",
  "thiserror",
  "tlsh-fixed",
  "uuid",
@@ -3628,8 +3601,9 @@ dependencies = [
 
 [[package]]
 name = "yara-x-macros"
-version = "0.7.0"
-source = "git+https://github.com/VirusTotal/yara-x.git#c07380bbf5c862779ff30c29f10e816c9629b29d"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9389362fa785c6e98b950e877f8b6281d2732f64a6ca4c3cac3fe0c6bccfd2e9"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -3639,8 +3613,9 @@ dependencies = [
 
 [[package]]
 name = "yara-x-parser"
-version = "0.7.0"
-source = "git+https://github.com/VirusTotal/yara-x.git#c07380bbf5c862779ff30c29f10e816c9629b29d"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "877e941c9fc513a5bfc685568ab1c07368184a8c3a8aa0a137cb8aee719442ea"
 dependencies = [
  "ascii_tree",
  "bitmask",
@@ -3657,8 +3632,9 @@ dependencies = [
 
 [[package]]
 name = "yara-x-proto"
-version = "0.7.0"
-source = "git+https://github.com/VirusTotal/yara-x.git#c07380bbf5c862779ff30c29f10e816c9629b29d"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "142aabb761156f7bbe32814991e0626d90174c2419b6374f65d7b2fd3de1d1f1"
 dependencies = [
  "protobuf",
  "protobuf-codegen",

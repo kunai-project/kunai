@@ -1,3 +1,6 @@
 [toolchain]
 channel = "1.80"
-targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+# to have the necessary for code analysis
+components = ["rust-src"]

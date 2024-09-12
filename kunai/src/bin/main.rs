@@ -205,6 +205,7 @@ impl std::fmt::Display for Actions {
 
 struct EventConsumer<'s> {
     system_info: SystemInfo,
+    config: Config,
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
     random: u32,
@@ -267,8 +268,16 @@ impl<'s> EventConsumer<'s> {
                 .ok_or(anyhow!("failed to read host_uuid"))?,
         );
 
+        let scan_events_enabled = config
+            .events
+            .iter()
+            .any(|e| e.name() == Type::FileScan.as_str() && e.is_enabled());
+
+        let output = Self::prepare_output(&config)?;
+
         let mut ep = Self {
             system_info,
+            config,
             engine: Engine::new(),
             iocs: HashMap::new(),
             random: util::getrandom::<u32>().unwrap(),
@@ -276,40 +285,19 @@ impl<'s> EventConsumer<'s> {
             tasks: HashMap::with_capacity(512),
             exited_tasks: 0,
             resolved: HashMap::new(),
-            output: Self::prepare_output(&config)?,
+            output,
             file_scanner: None,
-            scan_events_enabled: config
-                .events
-                .iter()
-                .any(|e| e.name() == Type::FileScan.as_str() && e.is_enabled()),
+            scan_events_enabled,
         };
 
         // initializing yara rules
-        ep.init_file_scanner(&config)?;
+        ep.init_file_scanner()?;
 
-        // loading rules in the engine
-        if !config.rules.is_empty() {
-            for rule in config.rules.iter() {
-                info!("loading detection/filter rules from: {rule}");
-                ep.engine
-                    .load_rules_yaml_reader(File::open(rule)?)
-                    .map_err(|e| anyhow!("failed to load file {rule}: {e}"))?;
-            }
-            info!("number of loaded rules: {}", ep.engine.rules_count());
-        }
+        // initializing event scanner
+        ep.init_event_scanner()?;
 
-        // loading iocs
-        if !config.iocs.is_empty() {
-            for file in config.iocs.clone() {
-                ep.load_iocs(&file)
-                    .map_err(|e| anyhow!("failed to load IoC file: {e}"))?;
-            }
-            info!("number of IoCs loaded: {}", ep.iocs.len());
-        }
-
-        config
-            .host_uuid()
-            .ok_or(anyhow!("failed to read host_uuid"))?;
+        // initialize IoCs
+        ep.init_iocs()?;
 
         // should not raise any error, we just print it
         let _ = inspect_err! {
@@ -321,7 +309,7 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
-    fn init_file_scanner(&mut self, config: &Config) -> anyhow::Result<()> {
+    fn init_file_scanner(&mut self) -> anyhow::Result<()> {
         let wo = WalkOptions::new()
             // we list only files
             .files()
@@ -335,7 +323,7 @@ impl<'s> EventConsumer<'s> {
         let mut c = yara_x::Compiler::new();
 
         let mut files_loaded = 0;
-        for p in config.yara.iter() {
+        for p in self.config.yara.iter() {
             debug!("looking for yara rules in: {}", p);
             let w = wo.clone().walk(p);
             for r in w {
@@ -354,6 +342,72 @@ impl<'s> EventConsumer<'s> {
         if files_loaded > 0 {
             self.file_scanner = Some(Scanner::with_rules(c.build()));
         }
+
+        Ok(())
+    }
+
+    fn init_event_scanner(&mut self) -> anyhow::Result<()> {
+        // loading rules in the engine
+        if self.config.rules.is_empty() {
+            return Ok(());
+        }
+
+        let wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // will list only files
+            // with following extensions
+            .extension("gen")
+            .extension("gene")
+            // don't go recursive
+            .max_depth(0);
+
+        for p in self.config.rules.iter() {
+            let w = wo.clone().walk(p);
+            for r in w {
+                let rule = r?;
+
+                info!(
+                    "loading detection/filter rules from: {}",
+                    rule.to_string_lossy()
+                );
+
+                self.engine
+                    .load_rules_yaml_reader(File::open(&rule)?)
+                    .map_err(|e| anyhow!("failed to load file {}: {e}", rule.to_string_lossy()))?;
+            }
+        }
+
+        info!("number of loaded rules: {}", self.engine.rules_count());
+
+        Ok(())
+    }
+
+    fn init_iocs(&mut self) -> anyhow::Result<()> {
+        // loading iocs
+        if self.config.iocs.is_empty() {
+            return Ok(());
+        }
+
+        let wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // will list only files
+            // with following extensions
+            .extension("ioc")
+            // don't go recursive
+            .max_depth(0);
+
+        for p in self.config.iocs.clone() {
+            let w = wo.clone().walk(p);
+            for r in w {
+                let f = r?;
+                self.load_iocs(&f)
+                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy()))?;
+            }
+        }
+
+        info!("number of IoCs loaded: {}", self.iocs.len());
 
         Ok(())
     }
@@ -1352,21 +1406,34 @@ impl<'s> EventConsumer<'s> {
                     p.to_string_lossy(),
                     &event.data.signatures,
                     &event.info().event.uuid,
-                )
+                );
             }
+
             // we run through event scanning engine
-            self.scan_and_print(&mut event);
+            let got_printed = self.scan_and_print(&mut event);
+
+            if !got_printed && self.config.always_show_positive_scans {
+                match serde_json::to_string(&event) {
+                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
+                    Err(e) => error!("failed to serialize event to json: {e}"),
+                }
+            }
         }
 
         Ok(())
     }
 
     #[inline(always)]
-    fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) {
-        macro_rules! serialize {
+    fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> bool {
+        let mut printed = false;
+
+        macro_rules! print_serialized {
             ($event:expr) => {
                 match serde_json::to_string($event) {
-                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
+                    Ok(ser) => {
+                        writeln!(self.output, "{ser}").expect("failed to write json event");
+                        printed = true;
+                    }
                     Err(e) => error!("failed to serialize event to json: {e}"),
                 }
             };
@@ -1374,24 +1441,26 @@ impl<'s> EventConsumer<'s> {
 
         // we have neither rules nor iocs to inspect for
         if self.iocs.is_empty() && self.engine.is_empty() {
-            serialize!(event);
-            return;
+            print_serialized!(event);
+            return printed;
         }
 
         // scan for iocs and filter/matching rules
         if let Some(sr) = self.scan(event) {
             if sr.is_detection() {
                 event.set_detection(sr);
-                serialize!(event);
+                print_serialized!(event);
                 // get_detection will always be false for filters
                 if let Some(sr) = event.get_detection() {
-                    self.handle_actions(event, &sr.actions, true)
+                    self.handle_actions(event, &sr.actions, true);
                 }
             } else if sr.is_only_filter() {
-                serialize!(event);
+                print_serialized!(event);
                 self.handle_actions(event, &sr.actions, false);
             }
         }
+
+        printed
     }
 
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {

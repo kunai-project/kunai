@@ -65,6 +65,7 @@ pub struct Config {
     pub rules: Vec<String>,
     pub iocs: Vec<String>,
     pub yara: Vec<String>,
+    pub always_show_positive_scans: bool,
     pub harden: bool,
     pub events: Vec<Event>,
 }
@@ -94,6 +95,7 @@ impl Default for Config {
             rules: vec![],
             iocs: vec![],
             yara: vec![],
+            always_show_positive_scans: true,
             harden: false,
             events,
         }
