@@ -90,7 +90,9 @@ impl IpPort {
     pub fn ip(&self) -> u128 {
         match self.ty {
             IpType::V4 => self.data[0] as u128,
-            IpType::V6 => u128::from_be_bytes(unsafe { core::mem::transmute(self.data) }),
+            IpType::V6 => u128::from_be_bytes(unsafe {
+                core::mem::transmute::<[u32; 4], [u8; 16]>(self.data)
+            }),
         }
     }
 

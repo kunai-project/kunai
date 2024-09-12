@@ -15,7 +15,7 @@ macro_rules! impl_getter {
         impl Utsname {
             pub fn $getter(&self) -> Result<std::borrow::Cow<'_, str>, FromBytesUntilNulError> {
                 Ok(core::ffi::CStr::from_bytes_until_nul(unsafe {
-                    core::mem::transmute(self.u.$getter.as_slice())
+                    core::mem::transmute::<&[i8], &[u8]>(self.u.$getter.as_slice())
                 })?
                 .to_string_lossy())
             }
