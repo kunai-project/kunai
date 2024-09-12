@@ -293,25 +293,11 @@ impl<'s> EventConsumer<'s> {
         // initializing yara rules
         ep.init_file_scanner()?;
 
-        // loading rules in the engine
-        if !ep.config.rules.is_empty() {
-            for rule in ep.config.rules.iter() {
-                info!("loading detection/filter rules from: {rule}");
-                ep.engine
-                    .load_rules_yaml_reader(File::open(rule)?)
-                    .map_err(|e| anyhow!("failed to load file {rule}: {e}"))?;
-            }
-            info!("number of loaded rules: {}", ep.engine.rules_count());
-        }
+        // initializing event scanner
+        ep.init_event_scanner()?;
 
-        // loading iocs
-        if !ep.config.iocs.is_empty() {
-            for file in ep.config.iocs.clone() {
-                ep.load_iocs(&file)
-                    .map_err(|e| anyhow!("failed to load IoC file: {e}"))?;
-            }
-            info!("number of IoCs loaded: {}", ep.iocs.len());
-        }
+        // initialize IoCs
+        ep.init_iocs()?;
 
         // should not raise any error, we just print it
         let _ = inspect_err! {
@@ -356,6 +342,72 @@ impl<'s> EventConsumer<'s> {
         if files_loaded > 0 {
             self.file_scanner = Some(Scanner::with_rules(c.build()));
         }
+
+        Ok(())
+    }
+
+    fn init_event_scanner(&mut self) -> anyhow::Result<()> {
+        // loading rules in the engine
+        if self.config.rules.is_empty() {
+            return Ok(());
+        }
+
+        let wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // will list only files
+            // with following extensions
+            .extension("gen")
+            .extension("gene")
+            // don't go recursive
+            .max_depth(0);
+
+        for p in self.config.rules.iter() {
+            let w = wo.clone().walk(p);
+            for r in w {
+                let rule = r?;
+
+                info!(
+                    "loading detection/filter rules from: {}",
+                    rule.to_string_lossy()
+                );
+
+                self.engine
+                    .load_rules_yaml_reader(File::open(&rule)?)
+                    .map_err(|e| anyhow!("failed to load file {}: {e}", rule.to_string_lossy()))?;
+            }
+        }
+
+        info!("number of loaded rules: {}", self.engine.rules_count());
+
+        Ok(())
+    }
+
+    fn init_iocs(&mut self) -> anyhow::Result<()> {
+        // loading iocs
+        if self.config.iocs.is_empty() {
+            return Ok(());
+        }
+
+        let wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // will list only files
+            // with following extensions
+            .extension("ioc")
+            // don't go recursive
+            .max_depth(0);
+
+        for p in self.config.iocs.clone() {
+            let w = wo.clone().walk(p);
+            for r in w {
+                let f = r?;
+                self.load_iocs(&f)
+                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy()))?;
+            }
+        }
+
+        info!("number of IoCs loaded: {}", self.iocs.len());
 
         Ok(())
     }
