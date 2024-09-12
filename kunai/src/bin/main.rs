@@ -205,6 +205,7 @@ impl std::fmt::Display for Actions {
 
 struct EventConsumer<'s> {
     system_info: SystemInfo,
+    config: Config,
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
     random: u32,
@@ -267,8 +268,16 @@ impl<'s> EventConsumer<'s> {
                 .ok_or(anyhow!("failed to read host_uuid"))?,
         );
 
+        let scan_events_enabled = config
+            .events
+            .iter()
+            .any(|e| e.name() == Type::FileScan.as_str() && e.is_enabled());
+
+        let output = Self::prepare_output(&config)?;
+
         let mut ep = Self {
             system_info,
+            config,
             engine: Engine::new(),
             iocs: HashMap::new(),
             random: util::getrandom::<u32>().unwrap(),
@@ -276,20 +285,17 @@ impl<'s> EventConsumer<'s> {
             tasks: HashMap::with_capacity(512),
             exited_tasks: 0,
             resolved: HashMap::new(),
-            output: Self::prepare_output(&config)?,
+            output,
             file_scanner: None,
-            scan_events_enabled: config
-                .events
-                .iter()
-                .any(|e| e.name() == Type::FileScan.as_str() && e.is_enabled()),
+            scan_events_enabled,
         };
 
         // initializing yara rules
-        ep.init_file_scanner(&config)?;
+        ep.init_file_scanner()?;
 
         // loading rules in the engine
-        if !config.rules.is_empty() {
-            for rule in config.rules.iter() {
+        if !ep.config.rules.is_empty() {
+            for rule in ep.config.rules.iter() {
                 info!("loading detection/filter rules from: {rule}");
                 ep.engine
                     .load_rules_yaml_reader(File::open(rule)?)
@@ -299,8 +305,8 @@ impl<'s> EventConsumer<'s> {
         }
 
         // loading iocs
-        if !config.iocs.is_empty() {
-            for file in config.iocs.clone() {
+        if !ep.config.iocs.is_empty() {
+            for file in ep.config.iocs.clone() {
                 ep.load_iocs(&file)
                     .map_err(|e| anyhow!("failed to load IoC file: {e}"))?;
             }
@@ -317,7 +323,7 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
-    fn init_file_scanner(&mut self, config: &Config) -> anyhow::Result<()> {
+    fn init_file_scanner(&mut self) -> anyhow::Result<()> {
         let wo = WalkOptions::new()
             // we list only files
             .files()
@@ -331,7 +337,7 @@ impl<'s> EventConsumer<'s> {
         let mut c = yara_x::Compiler::new();
 
         let mut files_loaded = 0;
-        for p in config.yara.iter() {
+        for p in self.config.yara.iter() {
             debug!("looking for yara rules in: {}", p);
             let w = wo.clone().walk(p);
             for r in w {
@@ -1348,7 +1354,12 @@ impl<'s> EventConsumer<'s> {
                     p.to_string_lossy(),
                     &event.data.signatures,
                     &event.info().event.uuid,
-                )
+                );
+
+                match serde_json::to_string(&event) {
+                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
+                    Err(e) => error!("failed to serialize event to json: {e}"),
+                }
             }
             // we run through event scanning engine
             self.scan_and_print(&mut event);
@@ -1359,7 +1370,7 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) {
-        macro_rules! serialize {
+        macro_rules! print_serialized {
             ($event:expr) => {
                 match serde_json::to_string($event) {
                     Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
@@ -1370,7 +1381,7 @@ impl<'s> EventConsumer<'s> {
 
         // we have neither rules nor iocs to inspect for
         if self.iocs.is_empty() && self.engine.is_empty() {
-            serialize!(event);
+            print_serialized!(event);
             return;
         }
 
@@ -1378,13 +1389,13 @@ impl<'s> EventConsumer<'s> {
         if let Some(sr) = self.scan(event) {
             if sr.is_detection() {
                 event.set_detection(sr);
-                serialize!(event);
+                print_serialized!(event);
                 // get_detection will always be false for filters
                 if let Some(sr) = event.get_detection() {
                     self.handle_actions(event, &sr.actions, true)
                 }
             } else if sr.is_only_filter() {
-                serialize!(event);
+                print_serialized!(event);
                 self.handle_actions(event, &sr.actions, false);
             }
         }
