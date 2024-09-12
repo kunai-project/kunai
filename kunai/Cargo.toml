@@ -1,8 +1,8 @@
 [package]
-version = "0.2.6"
 name = "kunai"
 edition = "2021"
 description = "Kunai userland crate"
+version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
