@@ -1407,25 +1407,33 @@ impl<'s> EventConsumer<'s> {
                     &event.data.signatures,
                     &event.info().event.uuid,
                 );
+            }
 
+            // we run through event scanning engine
+            let got_printed = self.scan_and_print(&mut event);
+
+            if !got_printed && self.config.always_show_positive_scans {
                 match serde_json::to_string(&event) {
                     Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
                     Err(e) => error!("failed to serialize event to json: {e}"),
                 }
             }
-            // we run through event scanning engine
-            self.scan_and_print(&mut event);
         }
 
         Ok(())
     }
 
     #[inline(always)]
-    fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) {
+    fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> bool {
+        let mut printed = false;
+
         macro_rules! print_serialized {
             ($event:expr) => {
                 match serde_json::to_string($event) {
-                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
+                    Ok(ser) => {
+                        writeln!(self.output, "{ser}").expect("failed to write json event");
+                        printed = true;
+                    }
                     Err(e) => error!("failed to serialize event to json: {e}"),
                 }
             };
@@ -1434,7 +1442,7 @@ impl<'s> EventConsumer<'s> {
         // we have neither rules nor iocs to inspect for
         if self.iocs.is_empty() && self.engine.is_empty() {
             print_serialized!(event);
-            return;
+            return printed;
         }
 
         // scan for iocs and filter/matching rules
@@ -1444,13 +1452,15 @@ impl<'s> EventConsumer<'s> {
                 print_serialized!(event);
                 // get_detection will always be false for filters
                 if let Some(sr) = event.get_detection() {
-                    self.handle_actions(event, &sr.actions, true)
+                    self.handle_actions(event, &sr.actions, true);
                 }
             } else if sr.is_only_filter() {
                 print_serialized!(event);
                 self.handle_actions(event, &sr.actions, false);
             }
         }
+
+        printed
     }
 
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
