@@ -1087,12 +1087,6 @@ impl<'s> EventConsumer<'s> {
                 self.tasks.shrink_to_fit();
             }
 
-            // we need to cleanup cached namespaces otherwise we exhaust opened fds
-            if let Some(nss) = info.info.process.namespaces {
-                let mnt_ns = Namespace::mnt(nss.mnt);
-                self.cache.uncache_ns(&mnt_ns);
-            }
-
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
         }
 

@@ -264,13 +264,9 @@ impl Cache {
                     switcher: Switcher::new(ns.kind, pid as u32).map_err(Error::Namespace)?,
                 },
             );
+            debug_assert!(self.namespaces.contains_key(&ns));
         }
         Ok(())
-    }
-
-    #[inline]
-    pub fn uncache_ns(&mut self, ns: &Namespace) {
-        let _ = self.namespaces.remove(ns);
     }
 
     #[inline]

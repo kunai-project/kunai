@@ -1,6 +1,7 @@
 [build]
 # make final binary statically linked against libc
 rustflags = ["-Ctarget-feature=+crt-static"]
+target = ["x86_64-unknown-linux-gnu", "bpfel-unknown-none"]
 
 [alias]
 # replace with the target triple you are developing on must be the same as
