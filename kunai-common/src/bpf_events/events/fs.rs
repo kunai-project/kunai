@@ -1,10 +1,10 @@
 use crate::bpf_events::Event;
 use crate::path::Path;
 
-pub type ConfigEvent = Event<ConfigData>;
+pub type FileEvent = Event<FileData>;
 
 #[repr(C)]
-pub struct ConfigData {
+pub struct FileData {
     pub path: Path,
 }
 

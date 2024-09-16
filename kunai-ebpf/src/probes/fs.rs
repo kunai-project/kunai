@@ -342,3 +342,72 @@ unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 
     Ok(())
 }
+
+/// catching calls to close_range syscall
+/// fput is an async function, meaning file might not be
+/// closed immediately. This is the function called when
+/// a task terminates and its fds are closed. In such
+/// a case it is probable events generated appear after
+/// task has terminated. If that is the case there is
+/// not much we can do for event re-ordering.
+#[kprobe(function = "fput")]
+pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
+    match unsafe { try_enter_fput(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+/// this is the synchronous version of fput. This
+/// function gets called by the close syscall
+#[kprobe(function = "__fput_sync")]
+pub fn fs_enter_fput_sync(ctx: ProbeContext) -> u32 {
+    match unsafe { try_enter_fput(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
+    // if event is disabled we return early
+    if get_cfg!().map(|c| c.is_event_disabled(Type::WriteAndClose))? {
+        return Ok(());
+    }
+
+    let file = co_re::file::from_ptr(kprobe_arg!(&ctx, 0)?);
+
+    // if not a regular file we do nothing
+    if !core_read_kernel!(file, is_file).unwrap_or(false) {
+        return Ok(());
+    }
+
+    // if file has not been written we return
+    if !file_match_flag(&file, CLOSE_AFTER_WRITE)? {
+        return Ok(());
+    }
+
+    alloc::init()?;
+
+    let event = alloc::alloc_zero::<FileEvent>()?;
+
+    event.init_from_current_task(Type::WriteAndClose)?;
+
+    ignore_result!(inspect_err!(
+        event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
+        |e: &path::Error| warn!(ctx, "failed to resolve filename", (*e).into())
+    ));
+
+    // we send event
+    pipe_event(ctx, event);
+
+    // we untrack write on close as we want to catch
+    // other instances in case the process closes, re-open
+    // and re-write the file
+    file_unset_flag(&file, CLOSE_AFTER_WRITE)
+}

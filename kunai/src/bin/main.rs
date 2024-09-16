@@ -1589,15 +1589,17 @@ impl<'s> EventConsumer<'s> {
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            Type::WriteConfig | Type::Write | Type::ReadConfig | Type::Read => {
-                match event!(enc_event, bpf_events::ConfigEvent) {
-                    Ok(e) => {
+            Type::WriteConfig
+            | Type::Write
+            | Type::ReadConfig
+            | Type::Read
+            | Type::WriteAndClose => match event!(enc_event, bpf_events::FileEvent) {
+                Ok(e) => {
                     let mut e = self.file_event(std_info, e);
-                        self.scan_and_print(&mut e);
-                    }
-                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+                    self.scan_and_print(&mut e);
                 }
-            }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
 
             Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
                 Ok(e) => {
@@ -2395,7 +2397,11 @@ impl Command {
                         Type::DnsQuery => scan_event!(p, DnsQueryData),
                         Type::SendData => scan_event!(p, SendDataData),
                         Type::InitModule => scan_event!(p, InitModuleData),
-                        Type::WriteConfig | Type::Write | Type::ReadConfig | Type::Read => {
+                        Type::WriteConfig
+                        | Type::Write
+                        | Type::ReadConfig
+                        | Type::Read
+                        | Type::WriteAndClose => {
                             scan_event!(p, FileData)
                         }
                         Type::FileUnlink => scan_event!(p, UnlinkData),
