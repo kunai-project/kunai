@@ -13,9 +13,9 @@ use gene::Engine;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    EventInfo, ExecveData, ExitData, FileRenameData, FileScanData, FilterInfo, InitModuleData,
-    KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData, RWData, ScanResult,
-    SendDataData, SocketInfo, TargetTask, UnlinkData, UserEvent,
+    EventInfo, ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo,
+    InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
+    ScanResult, SendDataData, SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
@@ -852,14 +852,14 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline]
-    fn rw_event(
+    fn file_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::ConfigEvent,
-    ) -> UserEvent<RWData> {
+        event: &bpf_events::FileEvent,
+    ) -> UserEvent<FileData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let data = RWData {
+        let data = FileData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
@@ -1589,15 +1589,17 @@ impl<'s> EventConsumer<'s> {
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            Type::WriteConfig | Type::Write | Type::ReadConfig | Type::Read => {
-                match event!(enc_event, bpf_events::ConfigEvent) {
-                    Ok(e) => {
-                        let mut e = self.rw_event(std_info, e);
-                        self.scan_and_print(&mut e);
-                    }
-                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            Type::WriteConfig
+            | Type::Write
+            | Type::ReadConfig
+            | Type::Read
+            | Type::WriteAndClose => match event!(enc_event, bpf_events::FileEvent) {
+                Ok(e) => {
+                    let mut e = self.file_event(std_info, e);
+                    self.scan_and_print(&mut e);
                 }
-            }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
 
             Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
                 Ok(e) => {
@@ -2395,8 +2397,12 @@ impl Command {
                         Type::DnsQuery => scan_event!(p, DnsQueryData),
                         Type::SendData => scan_event!(p, SendDataData),
                         Type::InitModule => scan_event!(p, InitModuleData),
-                        Type::WriteConfig | Type::Write | Type::ReadConfig | Type::Read => {
-                            scan_event!(p, RWData)
+                        Type::WriteConfig
+                        | Type::Write
+                        | Type::ReadConfig
+                        | Type::Read
+                        | Type::WriteAndClose => {
+                            scan_event!(p, FileData)
                         }
                         Type::FileUnlink => scan_event!(p, UnlinkData),
                         Type::FileRename => scan_event!(p, FileRenameData),

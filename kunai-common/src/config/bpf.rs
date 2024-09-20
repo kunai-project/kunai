@@ -14,11 +14,18 @@ pub unsafe fn config() -> Option<&'static BpfConfig> {
 }
 
 impl BpfConfig {
+    #[inline(always)]
     pub unsafe fn current_is_loader(&self) -> bool {
         bpf_get_current_pid_tgid() as u32 == self.loader.tgid
     }
 
+    #[inline(always)]
     pub fn is_event_enabled(&self, ty: bpf_events::Type) -> bool {
         self.filter.is_enabled(ty)
+    }
+
+    #[inline(always)]
+    pub fn is_event_disabled(&self, ty: bpf_events::Type) -> bool {
+        !self.filter.is_enabled(ty)
     }
 }

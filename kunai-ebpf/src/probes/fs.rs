@@ -6,23 +6,48 @@ use aya_ebpf::programs::ProbeContext;
 use kunai_common::inspect_err;
 use kunai_common::kprobe::ProbeFn;
 
+const READ: Flag = Flag(0b00000001);
+const WRITE: Flag = Flag(0b00000010);
+const CLOSE_AFTER_WRITE: Flag = Flag(0b10000000);
+
 #[repr(C)]
-struct RW(bool, bool);
+struct Flag(u8);
+
+impl Flag {
+    #[inline(always)]
+    fn set(&mut self, flag: Flag) -> &mut Self {
+        self.0 |= flag.0;
+        self
+    }
+
+    #[inline(always)]
+    fn unset(&mut self, flag: Flag) -> &mut Self {
+        self.0 &= !flag.0;
+        self
+    }
+
+    #[inline(always)]
+    fn matches(&self, flag: Flag) -> bool {
+        self.0 & flag.0 == flag.0
+    }
+}
 
 #[repr(C)]
 struct FileKey(u64, u64);
 
 #[map]
-static mut FILE_TRACKING: LruHashMap<FileKey, RW> = LruHashMap::with_max_entries(0x1ffff, 0);
+static mut FILE_TRACKING: LruHashMap<FileKey, Flag> = LruHashMap::with_max_entries(0x1ffff, 0);
 
 #[inline(always)]
-unsafe fn track_read(file: &co_re::file) -> ProbeResult<()> {
+unsafe fn file_set_flag(file: &co_re::file, flag: Flag) -> ProbeResult<()> {
     let key = &file_key(file)?;
     match FILE_TRACKING.get_ptr_mut(key) {
-        Some(rw) => (*rw).0 = true,
+        Some(rw) => {
+            (*rw).set(flag);
+        }
         None => {
             FILE_TRACKING
-                .insert(key, &RW(true, false), 0)
+                .insert(key, &flag, 0)
                 .map_err(|_| MapError::InsertFailure)?;
         }
     }
@@ -30,33 +55,19 @@ unsafe fn track_read(file: &co_re::file) -> ProbeResult<()> {
 }
 
 #[inline(always)]
-unsafe fn track_write(file: &co_re::file) -> ProbeResult<()> {
-    let key = &file_key(file)?;
-    match FILE_TRACKING.get_ptr_mut(key) {
-        Some(rw) => (*rw).1 = true,
-        None => {
-            FILE_TRACKING
-                .insert(key, &RW(false, true), 0)
-                .map_err(|_| MapError::InsertFailure)?;
-        }
-    }
+unsafe fn file_match_flag(file: &co_re::file, flag: Flag) -> ProbeResult<bool> {
+    Ok(FILE_TRACKING
+        .get_ptr_mut(&file_key(file)?)
+        .map(|f| (*f).matches(flag))
+        .unwrap_or(false))
+}
+
+#[inline(always)]
+unsafe fn file_unset_flag(file: &co_re::file, flag: Flag) -> ProbeResult<()> {
+    FILE_TRACKING
+        .get_ptr_mut(&file_key(file)?)
+        .map(|f| (*f).unset(flag));
     Ok(())
-}
-
-#[inline(always)]
-unsafe fn already_read(file: &co_re::file) -> ProbeResult<bool> {
-    Ok(FILE_TRACKING
-        .get(&file_key(file)?)
-        .unwrap_or(&RW(false, false))
-        .0)
-}
-
-#[inline(always)]
-unsafe fn already_written(file: &co_re::file) -> ProbeResult<bool> {
-    Ok(FILE_TRACKING
-        .get(&file_key(file)?)
-        .unwrap_or(&RW(false, false))
-        .1)
 }
 
 #[inline(always)]
@@ -98,12 +109,12 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // if file has already been tracked
-    if already_read(&file)? {
+    if file_match_flag(&file, READ)? {
         return Ok(());
     }
 
     alloc::init()?;
-    let event = alloc::alloc_zero::<ConfigEvent>()?;
+    let event = alloc::alloc_zero::<FileEvent>()?;
 
     ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
@@ -121,7 +132,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    ignore_result!(inspect_err!(track_read(&file), |_| warn_msg!(
+    ignore_result!(inspect_err!(file_set_flag(&file, READ), |_| warn_msg!(
         ctx,
         "failed to track file read"
     )));
@@ -160,13 +171,16 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
+    // we track write on close anyway
+    file_set_flag(&file, CLOSE_AFTER_WRITE)?;
+
     // if file has already been tracked
-    if already_written(&file)? {
+    if file_match_flag(&file, WRITE)? {
         return Ok(());
     }
 
     alloc::init()?;
-    let event = alloc::alloc_zero::<ConfigEvent>()?;
+    let event = alloc::alloc_zero::<FileEvent>()?;
 
     ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
@@ -182,7 +196,7 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    ignore_result!(inspect_err!(track_write(&file), |_| warn_msg!(
+    ignore_result!(inspect_err!(file_set_flag(&file, WRITE), |_| warn_msg!(
         ctx,
         "failed to track file write"
     )));
@@ -327,4 +341,73 @@ unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
     pipe_event(ctx, e);
 
     Ok(())
+}
+
+/// catching calls to close_range syscall
+/// fput is an async function, meaning file might not be
+/// closed immediately. This is the function called when
+/// a task terminates and its fds are closed. In such
+/// a case it is probable events generated appear after
+/// task has terminated. If that is the case there is
+/// not much we can do for event re-ordering.
+#[kprobe(function = "fput")]
+pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
+    match unsafe { try_enter_fput(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+/// this is the synchronous version of fput. This
+/// function gets called by the close syscall
+#[kprobe(function = "__fput_sync")]
+pub fn fs_enter_fput_sync(ctx: ProbeContext) -> u32 {
+    match unsafe { try_enter_fput(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
+    // if event is disabled we return early
+    if get_cfg!().map(|c| c.is_event_disabled(Type::WriteAndClose))? {
+        return Ok(());
+    }
+
+    let file = co_re::file::from_ptr(kprobe_arg!(&ctx, 0)?);
+
+    // if not a regular file we do nothing
+    if !core_read_kernel!(file, is_file).unwrap_or(false) {
+        return Ok(());
+    }
+
+    // if file has not been written we return
+    if !file_match_flag(&file, CLOSE_AFTER_WRITE)? {
+        return Ok(());
+    }
+
+    alloc::init()?;
+
+    let event = alloc::alloc_zero::<FileEvent>()?;
+
+    event.init_from_current_task(Type::WriteAndClose)?;
+
+    ignore_result!(inspect_err!(
+        event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
+        |e: &path::Error| warn!(ctx, "failed to resolve filename", (*e).into())
+    ));
+
+    // we send event
+    pipe_event(ctx, event);
+
+    // we untrack write on close as we want to catch
+    // other instances in case the process closes, re-open
+    // and re-write the file
+    file_unset_flag(&file, CLOSE_AFTER_WRITE)
 }

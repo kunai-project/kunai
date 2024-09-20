@@ -773,18 +773,18 @@ impl Scannable for InitModuleData {
 }
 
 def_user_data!(
-    pub struct RWData {
+    pub struct FileData {
         pub path: PathBuf,
     }
 );
 
-impl IocGetter for RWData {
+impl IocGetter for FileData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
     }
 }
 
-impl Scannable for RWData {
+impl Scannable for FileData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
         vec![Cow::Borrowed(&self.exe.file), Cow::Borrowed(&self.path)]
