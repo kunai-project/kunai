@@ -1,6 +1,7 @@
 #![deny(unused_imports)]
 
 use anyhow::anyhow;
+use aya::maps::perf::Events;
 use aya::maps::MapData;
 use bytes::BytesMut;
 
@@ -57,11 +58,8 @@ use std::process;
 use std::time::Duration;
 
 use aya::{
-    include_bytes_aligned,
-    maps::perf::{AsyncPerfEventArray, Events, PerfBufferError},
-    maps::HashMap as AyaHashMap,
-    util::online_cpus,
-    Bpf,
+    include_bytes_aligned, maps::perf::AsyncPerfEventArray, maps::HashMap as AyaHashMap,
+    util::online_cpus, Bpf,
 };
 
 use aya::{BpfLoader, Btf, VerifierLogLevel};
@@ -1669,7 +1667,7 @@ struct EventProducer {
     filter: Filter,
     stats: AyaHashMap<MapData, Type, u64>,
     perf_array: AsyncPerfEventArray<MapData>,
-    tasks: Vec<tokio::task::JoinHandle<Result<(), PerfBufferError>>>,
+    tasks: Vec<tokio::task::JoinHandle<Result<(), anyhow::Error>>>,
     stop: bool,
     // flag to be set when the producer needs to reload
     reload: bool,
@@ -1710,27 +1708,15 @@ impl EventProducer {
         })
     }
 
-    #[inline(always)]
-    fn has_pending_events(&self) -> bool {
-        !self.pipe.is_empty()
-    }
-
     // Event ordering is a very important piece as it impacts on-host correlations.
     // Additionaly it is very useful as it guarantees events are printed/piped into
     // other tools in the damn good order.
-    //
-    // Ordering correctness relies on two factors
-    // 1. the pace (controlled by timeout) at which we read buffers must be
-    //    greater than the slowest probe we have. This means that on a period of TWO
-    //    timeouts we are sure to have all events to reconstruct at least ONE (the oldest) batch.
-    // 2. we process only one batch of events at a time (always the oldest first). If
-    //    only one batch is available we don't do anything because we will need it to
-    //    reconstruct next batch.
     #[inline(always)]
-    async fn process_piped_events(&mut self) {
+    async fn process_piped_events(&mut self) -> Result<usize, SendError<EncodedEvent>> {
+        let mut c = 0;
         // nothing to do
         if self.pipe.is_empty() {
-            return;
+            return Ok(c);
         }
 
         // we sort events out by timestamp
@@ -1738,47 +1724,23 @@ impl EventProducer {
         // events for which info can be decoded
         self.pipe
             .make_contiguous()
-            .sort_unstable_by_key(|enc_evt| unsafe {
-                enc_evt
-                    .info()
-                    .expect("info should never fail here")
-                    .timestamp
-            });
+            .sort_unstable_by_key(|enc_evt| unsafe { enc_evt.info_unchecked().timestamp });
 
-        // we find the last event corresponding to previous batch
-        // if we cannot find one it means all events are of the current batch
-        // so we should not process any event (satisfies condition 2)
-        let index_first = self
-            .pipe
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, e)| {
-                unsafe { e.info() }
-                    .expect("info should never fail here")
-                    .batch
-                    != self.batch
-            })
-            .map(|(i, _)| i)
-            .unwrap_or_default();
-
-        // converts index into a counter
-        let mut counter = index_first + 1;
-
-        // processing count piped events, we need to pop front as events
-        // are sorted ascending by timestamp
-        while counter > 0 {
-            // at this point pop_front cannot fail as count takes account of the elements in the pipe
-            let enc_evt = self
-                .pipe
-                .pop_front()
-                .expect("pop_front should never fail here");
-
+        while let Some(enc_evt) = self.pipe.front() {
+            let eb = unsafe { enc_evt.info_unchecked() }.batch;
+            // process all events but the current batch
+            if eb >= self.batch.saturating_sub(1) {
+                break;
+            }
             // send event to event processor
-            self.sender.send(enc_evt).await.unwrap();
-
-            counter -= 1;
+            self.sender
+                // unwrap cannot fail as we are sure there is an element at front
+                .send(self.pipe.pop_front().unwrap())
+                .await?;
+            c += 1;
         }
+
+        Ok(c)
     }
 
     #[inline]
@@ -1880,9 +1842,36 @@ impl EventProducer {
         let online_cpus = online_cpus().expect("failed to get online cpus");
         let barrier = Arc::new(Barrier::new(online_cpus.len()));
         // we choose what task will handle the reduce process (handle piped events)
-        let reducer_cpu_id = online_cpus[0];
+        let leader_cpu_id = online_cpus[0];
         let config = self.config.clone();
         let shared = Arc::new(Mutex::new(self));
+
+        let event_producer = shared.clone();
+
+        // we spawn a task processing events waiting in the pipe
+        let t = task::spawn(async move {
+            loop {
+                let c = event_producer.lock().await.process_piped_events().await?;
+
+                // we break the loop if producer is stopped
+                if event_producer.lock().await.stop {
+                    break;
+                }
+
+                // we adapt sleep time when load increases
+                let millis = match c {
+                    0..=500 => 100,
+                    501..=1000 => 50,
+                    1001.. => 25,
+                };
+
+                tokio::time::sleep(Duration::from_millis(millis)).await;
+            }
+
+            Ok::<_, anyhow::Error>(())
+        });
+
+        shared.lock().await.tasks.push(t);
 
         for cpu_id in online_cpus {
             // open a separate perf buffer for each cpu
@@ -1911,21 +1900,17 @@ impl EventProducer {
                     .map(|_| BytesMut::with_capacity(MAX_BPF_EVENT_SIZE))
                     .collect::<Vec<_>>();
 
-                // we need to be sure that timeout is bigger than the slowest of
-                // our probes to guarantee that we can correctly re-order events
-                let timeout_ms = 100;
+                let timeout = time::Duration::from_millis(10);
 
                 loop {
                     // we time this out so that the barrier does not wait too long
-                    let events = match time::timeout(
-                        time::Duration::from_millis(timeout_ms),
-                        buf.read_events(&mut buffers),
-                    )
-                    .await
-                    {
-                        Ok(r) => r?,
-                        _ => Events { read: 0, lost: 0 },
-                    };
+                    let events =
+                    // this is timing out only if we cannot access the perf array as long as the buffer
+                    // is available events will be read (because only waiting for the buffer is async).
+                        match time::timeout(timeout, buf.read_events(&mut buffers)).await {
+                            Ok(r) => r?,
+                            _ => Events { read: 0, lost: 0 },
+                        };
 
                     // checking out lost events
                     if events.lost > 0 {
@@ -1953,58 +1938,53 @@ impl EventProducer {
                     // and is always <= buffers.len()
                     for buf in buffers.iter().take(events.read) {
                         let mut dec = EncodedEvent::from_bytes(buf);
-                        let mut er = event_producer.lock().await;
+                        let mut ep = event_producer.lock().await;
 
                         // we make sure here that only events for which we can grab info for
                         // are pushed to the pipe. It is simplifying the error handling process
                         // in sorting the pipe afterwards
-                        if let Ok(info) = unsafe { dec.info_mut() } {
-                            info.batch = er.batch;
-                        } else {
-                            error!("failed to decode info");
-                            continue;
-                        }
+                        let info = match unsafe { dec.info_mut() } {
+                            Ok(info) => info,
+                            Err(_) => {
+                                error!("failed to decode info");
+                                continue;
+                            }
+                        };
+
+                        // we set the proper batch number
+                        info.batch = ep.batch;
 
                         // pre-processing events
                         // we eventually change event type in this function
                         // example: Execve -> ExecveScript if necessary
                         // when the function returns true event doesn't need to go further
-                        if er.process_time_critical(&mut dec) {
+                        if ep.process_time_critical(&mut dec) {
                             continue;
                         }
 
-                        // passing through some events used for correlation
-                        er.pass_through_events(&dec).await;
+                        // passing through some events directly to the consumer
+                        // this is mostly usefull for correlation purposes
+                        ep.pass_through_events(&dec).await;
 
-                        // we must get the event type here because we eventually
-                        // changed it
-                        let etype = unsafe { dec.info() }
-                            .expect("info should not fail here")
-                            .etype;
+                        // we must get the event type here because we eventually changed it
+                        // info_unchecked can be used here as we are sure info is valid
+                        let etype = unsafe { dec.info_unchecked() }.etype;
 
                         // filtering out unwanted events
-                        if !er.filter.is_enabled(etype) {
+                        if !ep.filter.is_enabled(etype) {
                             continue;
                         }
 
-                        er.pipe.push_back(dec);
+                        ep.pipe.push_back(dec);
                     }
 
                     // all threads wait here after some events have been collected
                     bar.wait().await;
 
-                    // only one task needs to reduce
-                    if cpu_id == reducer_cpu_id {
-                        let mut ep = event_producer.lock().await;
-                        if ep.has_pending_events() {
-                            ep.process_piped_events().await;
-                            ep.batch += 1;
-                        }
+                    // we increase batch number in one task only
+                    if cpu_id == leader_cpu_id {
+                        event_producer.lock().await.batch += 1;
                     }
-
-                    // all threads wait that piped events are processed so that the reducer does not
-                    // handle events being piped in the same time by others
-                    bar.wait().await;
 
                     // we break the loop if processor is stopped
                     if event_producer.lock().await.stop {
@@ -2013,7 +1993,7 @@ impl EventProducer {
                 }
 
                 #[allow(unreachable_code)]
-                Ok::<_, PerfBufferError>(())
+                Ok::<_, anyhow::Error>(())
             });
 
             shared.lock().await.tasks.push(t);
@@ -2484,12 +2464,43 @@ impl Command {
 
         // we start event reader and event processor before loading the programs
         // if we load the programs first we might have some event lost errors
-        let (sender, mut receiver) = mpsc::channel(512);
+        let (sender, mut receiver) = mpsc::channel::<EncodedEvent>(512);
 
         // we start consumer
         let mut cons = EventConsumer::with_config(conf.clone())?;
         let mut cons_task = runtime.spawn(async move {
+            #[cfg(debug_assertions)]
+            let mut last_ts = 0;
+            #[cfg(debug_assertions)]
+            let mut hist = vec![];
+            #[cfg(debug_assertions)]
+            let mut last_batch = 0;
+
             while let Some(mut enc) = receiver.recv().await {
+                // this is a debug_assertion testing that events arrive in
+                // the order they were generated in eBPF. At this time
+                // encoded event's timestamp is the one generated in eBPF
+                #[cfg(debug_assertions)]
+                {
+                    let info = unsafe { enc.info_unchecked() };
+                    // we skip correlation (passe through events)
+                    if !matches!(info.etype, Type::CacheHash) {
+                        let evt_ts = info.timestamp;
+                        let batch = info.batch;
+                        debug_assert!(
+                            evt_ts >= last_ts,
+                            "last={last_ts} (batch={last_batch}) > current={evt_ts} (batch={batch}"
+                        );
+                        // all historical ts must be smaller than current
+                        debug_assert!(hist.iter().all(|&ts| ts <= evt_ts));
+                        last_ts = evt_ts;
+                        last_batch = batch;
+                        // we insert at front so that we can truncate
+                        hist.insert(0, evt_ts);
+                        hist.truncate(30_000);
+                    }
+                };
+
                 cons.handle_event(&mut enc);
             }
 

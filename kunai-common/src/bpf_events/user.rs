@@ -38,6 +38,7 @@ impl EncodedEvent {
 
     /// # Safety
     /// * the bytes decoded must be a valid Event<T>
+    #[inline(always)]
     pub unsafe fn info(&self) -> Result<&EventInfo, DecoderError> {
         // event content must be at least the size of EventInfo
         if self.event.len() < core::mem::size_of::<EventInfo>() {
@@ -47,8 +48,17 @@ impl EncodedEvent {
         Ok(&(*(self.event.as_ptr() as *const EventInfo)))
     }
 
+    /// Get event info without checking
     /// # Safety
     /// * the bytes decoded must be a valid Event<T>
+    #[inline(always)]
+    pub unsafe fn info_unchecked(&self) -> &EventInfo {
+        &(*(self.event.as_ptr() as *const EventInfo))
+    }
+
+    /// # Safety
+    /// * the bytes decoded must be a valid Event<T>
+    #[inline(always)]
     pub unsafe fn info_mut(&mut self) -> Result<&mut EventInfo, DecoderError> {
         // event content must be at least the size of EventInfo
         if self.event.len() < core::mem::size_of::<EventInfo>() {
@@ -60,6 +70,7 @@ impl EncodedEvent {
 
     /// # Safety
     /// * the bytes decoded must be a valid Event<T>
+    #[inline(always)]
     pub unsafe fn as_event_with_data<D>(&self) -> Result<&Event<D>, DecoderError> {
         // must be at least the size of Event<T>
         if self.event.len() < core::mem::size_of::<Event<D>>() {
@@ -71,6 +82,7 @@ impl EncodedEvent {
 
     /// # Safety
     /// * the bytes decoded must be a valid Event<T>
+    #[inline(always)]
     pub unsafe fn as_mut_event_with_data<D>(&mut self) -> Result<&mut Event<D>, DecoderError> {
         // must be at least the size of Event<T>
         if self.event.len() < core::mem::size_of::<Event<D>>() {
