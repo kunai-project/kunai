@@ -42,31 +42,26 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
-    alloc::init()?;
-    let event = alloc::alloc_zero::<SendEntropyEvent>()?;
-
-    event.init_from_current_task(Type::SendData)?;
-
     let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
 
     let iov_buf = alloc::alloc_zero::<Buffer<ENCRYPT_DATA_MAX_BUFFER_SIZE>>()?;
 
     let msg_size = core_read_kernel!(iov_iter, count)?;
 
-    let ip_port = {
+    // if iov_iter contains enough bytes to trigger event
+    if msg_size < c.send_data_min_len {
+        return Ok(());
+    }
+
+    let dst_ip_port = {
         // handle this particular case: https://elixir.bootlin.com/linux/v6.9.5/source/net/socket.c#L2180
         if pmsg.has_msg_name() {
             let sock_addr = core_read_kernel!(pmsg, sockaddr)?;
             IpPort::from_sockaddr(sock_addr)?
         } else {
-            IpPort::from_sock_common_foreign_ip(sk_common)?
+            IpPort::dst_from_sock_common(sk_common)?
         }
     };
-
-    // if iov_iter contains enough bytes to trigger event
-    if msg_size < c.send_data_min_len {
-        return Ok(());
-    }
 
     let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
     if let Err(e) = iov_buf.fill_from_iov_iter::<128>(iov_iter, None) {
@@ -77,8 +72,14 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
         }
     }
 
+    alloc::init()?;
+
+    let event = alloc::alloc_zero::<SendEntropyEvent>()?;
+
+    event.init_from_current_task(Type::SendData)?;
+
     // setting events' data
-    event.data.ip_port = ip_port;
+    event.data.ip_port = dst_ip_port;
     event.data.real_data_size = msg_size;
     // we update the frequencies we are going to send to userland
     event.update_frequencies(iov_buf.as_slice());
