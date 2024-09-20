@@ -49,20 +49,20 @@ impl SockHelper {
 
         // in some cases it ip/port info is empty in socket
         // if there is an optional server it takes precedence over addr got from socket
-        let ip_port = match opt_server {
+        let dst = match opt_server {
             Some(server) => server,
-            None => IpPort::from_sock_common_foreign_ip(sk_common).unwrap_or_default(),
+            None => IpPort::dst_from_sock_common(sk_common).unwrap_or_default(),
         };
 
         // we don't take protocol communicating on other ports than dns
-        if ip_port.port() != 53 {
+        if dst.port() != 53 {
             return Ok(());
         }
 
         alloc::init()?;
         let event = alloc::alloc_zero::<DnsQueryEvent>()?;
 
-        event.data.ip_port = ip_port;
+        event.data.ip_port = dst;
         event.data.proto = sk_type;
         event.data.tcp_header = tcp_header;
 
@@ -91,7 +91,7 @@ unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
     }
 
     let sock_common = core_read_kernel!(sock, sk_common)?;
-    let ip_port = IpPort::from_sock_common_foreign_ip(sock_common)?;
+    let ip_port = IpPort::dst_from_sock_common(sock_common)?;
 
     // filter on dst port
     Ok(ip_port.port() == 53)

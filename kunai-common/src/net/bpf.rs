@@ -35,7 +35,7 @@ impl IpPort {
     }
 
     #[inline(always)]
-    pub unsafe fn from_sock_common_foreign_ip(sk: sock_common) -> Result<Self, Error> {
+    pub unsafe fn dst_from_sock_common(sk: sock_common) -> Result<Self, Error> {
         let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
         let dport = sk.skc_dport().ok_or(Error::SkcPortPairMissing)?.to_be();
 
@@ -50,6 +50,33 @@ impl IpPort {
                     .and_then(|in6| in6.addr32())
                     .ok_or(Error::SkcV6daddrMissing)?,
                 dport,
+            ));
+        }
+
+        return Err(Error::UnsupportedSaFamily);
+    }
+
+    #[inline(always)]
+    pub unsafe fn src_from_sock_common(sk: sock_common) -> Result<Self, Error> {
+        let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
+        let sport = sk
+            .skc_num()
+            .map(u16::to_be)
+            .ok_or(Error::SkcPortPairMissing)?;
+
+        if sa_family == AF_INET as u16 {
+            return Ok(IpPort::new_v4_from_be(
+                sk.skc_rcv_saddr()
+                    .map(u32::to_be)
+                    .ok_or(Error::SkcAddrPairMissing)?,
+                sport,
+            ));
+        } else if sa_family == AF_INET6 as u16 {
+            return Ok(IpPort::new_v6_from_be(
+                sk.skc_v6_rcv_saddr()
+                    .and_then(|in6| in6.addr32())
+                    .ok_or(Error::SkcV6daddrMissing)?,
+                sport,
             ));
         }
 
