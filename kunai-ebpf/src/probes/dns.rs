@@ -62,7 +62,6 @@ impl SockHelper {
         alloc::init()?;
         let event = alloc::alloc_zero::<DnsQueryEvent>()?;
 
-        //event.info.timestamp = event_ts;
         event.data.ip_port = ip_port;
         event.data.proto = sk_type;
         event.data.tcp_header = tcp_header;
