@@ -44,6 +44,8 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
 
+    alloc::init()?;
+
     let iov_buf = alloc::alloc_zero::<Buffer<ENCRYPT_DATA_MAX_BUFFER_SIZE>>()?;
 
     let msg_size = core_read_kernel!(iov_iter, count)?;
