@@ -76,6 +76,8 @@ use kunai::config::Config;
 use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
 
+use communityid::{Flow, Protocol};
+
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
 
@@ -1012,19 +1014,30 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::SendEntropyEvent,
     ) -> UserEvent<SendDataData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-        let dst_ip: IpAddr = event.data.ip_port.into();
+        let dst_ip: IpAddr = event.data.dst.into();
+        let src_ip: IpAddr = event.data.src.into();
+
+        let flow = Flow::new(
+            Protocol::TCP,
+            src_ip,
+            event.data.src.port(),
+            dst_ip,
+            event.data.dst.port(),
+        );
 
         let data = SendDataData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
+            src: event.data.src.into(),
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst_ip, &info).into()),
                 ip: dst_ip,
-                port: event.data.ip_port.port(),
+                port: event.data.dst.port(),
                 public: is_public_ip(dst_ip),
-                is_v6: event.data.ip_port.is_v6(),
+                is_v6: event.data.dst.is_v6(),
             },
+            community_id: flow.community_id_v1(0).base64(),
             data_entropy: event.shannon_entropy(),
             data_size: event.data.real_data_size,
         };

@@ -602,6 +602,21 @@ impl Scannable for MprotectData {
 impl_std_iocs!(MprotectData);
 
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
+pub struct SockAddr {
+    pub ip: IpAddr,
+    pub port: u16,
+}
+
+impl From<kunai_common::net::SockAddr> for SockAddr {
+    fn from(value: kunai_common::net::SockAddr) -> Self {
+        Self {
+            ip: IpAddr::from(value),
+            port: value.port(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct NetworkInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,
@@ -727,7 +742,9 @@ impl IocGetter for DnsQueryData {
 
 def_user_data!(
     pub struct SendDataData {
+        pub src: SockAddr,
         pub dst: NetworkInfo,
+        pub community_id: String,
         pub data_entropy: f32,
         pub data_size: u64,
     }
