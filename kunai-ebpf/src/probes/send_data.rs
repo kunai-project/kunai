@@ -1,6 +1,6 @@
 use super::*;
 use aya_ebpf::programs::ProbeContext;
-use kunai_common::{buffer::Buffer, net::IpPort};
+use kunai_common::{buffer::Buffer, net::SockAddr};
 
 /*
 Experimental probe to detect encrypted trafic based
@@ -59,11 +59,13 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
         // handle this particular case: https://elixir.bootlin.com/linux/v6.9.5/source/net/socket.c#L2180
         if pmsg.has_msg_name() {
             let sock_addr = core_read_kernel!(pmsg, sockaddr)?;
-            IpPort::from_sockaddr(sock_addr)?
+            SockAddr::from_sockaddr(sock_addr)?
         } else {
-            IpPort::dst_from_sock_common(sk_common)?
+            SockAddr::dst_from_sock_common(sk_common)?
         }
     };
+
+    let src_ip_port = SockAddr::src_from_sock_common(sk_common)?;
 
     let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
     if let Err(e) = iov_buf.fill_from_iov_iter::<128>(iov_iter, None) {
@@ -74,14 +76,13 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
         }
     }
 
-    alloc::init()?;
-
     let event = alloc::alloc_zero::<SendEntropyEvent>()?;
 
     event.init_from_current_task(Type::SendData)?;
 
     // setting events' data
-    event.data.ip_port = dst_ip_port;
+    event.data.src = src_ip_port;
+    event.data.dst = dst_ip_port;
     event.data.real_data_size = msg_size;
     // we update the frequencies we are going to send to userland
     event.update_frequencies(iov_buf.as_slice());

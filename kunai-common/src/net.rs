@@ -54,13 +54,13 @@ pub enum IpType {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct IpPort {
+pub struct SockAddr {
     pub ty: IpType,
     data: [u32; 4],
     port: u16,
 }
 
-impl Default for IpPort {
+impl Default for SockAddr {
     fn default() -> Self {
         Self {
             ty: IpType::V4,
@@ -70,9 +70,9 @@ impl Default for IpPort {
     }
 }
 
-impl IpPort {
+impl SockAddr {
     pub fn new_v4_from_be(addr: u32, port: u16) -> Self {
-        IpPort {
+        SockAddr {
             ty: IpType::V4,
             data: [addr, 0, 0, 0],
             port,
@@ -80,7 +80,7 @@ impl IpPort {
     }
 
     pub fn new_v6_from_be(addr: [u32; 4], port: u16) -> Self {
-        IpPort {
+        SockAddr {
             ty: IpType::V6,
             data: addr,
             port,

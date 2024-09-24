@@ -3,7 +3,7 @@ use super::*;
 use aya_ebpf::programs::ProbeContext;
 use kunai_common::{
     kprobe::{KProbeEntryContext, ProbeFn},
-    net::IpPort,
+    net::SockAddr,
 };
 
 #[kprobe(function = "__sys_connect")]
@@ -53,7 +53,7 @@ unsafe fn try_exit_connect(
             let ip = core_read_user!(in_addr, s_addr)?.to_be();
             let port = core_read_user!(in_addr, sin_port)?.to_be();
 
-            IpPort::new_v4_from_be(ip, port)
+            SockAddr::new_v4_from_be(ip, port)
         }
         AF_INET6 => {
             let in6_addr: co_re::sockaddr_in6 = addr.into();
@@ -61,7 +61,7 @@ unsafe fn try_exit_connect(
             let port = core_read_user!(in6_addr, sin6_port)?.to_be();
             // in theory we don't need to reverse addr for ipv6 as we read
             // data which is already big endian
-            IpPort::new_v6_from_be(core_read_user!(ip, addr32)?, port)
+            SockAddr::new_v6_from_be(core_read_user!(ip, addr32)?, port)
         }
         _ => return Ok(()),
     };

@@ -1,6 +1,6 @@
 use crate::bpf_events::Event;
 use crate::macros::not_bpf_target_code;
-use crate::{buffer::Buffer, net::IpPort};
+use crate::{buffer::Buffer, net::SockAddr};
 
 pub const DNS_MAX_PACKET_SIZE: usize = 2048;
 
@@ -15,7 +15,7 @@ pub enum DnsError {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct DnsQueryData {
-    pub ip_port: IpPort,
+    pub ip_port: SockAddr,
     pub proto: u16,
     pub data: Buffer<DNS_MAX_PACKET_SIZE>,
     pub tcp_header: bool,

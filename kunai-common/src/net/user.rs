@@ -1,9 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use super::{IpPort, IpType, SaFamily, SockType, SocketInfo};
+use super::{IpType, SaFamily, SockAddr, SockType, SocketInfo};
 
-impl From<IpPort> for IpAddr {
-    fn from(value: IpPort) -> Self {
+impl From<SockAddr> for IpAddr {
+    fn from(value: SockAddr) -> Self {
         match value.ty {
             IpType::V4 => IpAddr::V4(Ipv4Addr::from(value.data[0])),
             IpType::V6 => IpAddr::V6(Ipv6Addr::from(value.ip())),

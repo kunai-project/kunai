@@ -7,7 +7,7 @@ use aya_ebpf::{
 use kunai_common::{
     co_re::task_struct,
     kprobe::ProbeFn,
-    net::{IpPort, SaFamily, SocketInfo},
+    net::{SaFamily, SockAddr, SocketInfo},
 };
 
 const DNS_HEADER_SIZE: usize = 12;
@@ -33,8 +33,8 @@ impl SockHelper {
     unsafe fn dns_event(
         &self,
         ctx: &ProbeContext,
-        opt_server: Option<IpPort>, // optional server IpPort
-        tcp_header: bool,           // whether the data contains tcp_header
+        opt_server: Option<SockAddr>, // optional server IpPort
+        tcp_header: bool,             // whether the data contains tcp_header
     ) -> ProbeResult<()> {
         let socket = self.socket;
         let sock = core_read_kernel!(socket, sk)?;
@@ -51,7 +51,7 @@ impl SockHelper {
         // if there is an optional server it takes precedence over addr got from socket
         let dst = match opt_server {
             Some(server) => server,
-            None => IpPort::dst_from_sock_common(sk_common).unwrap_or_default(),
+            None => SockAddr::dst_from_sock_common(sk_common).unwrap_or_default(),
         };
 
         // we don't take protocol communicating on other ports than dns
@@ -91,7 +91,7 @@ unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
     }
 
     let sock_common = core_read_kernel!(sock, sk_common)?;
-    let ip_port = IpPort::dst_from_sock_common(sock_common)?;
+    let ip_port = SockAddr::dst_from_sock_common(sock_common)?;
 
     // filter on dst port
     Ok(ip_port.port() == 53)
@@ -383,7 +383,7 @@ unsafe fn try_exit_recvmsg(exit_ctx: &ProbeContext) -> ProbeResult<()> {
             let in_addr: co_re::sockaddr_in = addr.into();
             let ip = core_read_user!(in_addr, s_addr)?.to_be();
             let port = core_read_user!(in_addr, sin_port)?.to_be();
-            server = Some(IpPort::new_v4_from_be(ip, port));
+            server = Some(SockAddr::new_v4_from_be(ip, port));
         }
     }
 
