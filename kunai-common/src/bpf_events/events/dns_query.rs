@@ -28,9 +28,6 @@ impl DnsQueryData {
     pub fn header_is_null(&self) -> bool {
         let h = &self.packet_data()[..12];
         h.iter().filter(|&&b| b == 0).count() == 12
-        /*let part1: u64 = u64::from_be_bytes([h[7], h[6], h[5], h[4], h[3], h[2], h[1], h[0]]);
-        let part2: u32 = u32::from_be_bytes([h[11], h[10], h[9], h[8]]);
-        part2 == 0 && part1 == 0*/
     }
 
     pub fn packet_data(&self) -> &[u8] {
