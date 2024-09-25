@@ -999,12 +999,19 @@ impl<'s> EventConsumer<'s> {
         let src: SockAddr = event.data.src.into();
         let dst: SockAddr = event.data.dst.into();
 
-        let flow: Flow = Flow::new(Protocol::TCP, src.ip, src.port, dst.ip, dst.port);
+        let flow: Flow = Flow::new(
+            Protocol::from(event.data.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
 
         let data = ConnectData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
+            proto: ip_proto_to_string(event.data.proto),
             src,
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst.ip, &info).into()),

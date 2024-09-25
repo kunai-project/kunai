@@ -80,13 +80,12 @@ unsafe fn try_exit_connect(
         _ => return Ok(()),
     };
 
+    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
     // retrieve sock_common to grap src information
-    let sk_common = {
-        let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
-        core_read_kernel!(socket, sk, sk_common)?
-    };
+    let sk_common = core_read_kernel!(socket, sk, sk_common)?;
 
     event.data.family = sa_family;
+    event.data.proto = core_read_kernel!(socket, sk, sk_protocol)?;
     event.data.src = SockAddr::src_from_sock_common(sk_common)?;
     event.data.dst = dst;
     event.data.connected = rc == 0 || rc == -EINPROGRESS;
