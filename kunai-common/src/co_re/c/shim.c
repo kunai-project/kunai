@@ -209,15 +209,18 @@ struct inode
 	unsigned long i_ino;
 	struct super_block *i_sb;
 	loff_t i_size;
-	union {
+	union
+	{
 		struct timespec64 i_atime;
 		struct timespec64 __i_atime;
 	};
-	union {
+	union
+	{
 		struct timespec64 i_mtime;
 		struct timespec64 __i_mtime;
 	};
-	union {
+	union
+	{
 		struct timespec64 i_ctime;
 		struct timespec64 __i_ctime;
 	};
@@ -379,7 +382,8 @@ struct task_struct
 	pid_t pid;
 	__u64 start_time;
 	// attempt to make compatible with older kernels
-	union {
+	union
+	{
 		__u64 start_boottime;
 		__u64 real_start_time;
 	};
@@ -519,7 +523,8 @@ typedef __u32 __portpair;
 
 struct in6_addr
 {
-	union {
+	union
+	{
 		__u8 u6_addr8[16];
 		__be16 u6_addr16[8];
 		__be32 u6_addr32[4];
@@ -570,11 +575,13 @@ SHIM_REF(sockaddr_in6, sin6_addr);
 
 struct sock_common
 {
-	union {
+	union
+	{
 		__addrpair skc_addrpair;
 	};
 
-	union {
+	union
+	{
 		__portpair skc_portpair;
 	};
 
@@ -626,13 +633,26 @@ SHIM(sk_buff_head, qlen);
 struct sock
 {
 	struct sock_common __sk_common;
+	//__u16 sk_protocol;
 	__u8 sk_protocol;
+	// sk_type is always a u16, bitfield or not
 	__u16 sk_type;
 	struct sk_buff_head sk_receive_queue;
 } __attribute__((preserve_access_index));
 
+// BPF core trims any ___$SUFFIX and treat structure
+// as if suffix is not there
+// https://nakryiko.com/posts/bpf-core-reference-guide/#handling-incompatible-field-and-type-changes
+struct sock___pre_5_6
+{
+	// on kernel < 5.6 sk_protocol is a bitfield
+	__u8 sk_protocol;
+} __attribute__((preserve_access_index));
+
+SHIM_BITFIELD(sock___pre_5_6, sk_protocol);
+
 SHIM_REF(sock, __sk_common);
-SHIM_BITFIELD(sock, sk_protocol);
+SHIM(sock, sk_protocol);
 SHIM_BITFIELD(sock, sk_type);
 SHIM_REF(sock, sk_receive_queue)
 
@@ -690,19 +710,22 @@ SHIM(bio_vec, bv_offset);
 
 struct iov_iter
 {
-	union {
+	union
+	{
 		u8 iter_type;
 		unsigned int type;
 	};
 	size_t count;
-	union {
+	union
+	{
 		struct iovec *iov;
 		struct iovec *__iov;
 		void *ubuf;
 		struct bio_vec *bvec;
 	};
 
-	union {
+	union
+	{
 		unsigned long nr_segs;
 	};
 } __attribute__((preserve_access_index));

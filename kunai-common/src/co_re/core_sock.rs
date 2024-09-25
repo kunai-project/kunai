@@ -57,13 +57,32 @@ impl socket {
     rust_shim_kernel_impl!(pub, socket, sk, sock);
 }
 
+// this is used for older kernels < 5.6
+// where sk_protocol is a bitfield
+#[allow(non_camel_case_types)]
+type sock___pre_5_6 = CoRe<gen::sock___pre_5_6>;
+
+impl sock___pre_5_6 {
+    rust_shim_kernel_impl!(pub(self), sock___pre_5_6, sk_protocol, u8);
+}
+
 #[allow(non_camel_case_types)]
 pub type sock = CoRe<gen::sock>;
 
 impl sock {
     rust_shim_kernel_impl!(pub, sk_common, sock, __sk_common, sock_common);
     rust_shim_kernel_impl!(pub, sock, sk_type, u16);
-    rust_shim_kernel_impl!(pub, sock, sk_protocol, u8);
+    // for kernels >= 5.6
+    rust_shim_kernel_impl!(pub(self), _sk_protocol, sock, sk_protocol, u16);
+
+    // for any kernel
+    pub unsafe fn sk_protocol(&self) -> Option<u16> {
+        let os = sock___pre_5_6::from_ptr(self.as_ptr() as *const gen::sock___pre_5_6);
+        os.sk_protocol()
+            .map(u16::from)
+            .or_else(|| self._sk_protocol())
+    }
+
     rust_shim_kernel_impl!(pub, sock, sk_receive_queue, sk_buff_head);
 }
 
