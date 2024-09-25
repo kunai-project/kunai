@@ -1014,16 +1014,10 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::SendEntropyEvent,
     ) -> UserEvent<SendDataData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-        let dst_ip: IpAddr = event.data.dst.into();
-        let src_ip: IpAddr = event.data.src.into();
+        let dst: SockAddr = event.data.dst.into();
+        let src: SockAddr = event.data.src.into();
 
-        let flow = Flow::new(
-            Protocol::TCP,
-            src_ip,
-            event.data.src.port(),
-            dst_ip,
-            event.data.dst.port(),
-        );
+        let flow = Flow::new(Protocol::TCP, src.ip, src.port, dst.ip, dst.port);
 
         let data = SendDataData {
             ancestors: self.get_ancestors_string(&info),
@@ -1031,11 +1025,11 @@ impl<'s> EventConsumer<'s> {
             command_line,
             src: event.data.src.into(),
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst_ip, &info).into()),
-                ip: dst_ip,
-                port: event.data.dst.port(),
-                public: is_public_ip(dst_ip),
-                is_v6: event.data.dst.is_v6(),
+                hostname: Some(self.get_resolved(dst.ip, &info).into()),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
             },
             community_id: flow.community_id_v1(0).base64(),
             data_entropy: event.shannon_entropy(),
