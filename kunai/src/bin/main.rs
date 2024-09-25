@@ -29,6 +29,7 @@ use kunai_common::bpf_events::{
     MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::{BpfConfig, Filter};
+use kunai_common::net::IpProto;
 use kunai_common::{inspect_err, kernel};
 
 use kunai_common::version::KernelVersion;
@@ -813,19 +814,22 @@ impl<'s> EventConsumer<'s> {
         let src: SockAddr = event.data.src.into();
         let dst: SockAddr = event.data.dst.into();
 
-        let (s_proto, f_proto) = match event.data.proto {
-            1 => ("tcp".into(), Some(Protocol::TCP)),
-            2 => ("udp".into(), Some(Protocol::UDP)),
-            _ => (format!("unknown({})", event.data.proto), None),
-        };
+        let ip_proto = IpProto::try_from_uint(event.data.proto).ok();
 
-        let community_id = f_proto
-            .map(|p| {
-                Flow::new(p, src.ip, src.port, dst.ip, dst.port)
-                    .community_id_v1(0)
-                    .base64()
-            })
-            .unwrap_or(String::from("?"));
+        let proto: String = ip_proto
+            .map(|p| p.as_str().into())
+            .unwrap_or(format!("unknown({})", event.data.proto));
+
+        let community_id = Flow::new(
+            // this is valid to cast as a u8
+            Protocol::from(event.data.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        )
+        .community_id_v1(0)
+        .base64();
 
         let responses = event.data.answers().unwrap_or_default();
         let ancestors = self.get_ancestors_string(&info);
@@ -836,7 +840,7 @@ impl<'s> EventConsumer<'s> {
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
             data.query = r.question.clone();
-            data.proto = s_proto.clone();
+            data.proto = proto.clone();
             data.src = src;
             data.dns_server = NetworkInfo {
                 hostname: None,

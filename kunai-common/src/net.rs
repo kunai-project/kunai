@@ -200,6 +200,89 @@ impl SockType {
     }
 }
 
+// IPPROTO_ macros defined in the Linux kernel
+// even though some IPPROTO_ are u16 those can
+// be casted to their u8 counterpart probably
+// because in IP header the protocol is u8
+// https://elixir.bootlin.com/linux/v6.11/source/include/uapi/linux/in.h#L29
+// https://elixir.bootlin.com/linux/v6.11/source/include/uapi/linux/in6.h#L132
+#[repr(u16)]
+#[derive(StrEnum, Debug, PartialEq, PartialOrd)]
+#[allow(non_camel_case_types)]
+pub enum IpProto {
+    #[str("ip")]
+    IP = 0, /* Dummy protocol for TCP		*/
+    #[str("icmp")]
+    ICMP = 1, /* Internet Control Message Protocol	*/
+    #[str("igmp")]
+    IGMP = 2, /* Internet Group Management Protocol	*/
+    #[str("ipip")]
+    IPIP = 4, /* IPIP tunnels (older KA9Q tunnels use 94) */
+    #[str("tcp")]
+    TCP = 6, /* Transmission Control Protocol	*/
+    #[str("egp")]
+    EGP = 8, /* Exterior Gateway Protocol		*/
+    #[str("pup")]
+    PUP = 12, /* PUP protocol				*/
+    #[str("udp")]
+    UDP = 17, /* User Datagram Protocol		*/
+    #[str("idp")]
+    IDP = 22, /* XNS IDP protocol			*/
+    #[str("tp")]
+    TP = 29, /* SO Transport Protocol Class 4	*/
+    #[str("dccp")]
+    DCCP = 33, /* Datagram Congestion Control Protocol */
+    #[str("ipv6")]
+    IPV6 = 41, /* IPv6-in-IPv4 tunnelling		*/
+    #[str("rsvp")]
+    RSVP = 46, /* RSVP Protocol			*/
+    #[str("gre")]
+    GRE = 47, /* Cisco GRE tunnels (rfc 1701,1702)	*/
+    #[str("esp")]
+    ESP = 50, /* Encapsulation Security Payload protocol */
+    #[str("ah")]
+    AH = 51, /* Authentication Header protocol	*/
+    #[str("mtp")]
+    MTP = 92, /* Multicast Transport Protocol		*/
+    #[str("beetph")]
+    BEETPH = 94, /* IP option pseudo header for BEET	*/
+    #[str("encap")]
+    ENCAP = 98, /* Encapsulation Header			*/
+    #[str("pim")]
+    PIM = 103, /* Protocol Independent Multicast	*/
+    #[str("comp")]
+    COMP = 108, /* Compression Header Protocol		*/
+    #[str("l2tp")]
+    L2TP = 115, /* Layer 2 Tunnelling Protocol		*/
+    #[str("sctp")]
+    SCTP = 132, /* Stream Control Transport Protocol	*/
+    #[str("udplite")]
+    UDPLITE = 136, /* UDP-Lite (RFC 3828)			*/
+    #[str("mpls")]
+    MPLS = 137, /* MPLS in IP (RFC 4023)		*/
+    #[str("ethernet")]
+    ETHERNET = 143, /* Ethernet-within-IPv6 Encapsulation	*/
+    #[str("raw")]
+    RAW = 255, /* Raw IP packets			*/
+    #[str("smc")]
+    SMC = 256, /* Shared Memory Communications		*/
+    #[str("mptcp")]
+    MPTCP = 262, /* Multipath TCP connection		*/
+    // IPv6 related
+    #[str("routing")]
+    ROUTING = 43, /* IPv6 routing header		*/
+    #[str("fragment")]
+    FRAGMENT = 44, /* IPv6 fragmentation header	*/
+    #[str("icmpv6")]
+    ICMPV6 = 58, /* ICMPv6			*/
+    #[str("none")]
+    NONE = 59, /* IPv6 no next header		*/
+    #[str("dstopts")]
+    DSTOPTS = 60, /* IPv6 destination options	*/
+    #[str("mh")]
+    MH = 135, /* IPv6 mobility header		*/
+}
+
 #[repr(C)]
 #[derive(Default, Debug, Clone, Copy)]
 pub struct SocketInfo {

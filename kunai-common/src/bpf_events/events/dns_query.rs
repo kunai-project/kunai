@@ -1,5 +1,6 @@
 use crate::bpf_events::Event;
 use crate::macros::not_bpf_target_code;
+use crate::net::IpProto;
 use crate::{buffer::Buffer, net::SockAddr};
 
 pub const DNS_MAX_PACKET_SIZE: usize = 2048;
@@ -32,8 +33,8 @@ impl DnsQueryData {
     }
 
     pub fn packet_data(&self) -> &[u8] {
-        // this is a TCP connection SOCK_STREAM == 1
-        if self.proto == 1 && self.tcp_header && self.data.len() >= 14 {
+        // this is a TCP connection
+        if self.proto == IpProto::TCP as u16 && self.tcp_header && self.data.len() >= 14 {
             // there are two bytes at front encoding the size of the packet
             return &self.data.as_slice()[2..];
         }

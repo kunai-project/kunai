@@ -39,7 +39,7 @@ impl SockHelper {
         let socket = self.socket;
         let sock = core_read_kernel!(socket, sk)?;
         let sk_common = core_read_kernel!(sock, sk_common)?;
-        let sk_type = core_read_kernel!(sock, sk_type)?;
+        let sk_protocol = core_read_kernel!(sock, sk_protocol)?;
 
         let sa_family = core_read_kernel!(sk_common, skc_family)?;
 
@@ -64,7 +64,7 @@ impl SockHelper {
 
         event.data.src = SockAddr::src_from_sock_common(sk_common)?;
         event.data.dst = dst;
-        event.data.proto = sk_type;
+        event.data.proto = sk_protocol;
         event.data.tcp_header = tcp_header;
 
         match self.udata {
