@@ -652,7 +652,9 @@ impl IocGetter for NetworkInfo {
 
 def_user_data!(
     pub struct ConnectData {
+        pub src: SockAddr,
         pub dst: NetworkInfo,
+        pub community_id: String,
         pub connected: bool,
     }
 );

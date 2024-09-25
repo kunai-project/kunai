@@ -5,6 +5,7 @@ pub type ConnectEvent = Event<ConnectData>;
 #[repr(C)]
 pub struct ConnectData {
     pub family: u32,
-    pub ip_port: SockAddr,
+    pub src: SockAddr,
+    pub dst: SockAddr,
     pub connected: bool,
 }

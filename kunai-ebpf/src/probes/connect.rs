@@ -1,6 +1,7 @@
 use super::*;
 
-use aya_ebpf::programs::ProbeContext;
+use aya_ebpf::{cty::c_int, programs::ProbeContext};
+use co_re::task_struct;
 use kunai_common::{
     kprobe::{KProbeEntryContext, ProbeFn},
     net::SockAddr,
@@ -39,15 +40,28 @@ unsafe fn try_exit_connect(
     let rc = exit_ctx.ret().unwrap_or(-1);
 
     let entry_ctx = &entry_ctx.probe_context();
+    let fd: c_int = kprobe_arg!(entry_ctx, 0)?;
     let addr = co_re::sockaddr::from_ptr(kprobe_arg!(entry_ctx, 1)?);
     let sa_family = core_read_user!(addr, sa_family)?;
+
+    let current = task_struct::current();
+
+    // get the file corresponding to that fd
+    let file = current
+        .get_fd(fd as usize)
+        .ok_or(ProbeError::FileNotFound)?;
+
+    // we raise an error if file is null
+    if file.is_null() {
+        return Err(ProbeError::NullPointer);
+    }
 
     alloc::init()?;
     let event = alloc::alloc_zero::<ConnectEvent>()?;
 
-    event.init_from_current_task(Type::Connect)?;
+    event.init_from_task(Type::Connect, current)?;
 
-    let ip_port = match sa_family {
+    let dst = match sa_family {
         AF_INET => {
             let in_addr: co_re::sockaddr_in = addr.into();
             let ip = core_read_user!(in_addr, s_addr)?.to_be();
@@ -66,8 +80,15 @@ unsafe fn try_exit_connect(
         _ => return Ok(()),
     };
 
+    // retrieve sock_common to grap src information
+    let sk_common = {
+        let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+        core_read_kernel!(socket, sk, sk_common)?
+    };
+
     event.data.family = sa_family;
-    event.data.ip_port = ip_port;
+    event.data.src = SockAddr::src_from_sock_common(sk_common)?;
+    event.data.dst = dst;
     event.data.connected = rc == 0 || rc == -EINPROGRESS;
 
     pipe_event(exit_ctx, event);
