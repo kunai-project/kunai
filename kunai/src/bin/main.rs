@@ -29,7 +29,6 @@ use kunai_common::bpf_events::{
     MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::{BpfConfig, Filter};
-use kunai_common::net::IpProto;
 use kunai_common::{inspect_err, kernel};
 
 use kunai_common::version::KernelVersion;
@@ -813,12 +812,7 @@ impl<'s> EventConsumer<'s> {
 
         let src: SockAddr = event.data.src.into();
         let dst: SockAddr = event.data.dst.into();
-
-        let ip_proto = IpProto::try_from_uint(event.data.proto).ok();
-
-        let proto: String = ip_proto
-            .map(|p| p.as_str().into())
-            .unwrap_or(format!("unknown({})", event.data.proto));
+        let proto = ip_proto_to_string(event.data.proto);
 
         let community_id = Flow::new(
             // this is valid to cast as a u8
