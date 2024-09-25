@@ -29,11 +29,12 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     // we get bpf configuration
     let c = get_cfg!()?;
 
-    let psock = co_re::socket::from_ptr(ctx.arg(0).ok_or(ProbeError::KProbeArgFailure)?);
+    let socket = co_re::socket::from_ptr(kprobe_arg!(ctx, 0)?);
 
-    let pmsg = co_re::msghdr::from_ptr(ctx.arg(1).ok_or(ProbeError::KProbeArgFailure)?);
+    let pmsg = co_re::msghdr::from_ptr(kprobe_arg!(ctx, 1)?);
 
-    let sk_common = core_read_kernel!(psock, sk, sk_common)?;
+    let sock = core_read_kernel!(socket, sk)?;
+    let sk_common = core_read_kernel!(sock, sk_common)?;
 
     let sa_family = core_read_kernel!(sk_common, skc_family)?;
 
@@ -81,6 +82,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     event.init_from_current_task(Type::SendData)?;
 
     // setting events' data
+    event.data.proto = core_read_kernel!(sock, sk_protocol)?;
     event.data.src = src_ip_port;
     event.data.dst = dst_ip_port;
     event.data.real_data_size = msg_size;

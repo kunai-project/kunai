@@ -1037,12 +1037,19 @@ impl<'s> EventConsumer<'s> {
         let dst: SockAddr = event.data.dst.into();
         let src: SockAddr = event.data.src.into();
 
-        let flow = Flow::new(Protocol::TCP, src.ip, src.port, dst.ip, dst.port);
+        let flow = Flow::new(
+            Protocol::from(event.data.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
 
         let data = SendDataData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
+            proto: ip_proto_to_string(event.data.proto),
             src: event.data.src.into(),
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst.ip, &info).into()),

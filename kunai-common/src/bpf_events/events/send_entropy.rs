@@ -6,6 +6,7 @@ pub const ENCRYPT_DATA_MAX_BUFFER_SIZE: usize = 4096;
 
 #[repr(C)]
 pub struct SendEntropyData {
+    pub proto: u16,
     pub src: SockAddr,
     pub dst: SockAddr,
     pub freq: [u32; 256],
