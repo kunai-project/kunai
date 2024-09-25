@@ -810,14 +810,22 @@ impl<'s> EventConsumer<'s> {
         let exe = self.get_exe(ck);
         let command_line = self.get_command_line(ck);
 
-        let serv_ip: IpAddr = event.data.ip_port.into();
-        let serv_port = event.data.ip_port.port();
+        let src: SockAddr = event.data.src.into();
+        let dst: SockAddr = event.data.dst.into();
 
-        let proto = match event.data.proto {
-            1 => "tcp".into(),
-            2 => "udp".into(),
-            _ => format!("unknown({})", event.data.proto),
+        let (s_proto, f_proto) = match event.data.proto {
+            1 => ("tcp".into(), Some(Protocol::TCP)),
+            2 => ("udp".into(), Some(Protocol::UDP)),
+            _ => (format!("unknown({})", event.data.proto), None),
         };
+
+        let community_id = f_proto
+            .map(|p| {
+                Flow::new(p, src.ip, src.port, dst.ip, dst.port)
+                    .community_id_v1(0)
+                    .base64()
+            })
+            .unwrap_or(String::from("?"));
 
         let responses = event.data.answers().unwrap_or_default();
         let ancestors = self.get_ancestors_string(&info);
@@ -828,14 +836,16 @@ impl<'s> EventConsumer<'s> {
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
             data.query = r.question.clone();
-            data.proto = proto.clone();
+            data.proto = s_proto.clone();
+            data.src = src;
             data.dns_server = NetworkInfo {
                 hostname: None,
-                ip: serv_ip,
-                port: serv_port,
-                public: is_public_ip(serv_ip),
-                is_v6: event.data.ip_port.is_v6(),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
             };
+            data.community_id = community_id.clone();
 
             // update the resolution map
             data.responses().iter().for_each(|a| {

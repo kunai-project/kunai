@@ -15,7 +15,8 @@ pub enum DnsError {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct DnsQueryData {
-    pub ip_port: SockAddr,
+    pub src: SockAddr,
+    pub dst: SockAddr,
     pub proto: u16,
     pub data: Buffer<DNS_MAX_PACKET_SIZE>,
     pub tcp_header: bool,

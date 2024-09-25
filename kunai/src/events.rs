@@ -601,10 +601,19 @@ impl Scannable for MprotectData {
 
 impl_std_iocs!(MprotectData);
 
-#[derive(Debug, Serialize, Deserialize, FieldGetter)]
+#[derive(Debug, Serialize, Deserialize, FieldGetter, Clone, Copy)]
 pub struct SockAddr {
     pub ip: IpAddr,
     pub port: u16,
+}
+
+impl Default for SockAddr {
+    fn default() -> Self {
+        Self {
+            ip: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            port: 0,
+        }
+    }
 }
 
 impl From<kunai_common::net::SockAddr> for SockAddr {
@@ -675,10 +684,12 @@ impl IocGetter for ConnectData {
 def_user_data!(
     #[derive(Default)]
     pub struct DnsQueryData {
+        pub src: SockAddr,
         pub query: String,
         pub proto: String,
         pub response: String,
         pub dns_server: NetworkInfo,
+        pub community_id: String,
         #[serde(skip)]
         #[getter(skip)]
         responses: Vec<String>,
