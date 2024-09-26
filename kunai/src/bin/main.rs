@@ -951,10 +951,7 @@ impl<'s> EventConsumer<'s> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            socket: SocketInfo {
-                domain: event.data.socket_info.domain_to_string(),
-                ty: event.data.socket_info.type_to_string(),
-            },
+            socket: SocketInfo::from(event.data.socket_info),
             filter: FilterInfo {
                 md5: md5_data(event.data.filter.as_slice()),
                 sha1: sha1_data(event.data.filter.as_slice()),
@@ -1000,7 +997,7 @@ impl<'s> EventConsumer<'s> {
         let dst: SockAddr = event.data.dst.into();
 
         let flow: Flow = Flow::new(
-            Protocol::from(event.data.proto as u8),
+            Protocol::from(event.data.socket_info.proto as u8),
             src.ip,
             src.port,
             dst.ip,
@@ -1011,7 +1008,7 @@ impl<'s> EventConsumer<'s> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            proto: ip_proto_to_string(event.data.proto),
+            socket: SocketInfo::from(event.data.socket_info),
             src,
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst.ip, &info).into()),

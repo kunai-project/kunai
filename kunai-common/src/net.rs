@@ -210,77 +210,42 @@ impl SockType {
 #[derive(StrEnum, Debug, PartialEq, PartialOrd)]
 #[allow(non_camel_case_types)]
 pub enum IpProto {
-    #[str("ip")]
-    IP = 0, /* Dummy protocol for TCP		*/
-    #[str("icmp")]
-    ICMP = 1, /* Internet Control Message Protocol	*/
-    #[str("igmp")]
-    IGMP = 2, /* Internet Group Management Protocol	*/
-    #[str("ipip")]
-    IPIP = 4, /* IPIP tunnels (older KA9Q tunnels use 94) */
-    #[str("tcp")]
-    TCP = 6, /* Transmission Control Protocol	*/
-    #[str("egp")]
-    EGP = 8, /* Exterior Gateway Protocol		*/
-    #[str("pup")]
-    PUP = 12, /* PUP protocol				*/
-    #[str("udp")]
-    UDP = 17, /* User Datagram Protocol		*/
-    #[str("idp")]
-    IDP = 22, /* XNS IDP protocol			*/
-    #[str("tp")]
-    TP = 29, /* SO Transport Protocol Class 4	*/
-    #[str("dccp")]
-    DCCP = 33, /* Datagram Congestion Control Protocol */
-    #[str("ipv6")]
-    IPV6 = 41, /* IPv6-in-IPv4 tunnelling		*/
-    #[str("rsvp")]
-    RSVP = 46, /* RSVP Protocol			*/
-    #[str("gre")]
-    GRE = 47, /* Cisco GRE tunnels (rfc 1701,1702)	*/
-    #[str("esp")]
-    ESP = 50, /* Encapsulation Security Payload protocol */
-    #[str("ah")]
-    AH = 51, /* Authentication Header protocol	*/
-    #[str("mtp")]
-    MTP = 92, /* Multicast Transport Protocol		*/
-    #[str("beetph")]
-    BEETPH = 94, /* IP option pseudo header for BEET	*/
-    #[str("encap")]
-    ENCAP = 98, /* Encapsulation Header			*/
-    #[str("pim")]
-    PIM = 103, /* Protocol Independent Multicast	*/
-    #[str("comp")]
-    COMP = 108, /* Compression Header Protocol		*/
-    #[str("l2tp")]
-    L2TP = 115, /* Layer 2 Tunnelling Protocol		*/
-    #[str("sctp")]
-    SCTP = 132, /* Stream Control Transport Protocol	*/
-    #[str("udplite")]
-    UDPLITE = 136, /* UDP-Lite (RFC 3828)			*/
-    #[str("mpls")]
-    MPLS = 137, /* MPLS in IP (RFC 4023)		*/
-    #[str("ethernet")]
+    IP = 0,         /* Dummy protocol for TCP		*/
+    ICMP = 1,       /* Internet Control Message Protocol	*/
+    IGMP = 2,       /* Internet Group Management Protocol	*/
+    IPIP = 4,       /* IPIP tunnels (older KA9Q tunnels use 94) */
+    TCP = 6,        /* Transmission Control Protocol	*/
+    EGP = 8,        /* Exterior Gateway Protocol		*/
+    PUP = 12,       /* PUP protocol				*/
+    UDP = 17,       /* User Datagram Protocol		*/
+    IDP = 22,       /* XNS IDP protocol			*/
+    TP = 29,        /* SO Transport Protocol Class 4	*/
+    DCCP = 33,      /* Datagram Congestion Control Protocol */
+    IPV6 = 41,      /* IPv6-in-IPv4 tunnelling		*/
+    RSVP = 46,      /* RSVP Protocol			*/
+    GRE = 47,       /* Cisco GRE tunnels (rfc 1701,1702)	*/
+    ESP = 50,       /* Encapsulation Security Payload protocol */
+    AH = 51,        /* Authentication Header protocol	*/
+    MTP = 92,       /* Multicast Transport Protocol		*/
+    BEETPH = 94,    /* IP option pseudo header for BEET	*/
+    ENCAP = 98,     /* Encapsulation Header			*/
+    PIM = 103,      /* Protocol Independent Multicast	*/
+    COMP = 108,     /* Compression Header Protocol		*/
+    L2TP = 115,     /* Layer 2 Tunnelling Protocol		*/
+    SCTP = 132,     /* Stream Control Transport Protocol	*/
+    UDPLITE = 136,  /* UDP-Lite (RFC 3828)			*/
+    MPLS = 137,     /* MPLS in IP (RFC 4023)		*/
     ETHERNET = 143, /* Ethernet-within-IPv6 Encapsulation	*/
-    #[str("raw")]
-    RAW = 255, /* Raw IP packets			*/
-    #[str("smc")]
-    SMC = 256, /* Shared Memory Communications		*/
-    #[str("mptcp")]
-    MPTCP = 262, /* Multipath TCP connection		*/
+    RAW = 255,      /* Raw IP packets			*/
+    SMC = 256,      /* Shared Memory Communications		*/
+    MPTCP = 262,    /* Multipath TCP connection		*/
     // IPv6 related
-    #[str("routing")]
-    ROUTING = 43, /* IPv6 routing header		*/
-    #[str("fragment")]
+    ROUTING = 43,  /* IPv6 routing header		*/
     FRAGMENT = 44, /* IPv6 fragmentation header	*/
-    #[str("icmpv6")]
-    ICMPV6 = 58, /* ICMPv6			*/
-    #[str("none")]
-    NONE = 59, /* IPv6 no next header		*/
-    #[str("dstopts")]
-    DSTOPTS = 60, /* IPv6 destination options	*/
-    #[str("mh")]
-    MH = 135, /* IPv6 mobility header		*/
+    ICMPV6 = 58,   /* ICMPv6			*/
+    NONE = 59,     /* IPv6 no next header		*/
+    DSTOPTS = 60,  /* IPv6 destination options	*/
+    MH = 135,      /* IPv6 mobility header		*/
 }
 
 #[repr(C)]
@@ -290,6 +255,8 @@ pub struct SocketInfo {
     pub domain: u16,
     /// Must be [SockType] value
     pub ty: u16,
+    /// Value of socket.sk_protocol
+    pub proto: u16,
 }
 
 impl SocketInfo {

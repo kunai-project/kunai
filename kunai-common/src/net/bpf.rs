@@ -93,7 +93,8 @@ impl TryFrom<crate::co_re::sock> for SocketInfo {
             let ty = core_read_kernel!(s, sk_type).ok_or(Error::SkTypeMissing)?;
             let domain =
                 core_read_kernel!(s, sk_common, skc_family).ok_or(Error::SkcFamilyMissing)?;
-            Ok(Self { domain, ty })
+            let proto = core_read_kernel!(s, sk_protocol).ok_or(Error::SkProtocolMissing)?;
+            Ok(Self { domain, ty, proto })
         }
     }
 }

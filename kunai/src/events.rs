@@ -9,7 +9,7 @@ use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
 use gene::{Event, FieldGetter, FieldValue};
 use gene_derive::{Event, FieldGetter};
 
-use kunai_common::bpf_events;
+use kunai_common::{bpf_events, net};
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -661,7 +661,7 @@ impl IocGetter for NetworkInfo {
 
 def_user_data!(
     pub struct ConnectData {
-        pub proto: String,
+        pub socket: SocketInfo,
         pub src: SockAddr,
         pub dst: NetworkInfo,
         pub community_id: String,
@@ -920,6 +920,17 @@ pub struct SocketInfo {
     pub domain: String,
     #[serde(rename = "type")]
     pub ty: String,
+    pub proto: String,
+}
+
+impl From<net::SocketInfo> for SocketInfo {
+    fn from(value: net::SocketInfo) -> Self {
+        Self {
+            domain: value.domain_to_string(),
+            ty: value.type_to_string(),
+            proto: value.proto_to_string(),
+        }
+    }
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]

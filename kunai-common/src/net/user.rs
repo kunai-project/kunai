@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use super::{IpType, SaFamily, SockAddr, SockType, SocketInfo};
+use super::{IpProto, IpType, SaFamily, SockAddr, SockType, SocketInfo};
 
 impl From<SockAddr> for IpAddr {
     fn from(value: SockAddr) -> Self {
@@ -27,6 +27,14 @@ impl SocketInfo {
             t.as_str().into()
         } else {
             format!("unknown({})", self.domain)
+        }
+    }
+
+    pub fn proto_to_string(&self) -> String {
+        if let Ok(p) = IpProto::try_from_uint(self.proto) {
+            p.as_str().into()
+        } else {
+            format!("unknown({})", self.proto)
         }
     }
 }

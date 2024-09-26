@@ -4,7 +4,7 @@ use aya_ebpf::{cty::c_int, programs::ProbeContext};
 use co_re::task_struct;
 use kunai_common::{
     kprobe::{KProbeEntryContext, ProbeFn},
-    net::SockAddr,
+    net::{SockAddr, SocketInfo},
 };
 
 #[kprobe(function = "__sys_connect")]
@@ -81,11 +81,11 @@ unsafe fn try_exit_connect(
     };
 
     let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+    let sk = core_read_kernel!(socket, sk)?;
     // retrieve sock_common to grap src information
-    let sk_common = core_read_kernel!(socket, sk, sk_common)?;
+    let sk_common = core_read_kernel!(sk, sk_common)?;
 
-    event.data.family = sa_family;
-    event.data.proto = core_read_kernel!(socket, sk, sk_protocol)?;
+    event.data.socket_info = SocketInfo::try_from(sk)?;
     event.data.src = SockAddr::src_from_sock_common(sk_common)?;
     event.data.dst = dst;
     event.data.connected = rc == 0 || rc == -EINPROGRESS;
