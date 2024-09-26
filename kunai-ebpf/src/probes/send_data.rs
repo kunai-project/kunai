@@ -2,7 +2,7 @@ use super::*;
 use aya_ebpf::programs::ProbeContext;
 use kunai_common::{
     buffer::Buffer,
-    net::{SockAddr, SocketInfo},
+    net::{SaFamily, SockAddr, SocketInfo},
 };
 
 /*
@@ -38,11 +38,10 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let sock = core_read_kernel!(socket, sk)?;
     let sk_common = core_read_kernel!(sock, sk_common)?;
+    let si = SocketInfo::try_from(sock)?;
 
-    let sa_family = core_read_kernel!(sk_common, skc_family)?;
-
-    // we want to process only INET sock families
-    if sa_family as u32 != AF_INET && sa_family as u32 != AF_INET6 {
+    // we process only IPv4 and IPv6
+    if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
         return Ok(());
     }
 
@@ -85,7 +84,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     event.init_from_current_task(Type::SendData)?;
 
     // setting events' data
-    event.data.socket = SocketInfo::try_from(sock)?;
+    event.data.socket = si;
     event.data.src = src_ip_port;
     event.data.dst = dst_ip_port;
     event.data.real_data_size = msg_size;
