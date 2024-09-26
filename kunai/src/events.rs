@@ -756,7 +756,7 @@ impl IocGetter for DnsQueryData {
 
 def_user_data!(
     pub struct SendDataData {
-        pub proto: String,
+        pub socket: SocketInfo,
         pub src: SockAddr,
         pub dst: NetworkInfo,
         pub community_id: String,

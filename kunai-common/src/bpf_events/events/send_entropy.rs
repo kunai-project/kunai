@@ -1,12 +1,12 @@
 use crate::{bpf_events::Event, macros::not_bpf_target_code};
 
-use crate::net::SockAddr;
+use crate::net::{SockAddr, SocketInfo};
 
 pub const ENCRYPT_DATA_MAX_BUFFER_SIZE: usize = 4096;
 
 #[repr(C)]
 pub struct SendEntropyData {
-    pub proto: u16,
+    pub socket: SocketInfo,
     pub src: SockAddr,
     pub dst: SockAddr,
     pub freq: [u32; 256],

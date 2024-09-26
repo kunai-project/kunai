@@ -1,6 +1,9 @@
 use super::*;
 use aya_ebpf::programs::ProbeContext;
-use kunai_common::{buffer::Buffer, net::SockAddr};
+use kunai_common::{
+    buffer::Buffer,
+    net::{SockAddr, SocketInfo},
+};
 
 /*
 Experimental probe to detect encrypted trafic based
@@ -82,7 +85,7 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     event.init_from_current_task(Type::SendData)?;
 
     // setting events' data
-    event.data.proto = core_read_kernel!(sock, sk_protocol)?;
+    event.data.socket = SocketInfo::try_from(sock)?;
     event.data.src = src_ip_port;
     event.data.dst = dst_ip_port;
     event.data.real_data_size = msg_size;
