@@ -7,7 +7,7 @@ pub type ConnectEvent = Event<ConnectData>;
 
 #[repr(C)]
 pub struct ConnectData {
-    pub socket_info: SocketInfo,
+    pub socket: SocketInfo,
     pub src: SockAddr,
     pub dst: SockAddr,
     pub connected: bool,

@@ -997,7 +997,7 @@ impl<'s> EventConsumer<'s> {
         let dst: SockAddr = event.data.dst.into();
 
         let flow: Flow = Flow::new(
-            Protocol::from(event.data.socket_info.proto as u8),
+            Protocol::from(event.data.socket.proto as u8),
             src.ip,
             src.port,
             dst.ip,
@@ -1008,7 +1008,7 @@ impl<'s> EventConsumer<'s> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            socket: SocketInfo::from(event.data.socket_info),
+            socket: SocketInfo::from(event.data.socket),
             src,
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst.ip, &info).into()),

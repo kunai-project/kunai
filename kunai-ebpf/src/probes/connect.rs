@@ -85,7 +85,7 @@ unsafe fn try_exit_connect(
     // retrieve sock_common to grap src information
     let sk_common = core_read_kernel!(sk, sk_common)?;
 
-    event.data.socket_info = SocketInfo::try_from(sk)?;
+    event.data.socket = SocketInfo::try_from(sk)?;
     event.data.src = SockAddr::src_from_sock_common(sk_common)?;
     event.data.dst = dst;
     event.data.connected = rc == 0 || rc == -EINPROGRESS;
