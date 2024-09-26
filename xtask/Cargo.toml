@@ -10,5 +10,4 @@ publish = false
 [dependencies]
 anyhow = "1"
 clap = { version = "4.1", features = ["derive"] }
-which = "4.4.0"
 json = "0.12"
