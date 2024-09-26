@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = []
-user = ["aya", "dns-parser", "uuid", "tokio", "bytes", "futures", "thiserror"]
+user = ["aya", "dns-parser", "uuid", "thiserror"]
 
 [build-dependencies]
 bindgen = "0.69"
@@ -21,20 +21,8 @@ dns-parser = { version = "0.8.0", optional = true }
 uuid = { version = "1.3.0", optional = true, features = ["v4"] }
 cfg-if = "1.0.0"
 paste = "1.0"
-tokio = { version = "1.24", features = [
-    "macros",
-    "rt",
-    "rt-multi-thread",
-    "net",
-    "signal",
-    "sync",
-    "time",
-], optional = true }
 thiserror = { version = "1.0", optional = true }
 kunai-macros = { path = "src/kunai-macros" }
-# part of tokio framework
-bytes = { version = "1", optional = true }
-futures = { version = "0.3", optional = true }
 # Aya deps
 aya = { version = "0.12.0", optional = true }
 aya-ebpf = { version = "0.1.0" }
