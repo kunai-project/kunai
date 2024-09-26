@@ -1,6 +1,5 @@
 use core::mem::{size_of, MaybeUninit};
 use ip_network::IpNetwork;
-use kunai_common::net::IpProto;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
@@ -20,15 +19,6 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
         IpNetwork::V4(v4) => !v4.is_private(),
         IpNetwork::V6(v6) => !v6.is_unique_local(),
     }
-}
-
-/// helper function to convert a u16 [IpProto] to string
-#[inline(always)]
-pub fn ip_proto_to_string(i: u16) -> String {
-    IpProto::try_from_uint(i)
-        .ok()
-        .map(|p| p.as_str().into())
-        .unwrap_or(format!("unknown({})", i))
 }
 
 fn sysconf<T: From<i64>>(var: libc::c_int) -> Result<T, io::Error> {
