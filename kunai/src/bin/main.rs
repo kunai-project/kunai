@@ -812,11 +812,11 @@ impl<'s> EventConsumer<'s> {
 
         let src: SockAddr = event.data.src.into();
         let dst: SockAddr = event.data.dst.into();
-        let proto = ip_proto_to_string(event.data.proto);
+        let si = SocketInfo::from(event.data.socket);
 
         let community_id = Flow::new(
             // this is valid to cast as a u8
-            Protocol::from(event.data.proto as u8),
+            Protocol::from(event.data.socket.proto as u8),
             src.ip,
             src.port,
             dst.ip,
@@ -834,7 +834,7 @@ impl<'s> EventConsumer<'s> {
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
             data.query = r.question.clone();
-            data.proto = proto.clone();
+            data.socket = si.clone();
             data.src = src;
             data.dns_server = NetworkInfo {
                 hostname: None,

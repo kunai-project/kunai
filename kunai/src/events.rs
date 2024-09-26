@@ -685,9 +685,9 @@ impl IocGetter for ConnectData {
 def_user_data!(
     #[derive(Default)]
     pub struct DnsQueryData {
+        pub socket: SocketInfo,
         pub src: SockAddr,
         pub query: String,
-        pub proto: String,
         pub response: String,
         pub dns_server: NetworkInfo,
         pub community_id: String,
@@ -915,7 +915,7 @@ impl Scannable for BpfProgLoadData {
     }
 }
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize)]
+#[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct SocketInfo {
     pub domain: String,
     #[serde(rename = "type")]

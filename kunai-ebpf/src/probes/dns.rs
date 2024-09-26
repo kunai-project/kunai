@@ -39,11 +39,11 @@ impl SockHelper {
         let socket = self.socket;
         let sock = core_read_kernel!(socket, sk)?;
         let sk_common = core_read_kernel!(sock, sk_common)?;
-        let sk_protocol = core_read_kernel!(sock, sk_protocol)?;
 
-        let sa_family = core_read_kernel!(sk_common, skc_family)?;
+        let si = SocketInfo::try_from(sock)?;
 
-        if sa_family != AF_INET as u16 && sa_family != AF_INET6 as u16 {
+        // we process only IPv4 and IPv6
+        if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
             return Ok(());
         }
 
@@ -62,9 +62,9 @@ impl SockHelper {
         alloc::init()?;
         let event = alloc::alloc_zero::<DnsQueryEvent>()?;
 
+        event.data.socket = si;
         event.data.src = SockAddr::src_from_sock_common(sk_common)?;
         event.data.dst = dst;
-        event.data.proto = sk_protocol;
         event.data.tcp_header = tcp_header;
 
         match self.udata {

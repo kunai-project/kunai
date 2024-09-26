@@ -1,6 +1,6 @@
 use crate::bpf_events::Event;
 use crate::macros::not_bpf_target_code;
-use crate::net::IpProto;
+use crate::net::{IpProto, SocketInfo};
 use crate::{buffer::Buffer, net::SockAddr};
 
 pub const DNS_MAX_PACKET_SIZE: usize = 2048;
@@ -16,9 +16,9 @@ pub enum DnsError {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct DnsQueryData {
+    pub socket: SocketInfo,
     pub src: SockAddr,
     pub dst: SockAddr,
-    pub proto: u16,
     pub data: Buffer<DNS_MAX_PACKET_SIZE>,
     pub tcp_header: bool,
     pub error: DnsError,
@@ -34,7 +34,7 @@ impl DnsQueryData {
 
     pub fn packet_data(&self) -> &[u8] {
         // this is a TCP connection
-        if self.proto == IpProto::TCP as u16 && self.tcp_header && self.data.len() >= 14 {
+        if self.socket.proto == IpProto::TCP as u16 && self.tcp_header && self.data.len() >= 14 {
             // there are two bytes at front encoding the size of the packet
             return &self.data.as_slice()[2..];
         }
