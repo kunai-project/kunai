@@ -1,9 +1,10 @@
 use super::*;
 
-use aya_ebpf::programs::ProbeContext;
+use aya_ebpf::{cty::c_int, programs::ProbeContext};
+use co_re::task_struct;
 use kunai_common::{
     kprobe::{KProbeEntryContext, ProbeFn},
-    net::IpPort,
+    net::{SockAddr, SocketInfo},
 };
 
 #[kprobe(function = "__sys_connect")]
@@ -39,21 +40,34 @@ unsafe fn try_exit_connect(
     let rc = exit_ctx.ret().unwrap_or(-1);
 
     let entry_ctx = &entry_ctx.probe_context();
+    let fd: c_int = kprobe_arg!(entry_ctx, 0)?;
     let addr = co_re::sockaddr::from_ptr(kprobe_arg!(entry_ctx, 1)?);
     let sa_family = core_read_user!(addr, sa_family)?;
+
+    let current = task_struct::current();
+
+    // get the file corresponding to that fd
+    let file = current
+        .get_fd(fd as usize)
+        .ok_or(ProbeError::FileNotFound)?;
+
+    // we raise an error if file is null
+    if file.is_null() {
+        return Err(ProbeError::NullPointer);
+    }
 
     alloc::init()?;
     let event = alloc::alloc_zero::<ConnectEvent>()?;
 
-    event.init_from_current_task(Type::Connect)?;
+    event.init_from_task(Type::Connect, current)?;
 
-    let ip_port = match sa_family {
+    let dst = match sa_family {
         AF_INET => {
             let in_addr: co_re::sockaddr_in = addr.into();
             let ip = core_read_user!(in_addr, s_addr)?.to_be();
             let port = core_read_user!(in_addr, sin_port)?.to_be();
 
-            IpPort::new_v4_from_be(ip, port)
+            SockAddr::new_v4_from_be(ip, port)
         }
         AF_INET6 => {
             let in6_addr: co_re::sockaddr_in6 = addr.into();
@@ -61,13 +75,19 @@ unsafe fn try_exit_connect(
             let port = core_read_user!(in6_addr, sin6_port)?.to_be();
             // in theory we don't need to reverse addr for ipv6 as we read
             // data which is already big endian
-            IpPort::new_v6_from_be(core_read_user!(ip, addr32)?, port)
+            SockAddr::new_v6_from_be(core_read_user!(ip, addr32)?, port)
         }
         _ => return Ok(()),
     };
 
-    event.data.family = sa_family;
-    event.data.ip_port = ip_port;
+    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+    let sk = core_read_kernel!(socket, sk)?;
+    // retrieve sock_common to grap src information
+    let sk_common = core_read_kernel!(sk, sk_common)?;
+
+    event.data.socket = SocketInfo::try_from(sk)?;
+    event.data.src = SockAddr::src_from_sock_common(sk_common)?;
+    event.data.dst = dst;
     event.data.connected = rc == 0 || rc == -EINPROGRESS;
 
     pipe_event(exit_ctx, event);

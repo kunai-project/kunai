@@ -16,7 +16,7 @@ use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
     EventInfo, ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo,
     InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
-    ScanResult, SendDataData, SocketInfo, TargetTask, UnlinkData, UserEvent,
+    ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
@@ -75,6 +75,8 @@ use kunai::compat::Programs;
 use kunai::config::Config;
 use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
+
+use communityid::{Flow, Protocol};
 
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
@@ -808,14 +810,20 @@ impl<'s> EventConsumer<'s> {
         let exe = self.get_exe(ck);
         let command_line = self.get_command_line(ck);
 
-        let serv_ip: IpAddr = event.data.ip_port.into();
-        let serv_port = event.data.ip_port.port();
+        let src: SockAddr = event.data.src.into();
+        let dst: SockAddr = event.data.dst.into();
+        let si = SocketInfo::from(event.data.socket);
 
-        let proto = match event.data.proto {
-            1 => "tcp".into(),
-            2 => "udp".into(),
-            _ => format!("unknown({})", event.data.proto),
-        };
+        let community_id = Flow::new(
+            // this is valid to cast as a u8
+            Protocol::from(event.data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        )
+        .community_id_v1(0)
+        .base64();
 
         let responses = event.data.answers().unwrap_or_default();
         let ancestors = self.get_ancestors_string(&info);
@@ -826,14 +834,16 @@ impl<'s> EventConsumer<'s> {
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
             data.query = r.question.clone();
-            data.proto = proto.clone();
+            data.socket = si.clone();
+            data.src = src;
             data.dns_server = NetworkInfo {
                 hostname: None,
-                ip: serv_ip,
-                port: serv_port,
-                public: is_public_ip(serv_ip),
-                is_v6: event.data.ip_port.is_v6(),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
             };
+            data.community_id = community_id.clone();
 
             // update the resolution map
             data.responses().iter().for_each(|a| {
@@ -941,10 +951,7 @@ impl<'s> EventConsumer<'s> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            socket: SocketInfo {
-                domain: event.data.socket_info.domain_to_string(),
-                ty: event.data.socket_info.type_to_string(),
-            },
+            socket: SocketInfo::from(event.data.socket_info),
             filter: FilterInfo {
                 md5: md5_data(event.data.filter.as_slice()),
                 sha1: sha1_data(event.data.filter.as_slice()),
@@ -986,19 +993,31 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::ConnectEvent,
     ) -> UserEvent<ConnectData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-        let dst_ip: IpAddr = event.data.ip_port.into();
+        let src: SockAddr = event.data.src.into();
+        let dst: SockAddr = event.data.dst.into();
+
+        let flow: Flow = Flow::new(
+            Protocol::from(event.data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
 
         let data = ConnectData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
+            socket: SocketInfo::from(event.data.socket),
+            src,
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst_ip, &info).into()),
-                ip: dst_ip,
-                port: event.data.ip_port.port(),
-                public: is_public_ip(dst_ip),
-                is_v6: event.data.ip_port.is_v6(),
+                hostname: Some(self.get_resolved(dst.ip, &info).into()),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
             },
+            community_id: flow.community_id_v1(0).base64(),
             connected: event.data.connected,
         };
 
@@ -1012,19 +1031,31 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::SendEntropyEvent,
     ) -> UserEvent<SendDataData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-        let dst_ip: IpAddr = event.data.ip_port.into();
+        let dst: SockAddr = event.data.dst.into();
+        let src: SockAddr = event.data.src.into();
+
+        let flow = Flow::new(
+            Protocol::from(event.data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
 
         let data = SendDataData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
+            socket: SocketInfo::from(event.data.socket),
+            src: event.data.src.into(),
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst_ip, &info).into()),
-                ip: dst_ip,
-                port: event.data.ip_port.port(),
-                public: is_public_ip(dst_ip),
-                is_v6: event.data.ip_port.is_v6(),
+                hostname: Some(self.get_resolved(dst.ip, &info).into()),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
             },
+            community_id: flow.community_id_v1(0).base64(),
             data_entropy: event.shannon_entropy(),
             data_size: event.data.real_data_size,
         };

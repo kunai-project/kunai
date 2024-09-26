@@ -1479,6 +1479,19 @@ pub struct sock {
     pub sk_type: __u16,
     pub sk_receive_queue: sk_buff_head,
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sock___pre_5_6 {
+    pub sk_protocol: __u8,
+}
+extern "C" {
+    pub fn shim_sock___pre_5_6_sk_protocol(
+        sock___pre_5_6: *mut sock___pre_5_6,
+    ) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_sock___pre_5_6_sk_protocol_exists(sock___pre_5_6: *mut sock___pre_5_6) -> bool;
+}
 extern "C" {
     pub fn shim_sock___sk_common(sock: *mut sock) -> *mut sock_common;
 }
@@ -1490,6 +1503,9 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_sock_sk_protocol(sock: *mut sock) -> ::core::ffi::c_uchar;
+}
+extern "C" {
+    pub fn shim_sock_sk_protocol_user(sock: *mut sock) -> ::core::ffi::c_uchar;
 }
 extern "C" {
     pub fn shim_sock_sk_protocol_exists(sock: *mut sock) -> bool;

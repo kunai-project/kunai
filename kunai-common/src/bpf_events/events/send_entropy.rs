@@ -1,12 +1,14 @@
 use crate::{bpf_events::Event, macros::not_bpf_target_code};
 
-use crate::net::IpPort;
+use crate::net::{SockAddr, SocketInfo};
 
 pub const ENCRYPT_DATA_MAX_BUFFER_SIZE: usize = 4096;
 
 #[repr(C)]
 pub struct SendEntropyData {
-    pub ip_port: IpPort,
+    pub socket: SocketInfo,
+    pub src: SockAddr,
+    pub dst: SockAddr,
     pub freq: [u32; 256],
     pub freq_sum: u32,
     pub real_data_size: u64,
@@ -28,8 +30,10 @@ impl SendEntropyEvent {
             self.data.freq_sum += 1;
         }
     }
+}
 
-    not_bpf_target_code! {
+not_bpf_target_code! {
+    impl SendEntropyEvent {
         // we cannot do complicated operations of f32 in eBPF
         #[inline]
         pub fn shannon_entropy(&self) -> f32{
@@ -46,4 +50,5 @@ impl SendEntropyEvent {
             entropy
         }
     }
+
 }

@@ -7,7 +7,7 @@ use aya_ebpf::{
 use kunai_common::{
     co_re::task_struct,
     kprobe::ProbeFn,
-    net::{IpPort, SaFamily, SocketInfo},
+    net::{SaFamily, SockAddr, SocketInfo},
 };
 
 const DNS_HEADER_SIZE: usize = 12;
@@ -33,38 +33,38 @@ impl SockHelper {
     unsafe fn dns_event(
         &self,
         ctx: &ProbeContext,
-        opt_server: Option<IpPort>, // optional server IpPort
-        tcp_header: bool,           // whether the data contains tcp_header
+        opt_server: Option<SockAddr>, // optional server IpPort
+        tcp_header: bool,             // whether the data contains tcp_header
     ) -> ProbeResult<()> {
         let socket = self.socket;
         let sock = core_read_kernel!(socket, sk)?;
         let sk_common = core_read_kernel!(sock, sk_common)?;
-        let sk_type = core_read_kernel!(sock, sk_type)?;
 
-        let sa_family = core_read_kernel!(sk_common, skc_family)?;
+        let si = SocketInfo::try_from(sock)?;
 
-        if sa_family != AF_INET as u16 && sa_family != AF_INET6 as u16 {
+        // we process only IPv4 and IPv6
+        if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
             return Ok(());
         }
 
         // in some cases it ip/port info is empty in socket
         // if there is an optional server it takes precedence over addr got from socket
-        let ip_port = match opt_server {
+        let dst = match opt_server {
             Some(server) => server,
-            None => IpPort::from_sock_common_foreign_ip(sk_common).unwrap_or_default(),
+            None => SockAddr::dst_from_sock_common(sk_common).unwrap_or_default(),
         };
 
         // we don't take protocol communicating on other ports than dns
-        if ip_port.port() != 53 {
+        if dst.port() != 53 {
             return Ok(());
         }
 
         alloc::init()?;
         let event = alloc::alloc_zero::<DnsQueryEvent>()?;
 
-        //event.info.timestamp = event_ts;
-        event.data.ip_port = ip_port;
-        event.data.proto = sk_type;
+        event.data.socket = si;
+        event.data.src = SockAddr::src_from_sock_common(sk_common)?;
+        event.data.dst = dst;
         event.data.tcp_header = tcp_header;
 
         match self.udata {
@@ -92,7 +92,7 @@ unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
     }
 
     let sock_common = core_read_kernel!(sock, sk_common)?;
-    let ip_port = IpPort::from_sock_common_foreign_ip(sock_common)?;
+    let ip_port = SockAddr::dst_from_sock_common(sock_common)?;
 
     // filter on dst port
     Ok(ip_port.port() == 53)
@@ -384,7 +384,7 @@ unsafe fn try_exit_recvmsg(exit_ctx: &ProbeContext) -> ProbeResult<()> {
             let in_addr: co_re::sockaddr_in = addr.into();
             let ip = core_read_user!(in_addr, s_addr)?.to_be();
             let port = core_read_user!(in_addr, sin_port)?.to_be();
-            server = Some(IpPort::new_v4_from_be(ip, port));
+            server = Some(SockAddr::new_v4_from_be(ip, port));
         }
     }
 

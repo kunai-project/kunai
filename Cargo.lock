@@ -506,6 +506,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 
 [[package]]
+name = "communityid"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63f129c597ee30e0dcb6745a5c6ac6b6ec97d2b5cfb16765a6510587d9da30bc"
+dependencies = [
+ "base64",
+ "serde",
+ "sha1",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1487,6 +1498,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "communityid",
  "env_logger",
  "firo",
  "fs-walk",

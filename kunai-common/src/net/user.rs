@@ -1,9 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use super::{IpPort, IpType, SaFamily, SockType, SocketInfo};
+use super::{IpProto, IpType, SaFamily, SockAddr, SockType, SocketInfo};
 
-impl From<IpPort> for IpAddr {
-    fn from(value: IpPort) -> Self {
+impl From<SockAddr> for IpAddr {
+    fn from(value: SockAddr) -> Self {
         match value.ty {
             IpType::V4 => IpAddr::V4(Ipv4Addr::from(value.data[0])),
             IpType::V6 => IpAddr::V6(Ipv6Addr::from(value.ip())),
@@ -27,6 +27,14 @@ impl SocketInfo {
             t.as_str().into()
         } else {
             format!("unknown({})", self.domain)
+        }
+    }
+
+    pub fn proto_to_string(&self) -> String {
+        if let Ok(p) = IpProto::try_from_uint(self.proto) {
+            p.as_str().into()
+        } else {
+            format!("unknown({})", self.proto)
         }
     }
 }

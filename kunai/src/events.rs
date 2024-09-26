@@ -9,7 +9,7 @@ use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
 use gene::{Event, FieldGetter, FieldValue};
 use gene_derive::{Event, FieldGetter};
 
-use kunai_common::bpf_events;
+use kunai_common::{bpf_events, net};
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -601,6 +601,30 @@ impl Scannable for MprotectData {
 
 impl_std_iocs!(MprotectData);
 
+#[derive(Debug, Serialize, Deserialize, FieldGetter, Clone, Copy)]
+pub struct SockAddr {
+    pub ip: IpAddr,
+    pub port: u16,
+}
+
+impl Default for SockAddr {
+    fn default() -> Self {
+        Self {
+            ip: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            port: 0,
+        }
+    }
+}
+
+impl From<kunai_common::net::SockAddr> for SockAddr {
+    fn from(value: kunai_common::net::SockAddr) -> Self {
+        Self {
+            ip: IpAddr::from(value),
+            port: value.port(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct NetworkInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -637,7 +661,10 @@ impl IocGetter for NetworkInfo {
 
 def_user_data!(
     pub struct ConnectData {
+        pub socket: SocketInfo,
+        pub src: SockAddr,
         pub dst: NetworkInfo,
+        pub community_id: String,
         pub connected: bool,
     }
 );
@@ -658,10 +685,12 @@ impl IocGetter for ConnectData {
 def_user_data!(
     #[derive(Default)]
     pub struct DnsQueryData {
+        pub socket: SocketInfo,
+        pub src: SockAddr,
         pub query: String,
-        pub proto: String,
         pub response: String,
         pub dns_server: NetworkInfo,
+        pub community_id: String,
         #[serde(skip)]
         #[getter(skip)]
         responses: Vec<String>,
@@ -727,7 +756,10 @@ impl IocGetter for DnsQueryData {
 
 def_user_data!(
     pub struct SendDataData {
+        pub socket: SocketInfo,
+        pub src: SockAddr,
         pub dst: NetworkInfo,
+        pub community_id: String,
         pub data_entropy: f32,
         pub data_size: u64,
     }
@@ -883,11 +915,22 @@ impl Scannable for BpfProgLoadData {
     }
 }
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize)]
+#[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct SocketInfo {
     pub domain: String,
     #[serde(rename = "type")]
     pub ty: String,
+    pub proto: String,
+}
+
+impl From<net::SocketInfo> for SocketInfo {
+    fn from(value: net::SocketInfo) -> Self {
+        Self {
+            domain: value.domain_to_string(),
+            ty: value.type_to_string(),
+            proto: value.proto_to_string(),
+        }
+    }
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
