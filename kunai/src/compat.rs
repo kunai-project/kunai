@@ -166,7 +166,7 @@ impl<'a> Program<'a> {
         match program {
             programs::Program::TracePoint(_) => {
                 let kernel_attach = self
-                    .attach_func()
+                    .attach_point()
                     .ok_or(Error::NoAttachFn(self.name.clone()))
                     .unwrap();
                 if kernel_attach.starts_with("sys_exit") {
@@ -186,11 +186,20 @@ impl<'a> Program<'a> {
         }
     }
 
+    /// Returns the name of the attach point in kernel land
     #[inline]
-    fn attach_func(&self) -> Option<String> {
+    fn attach_point(&self) -> Option<String> {
         self.info
             .as_ref()
             .and_then(|i| i.section_name.split('/').last().map(|s| s.to_string()))
+    }
+
+    /// Returns true if the attach point of program is `name`
+    #[inline]
+    pub fn has_attach_point<S: AsRef<str>>(&self, name: S) -> bool {
+        self.attach_point()
+            .map(|a| a.as_str() == name.as_ref())
+            .unwrap_or_default()
     }
 
     #[inline]
@@ -260,7 +269,7 @@ impl<'a> Program<'a> {
     }
 
     pub fn load(&mut self, btf: &Btf) -> Result<(), Error> {
-        let hook = self.attach_func();
+        let hook = self.attach_point();
         let program = self.prog_mut();
 
         match program {
@@ -306,7 +315,7 @@ impl<'a> Program<'a> {
 
     pub fn attach(&mut self) -> Result<(), Error> {
         let program_name = self.name.clone();
-        let kernel_attach_fn = self.attach_func();
+        let kernel_attach_fn = self.attach_point();
         let tracepoint_category = self.tracepoint_category();
         let program = self.prog_mut();
 

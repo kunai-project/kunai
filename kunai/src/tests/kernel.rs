@@ -82,7 +82,7 @@ fn integration() -> anyhow::Result<()> {
         }
     }
 
-    kunai::configure_probes(&conf, &mut programs, current_kernel)?;
+    kunai::configure_probes(&conf, &mut programs, current_kernel);
 
     // generic program loader
     for (_, mut p) in programs.into_vec_sorted_by_prio() {

@@ -21,13 +21,12 @@ pub mod yara;
 /// function that responsible of probe priorities and compatibily across kernels
 /// panic: if a given probe name is not found
 #[allow(unused_variables)]
-pub fn configure_probes(
-    conf: &Config,
-    programs: &mut Programs,
-    target: KernelVersion,
-) -> anyhow::Result<()> {
+pub fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVersion) {
     // we need to be able to parse available symbols to check if some function exist
-    let sym = kernel_symbols()?.into_values().collect::<HashSet<String>>();
+    let sym = kernel_symbols()
+        .unwrap_or_default()
+        .into_values()
+        .collect::<HashSet<String>>();
 
     // LSM probes are available only since 5.7
     // We disable them if we're not running in harden mode
@@ -80,6 +79,4 @@ pub fn configure_probes(
             warn!("syscore_resume probe has been disabled: make sure your kernel has been built without CONFIG_PM_SLEEP")
         }
     }
-
-    Ok(())
 }
