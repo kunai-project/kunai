@@ -2358,7 +2358,6 @@ fn load_and_attach_bpf<'a>(
             p.prio
         );
 
-        p.load_and_attach(&btf)?;
         p.load(&btf)?;
 
         // this handles the very specific case where /proc/kallsyms
