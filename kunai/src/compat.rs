@@ -54,8 +54,6 @@ impl<'a> Programs<'a> {
         let m = bpf
             .programs_mut()
             .map(|(name, p)| {
-                // only supports . encoding for the moment
-                //let unmangled_name = name.replace("_", ".");
                 let unmangled_name = name.to_string();
                 let prog = Program::from_program(unmangled_name.clone(), p);
                 (unmangled_name, prog)
