@@ -59,13 +59,13 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // we check that arg_start is not a null pointer
     if arg_start != 0 && arg_len != 0 {
-        ignore_result!(inspect_err!(
-            event
-                .data
-                .argv
-                .read_user_at(arg_start as *const u8, arg_len as u32),
-            |_| warn_msg!(ctx, "failed to read argv")
-        ));
+        // on aarch64 this call sometimes fails for uknown reason
+        // causing warning to be displayed in the kunai logs.
+        // As this is not a critical error warning has been disabled.
+        ignore_result!(event
+            .data
+            .argv
+            .read_user_at(arg_start as *const u8, arg_len as u32));
     }
 
     let exe_file = core_read_kernel!(mm, exe_file)?;
