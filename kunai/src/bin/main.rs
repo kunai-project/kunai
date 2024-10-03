@@ -2319,7 +2319,7 @@ fn load_and_attach_bpf<'a>(
     let mut programs = Programs::with_bpf(bpf).with_elf_info(BPF_ELF)?;
     let btf = Btf::from_sys_fs()?;
 
-    kunai::configure_probes(conf, &mut programs, kernel);
+    kunai::configure_probes(conf, &mut programs, kernel)?;
 
     // generic program loader
     for (_, p) in programs.sorted_by_prio() {
