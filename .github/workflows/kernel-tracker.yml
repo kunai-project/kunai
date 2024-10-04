@@ -3,6 +3,9 @@ name: Kernel Change Tracker
 on: 
   schedule:
   - cron: '37 13 * * *'
+  
+  pull_request:
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
