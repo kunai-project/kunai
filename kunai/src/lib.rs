@@ -1,7 +1,12 @@
 #![deny(unused_imports)]
+
+use std::collections::HashSet;
+
+use aya::util::kernel_symbols;
 use compat::Programs;
 use config::Config;
 use kunai_common::{kernel, version::KernelVersion};
+use log::warn;
 
 pub mod cache;
 pub mod compat;
@@ -17,6 +22,12 @@ pub mod yara;
 /// panic: if a given probe name is not found
 #[allow(unused_variables)]
 pub fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVersion) {
+    // we need to be able to parse available symbols to check if some function exist
+    let sym = kernel_symbols()
+        .unwrap_or_default()
+        .into_values()
+        .collect::<HashSet<String>>();
+
     // LSM probes are available only since 5.7
     // We disable them if we're not running in harden mode
     programs
@@ -56,4 +67,16 @@ pub fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVe
 
     // mmap probe
     programs.expect_mut("syscalls_sys_enter_mmap").prio(90);
+
+    // syscore_resume may be missing if kernel is compiled without CONFIG_PM_SLEEP
+    // see: https://github.com/kunai-project/kunai/issues/105
+    if !sym.contains("syscore_resume") {
+        programs.expect_mut("enter_syscore_resume").disable();
+        // the risk is we disable a probe that changed name (not desired)
+        // we know that until v6.12 the function is there so print warning
+        // only if kernel is more recent.
+        if target > kernel!(6, 12) {
+            warn!("syscore_resume probe has been disabled: make sure your kernel has been built without CONFIG_PM_SLEEP")
+        }
+    }
 }

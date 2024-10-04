@@ -3,6 +3,7 @@
 use anyhow::anyhow;
 use aya::maps::perf::Events;
 use aya::maps::MapData;
+use aya::programs::ProgramError;
 use bytes::BytesMut;
 
 use clap::builder::styling;
@@ -2357,7 +2358,21 @@ fn load_and_attach_bpf<'a>(
             p.prio
         );
 
-        p.load_and_attach(&btf)?;
+        p.load(&btf)?;
+
+        // this handles the very specific case where /proc/kallsyms
+        // is not available to check if syscore_resume is present
+        // In such case attach will fail with a SyscallError and
+        // a warning must be shown
+        let r = p.attach();
+        if p.has_attach_point("syscore_resume")
+            && matches!(
+                r,
+                Err(kunai::compat::Error::Program(ProgramError::SyscallError(_)))
+            )
+        {
+            warn!("syscore_resume probe has failed to load, make sure your kernel is compiled without CONFIG_PM_SLEEP")
+        }
     }
 
     Ok(programs)
