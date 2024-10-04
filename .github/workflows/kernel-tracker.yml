@@ -36,7 +36,7 @@ jobs:
 
     - name: Clone Kernel
       # run the stuff only if linux directory isn't there
-      if: ${{ run('test -d ./linux') != 0 }}
+      if: ${{ (run('test -d ./linux') != 0) }}
       uses: actions/checkout@v3
       with:
         repository: https://github.com/torvalds/linux.git
