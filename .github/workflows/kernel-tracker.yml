@@ -37,7 +37,7 @@ jobs:
 
     - name: Clone Kernel
       # run the stuff only if we failed at retrieve from cache
-      if: steps.cache-linux.outputs.cache-hit == 'false'
+      if: steps.cache-linux.outputs.cache-hit != 'true'
       uses: actions/checkout@v3
       with:
         repository: https://github.com/torvalds/linux.git
