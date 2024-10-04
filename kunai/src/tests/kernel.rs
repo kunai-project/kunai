@@ -1,8 +1,8 @@
+#![deny(unused_imports)]
 use anyhow::anyhow;
-use aya::{include_bytes_aligned, BpfLoader, Btf, VerifierLogLevel};
+use aya::VerifierLogLevel;
 use env_logger::Builder;
 use kunai::{
-    compat::Programs,
     config::Config,
     util::{is_bpf_lsm_enabled, uname::Utsname},
 };
@@ -52,22 +52,6 @@ fn integration() -> anyhow::Result<()> {
     info!("mounting securityfs");
     mount("none", "/sys/kernel/security", "securityfs")?;
 
-    let bpf_elf = {
-        #[cfg(debug_assertions)]
-        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
-        #[cfg(not(debug_assertions))]
-        let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
-        d
-    };
-
-    info!("loading ebpf bytes");
-    let mut bpf = BpfLoader::new()
-        .verifier_log_level(verifier_level)
-        .set_global("LINUX_KERNEL_VERSION", &current_kernel, true)
-        .load(bpf_elf)?;
-
-    let btf = Btf::from_sys_fs()?;
-    let mut programs = Programs::with_bpf(&mut bpf).with_elf_info(bpf_elf)?;
     let conf = Config::default_hardened();
 
     if conf.harden {
@@ -82,35 +66,9 @@ fn integration() -> anyhow::Result<()> {
         }
     }
 
-    kunai::configure_probes(&conf, &mut programs, current_kernel);
-
-    // generic program loader
-    for (_, mut p) in programs.into_vec_sorted_by_prio() {
-        if !p.enable {
-            warn!("{} probe has been disabled", p.name);
-            continue;
-        }
-
-        if !p.is_compatible(&current_kernel) {
-            warn!(
-                "{} probe is not compatible with current kernel: min={} max={} current={}",
-                p.name,
-                p.compat.min(),
-                p.compat.max(),
-                current_kernel
-            );
-            continue;
-        }
-
-        info!(
-            "loading: {} {:?} with priority={}",
-            p.name,
-            p.prog_type(),
-            p.prio
-        );
-
-        p.load_and_attach(&btf)?;
-    }
+    info!("loading ebpf bytes");
+    let mut bpf = kunai::prepare_bpf(current_kernel, &conf, verifier_level)?;
+    kunai::load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
 
     Ok(())
 }
