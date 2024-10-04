@@ -38,6 +38,7 @@ jobs:
       run: |
         set -euxo pipefail
         cd ~/linux
+        git checkout master
         git pull
         # checkout to latest stable version       
         LATEST_VERSION=$(git tag | grep -P 'v\d+\.\d+$' | sort -V | tail -n 1)
