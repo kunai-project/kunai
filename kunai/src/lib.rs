@@ -2,11 +2,15 @@
 
 use std::collections::HashSet;
 
-use aya::util::kernel_symbols;
+use aya::{
+    include_bytes_aligned, programs::ProgramError, util::kernel_symbols, Bpf, BpfLoader, Btf,
+    VerifierLogLevel,
+};
 use compat::Programs;
 use config::Config;
-use kunai_common::{kernel, version::KernelVersion};
-use log::warn;
+use kunai_common::{config::BpfConfig, kernel, version::KernelVersion};
+use log::{info, warn};
+use util::{page_shift, page_size};
 
 pub mod cache;
 pub mod compat;
@@ -18,10 +22,22 @@ pub mod ioc;
 pub mod util;
 pub mod yara;
 
+/// Holds the binary data of all the eBPF programs
+const BPF_ELF: &[u8] = {
+    #[cfg(debug_assertions)]
+    let d = include_bytes_aligned!("../../target/bpfel-unknown-none/debug/kunai-ebpf");
+    #[cfg(not(debug_assertions))]
+    let d = include_bytes_aligned!("../../target/bpfel-unknown-none/release/kunai-ebpf");
+    d
+};
+
 /// function that responsible of probe priorities and compatibily across kernels
-/// panic: if a given probe name is not found
+///
+/// # Panic
+///
+/// If a given probe name is not found
 #[allow(unused_variables)]
-pub fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVersion) {
+fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVersion) {
     // we need to be able to parse available symbols to check if some function exist
     let sym = kernel_symbols()
         .unwrap_or_default()
@@ -79,4 +95,106 @@ pub fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVe
             warn!("syscore_resume probe has been disabled: make sure your kernel has been built without CONFIG_PM_SLEEP")
         }
     }
+}
+
+/// This function is responsible from loading eBPF code from a buffer
+/// into the appropriate Aya structure. It does not load the eBPF code
+/// into the kernel.
+pub fn prepare_bpf(
+    kernel: KernelVersion,
+    conf: &Config,
+    vll: VerifierLogLevel,
+) -> anyhow::Result<Bpf> {
+    let page_size = page_size()? as u64;
+    let page_shift = page_shift()? as u64;
+
+    let mut bpf = BpfLoader::new()
+        .verifier_log_level(vll)
+        .set_global("PAGE_SHIFT", &page_shift, true)
+        .set_global("PAGE_SIZE", &page_size, true)
+        .set_global("LINUX_KERNEL_VERSION", &kernel, true)
+        .load(BPF_ELF)?;
+
+    BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
+        .expect("failed to initialize bpf configuration");
+
+    Ok(bpf)
+}
+
+/// Loads eBPF programs in the kernel and attach each program
+/// to its attach point. This function acts as a generic eBPF
+/// program loader.
+pub fn load_and_attach_bpf<'a>(
+    conf: &'a Config,
+    kernel: KernelVersion,
+    bpf: &'a mut Bpf,
+) -> anyhow::Result<()> {
+    // make possible probe selection in debug
+    #[allow(unused_mut)]
+    let mut en_probes: Vec<String> = vec![];
+    #[cfg(debug_assertions)]
+    if let Ok(enable) = std::env::var("PROBES") {
+        enable.split(',').for_each(|s| en_probes.push(s.into()));
+    }
+
+    // We need to parse eBPF ELF to extract section names
+    let mut programs = Programs::with_bpf(bpf).with_elf_info(BPF_ELF)?;
+    let btf = Btf::from_sys_fs()?;
+
+    configure_probes(conf, &mut programs, kernel);
+
+    // generic program loader
+    for (_, p) in programs.sorted_by_prio() {
+        // filtering probes to enable (only available in debug)
+        if !en_probes.is_empty() && en_probes.iter().filter(|e| p.name.contains(*e)).count() == 0 {
+            continue;
+        }
+
+        // we force enabling of selected probes
+        // debug probes are disabled by default
+        if !en_probes.is_empty() {
+            p.enable();
+        }
+
+        if !p.enable {
+            warn!("{} probe has been disabled", p.name);
+            continue;
+        }
+
+        if !p.is_compatible(&kernel) {
+            warn!(
+                "{} probe is not compatible with current kernel: min={} max={} current={}",
+                p.name,
+                p.compat.min(),
+                p.compat.max(),
+                kernel
+            );
+            continue;
+        }
+
+        info!(
+            "loading: {} {:?} with priority={}",
+            p.name,
+            p.prog_type(),
+            p.prio
+        );
+
+        p.load(&btf)?;
+
+        // this handles the very specific case where /proc/kallsyms
+        // is not available to check if syscore_resume is present
+        // In such case attach will fail with a SyscallError and
+        // a warning must be shown
+        let r = p.attach();
+        if p.has_attach_point("syscore_resume")
+            && matches!(
+                r,
+                Err(crate::compat::Error::Program(ProgramError::SyscallError(_)))
+            )
+        {
+            warn!("syscore_resume probe has failed to load, make sure your kernel is compiled without CONFIG_PM_SLEEP")
+        }
+    }
+
+    Ok(())
 }

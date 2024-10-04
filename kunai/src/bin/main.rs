@@ -3,7 +3,6 @@
 use anyhow::anyhow;
 use aya::maps::perf::Events;
 use aya::maps::MapData;
-use aya::programs::ProgramError;
 use bytes::BytesMut;
 
 use clap::builder::styling;
@@ -29,10 +28,9 @@ use kunai_common::bpf_events::{
     self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, Type,
     MAX_BPF_EVENT_SIZE,
 };
-use kunai_common::config::{BpfConfig, Filter};
+use kunai_common::config::Filter;
 use kunai_common::{inspect_err, kernel};
 
-use kunai_common::version::KernelVersion;
 use kunai_macros::StrEnum;
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
@@ -58,12 +56,9 @@ use std::sync::Arc;
 use std::process;
 use std::time::Duration;
 
-use aya::{
-    include_bytes_aligned, maps::perf::AsyncPerfEventArray, maps::HashMap as AyaHashMap,
-    util::online_cpus, Bpf,
-};
+use aya::{maps::perf::AsyncPerfEventArray, maps::HashMap as AyaHashMap, util::online_cpus, Bpf};
 
-use aya::{BpfLoader, Btf, VerifierLogLevel};
+use aya::VerifierLogLevel;
 
 use log::{debug, error, info, warn};
 
@@ -72,7 +67,6 @@ use tokio::{task, time};
 
 use kunai::cache::*;
 
-use kunai::compat::Programs;
 use kunai::config::Config;
 use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
@@ -2278,106 +2272,6 @@ enum Command {
     Events,
 }
 
-const BPF_ELF: &[u8] = {
-    #[cfg(debug_assertions)]
-    let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
-    #[cfg(not(debug_assertions))]
-    let d = include_bytes_aligned!("../../../target/bpfel-unknown-none/release/kunai-ebpf");
-    d
-};
-
-fn prepare_bpf(kernel: KernelVersion, conf: &Config, vll: VerifierLogLevel) -> anyhow::Result<Bpf> {
-    let page_size = page_size()? as u64;
-    let page_shift = page_shift()? as u64;
-
-    let mut bpf = BpfLoader::new()
-        .verifier_log_level(vll)
-        .set_global("PAGE_SHIFT", &page_shift, true)
-        .set_global("PAGE_SIZE", &page_size, true)
-        .set_global("LINUX_KERNEL_VERSION", &kernel, true)
-        .load(BPF_ELF)?;
-
-    BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
-        .expect("failed to initialize bpf configuration");
-
-    Ok(bpf)
-}
-
-fn load_and_attach_bpf<'a>(
-    conf: &'a Config,
-    kernel: KernelVersion,
-    bpf: &'a mut Bpf,
-) -> anyhow::Result<Programs<'a>> {
-    // make possible probe selection in debug
-    #[allow(unused_mut)]
-    let mut en_probes: Vec<String> = vec![];
-    #[cfg(debug_assertions)]
-    if let Ok(enable) = std::env::var("PROBES") {
-        enable.split(',').for_each(|s| en_probes.push(s.into()));
-    }
-
-    // We need to parse eBPF ELF to extract section names
-    let mut programs = Programs::with_bpf(bpf).with_elf_info(BPF_ELF)?;
-    let btf = Btf::from_sys_fs()?;
-
-    kunai::configure_probes(conf, &mut programs, kernel);
-
-    // generic program loader
-    for (_, p) in programs.sorted_by_prio() {
-        // filtering probes to enable (only available in debug)
-        if !en_probes.is_empty() && en_probes.iter().filter(|e| p.name.contains(*e)).count() == 0 {
-            continue;
-        }
-
-        // we force enabling of selected probes
-        // debug probes are disabled by default
-        if !en_probes.is_empty() {
-            p.enable();
-        }
-
-        if !p.enable {
-            warn!("{} probe has been disabled", p.name);
-            continue;
-        }
-
-        if !p.is_compatible(&kernel) {
-            warn!(
-                "{} probe is not compatible with current kernel: min={} max={} current={}",
-                p.name,
-                p.compat.min(),
-                p.compat.max(),
-                kernel
-            );
-            continue;
-        }
-
-        info!(
-            "loading: {} {:?} with priority={}",
-            p.name,
-            p.prog_type(),
-            p.prio
-        );
-
-        p.load(&btf)?;
-
-        // this handles the very specific case where /proc/kallsyms
-        // is not available to check if syscore_resume is present
-        // In such case attach will fail with a SyscallError and
-        // a warning must be shown
-        let r = p.attach();
-        if p.has_attach_point("syscore_resume")
-            && matches!(
-                r,
-                Err(kunai::compat::Error::Program(ProgramError::SyscallError(_)))
-            )
-        {
-            warn!("syscore_resume probe has failed to load, make sure your kernel is compiled without CONFIG_PM_SLEEP")
-        }
-    }
-
-    Ok(programs)
-}
-
 impl Command {
     fn replay(o: ReplayOpt) -> anyhow::Result<()> {
         let log_files = o.log_files.clone();
@@ -2559,14 +2453,14 @@ impl Command {
                 loop {
                     info!("Starting event producer");
                     // we start producer
-                    let mut bpf = prepare_bpf(current_kernel, &conf, vll)?;
+                    let mut bpf = kunai::prepare_bpf(current_kernel, &conf, vll)?;
                     let arc_prod =
                         EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?
                             .produce()
                             .await;
 
                     // we load and attach bpf programs
-                    load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
+                    kunai::load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
 
                     loop {
                         // block make sure lock is dropped before sleeping
