@@ -27,6 +27,7 @@ jobs:
         echo "latest-linux-version=$LATEST_LINUX_VERSION" >> $GITHUB_ENV
         
     - name: Cache
+      id: cache-linux
       uses: actions/cache@v4.0.2
       with:
         # A list of files, directories, and wildcard patterns to cache and restore
@@ -35,8 +36,8 @@ jobs:
         key: linux-${{ env.latest-linux-version }}
 
     - name: Clone Kernel
-      # run the stuff only if linux directory isn't there
-      if: ${{ (run('test -d ./linux') != 0) }}
+      # run the stuff only if we failed at retrieve from cache
+      if: steps.cache-linux.outputs.cache-hit == 'false'
       uses: actions/checkout@v3
       with:
         repository: https://github.com/torvalds/linux.git
