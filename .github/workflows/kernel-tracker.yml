@@ -40,7 +40,7 @@ jobs:
       if: steps.cache-linux.outputs.cache-hit != 'true'
       uses: actions/checkout@v3
       with:
-        repository: https://github.com/torvalds/linux.git
+        repository: torvalds/linux
         ref: ${{ env.latest-linux-version }}
         path: ./linux
         
