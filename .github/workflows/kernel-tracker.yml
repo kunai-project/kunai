@@ -1,0 +1,54 @@
+name: Kernel Change Tracker
+
+on: 
+  schedule:
+  - cron: '37 13 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+        
+    - name: Cache
+      uses: actions/cache@v4.0.2
+      with:
+        # A list of files, directories, and wildcard patterns to cache and restore
+        path: ~/linux/
+        # An explicit key for restoring and saving the cache
+        key: linux-kernel
+
+    - name: Clone Kernel
+      run: |
+        set -euxo pipefail
+        if [ ! -d ~/linux ]
+        then
+          git clone https://github.com/torvalds/linux.git ~/linux
+        fi
+        
+    - name: Update Kernel
+      run: |
+        set -euxo pipefail
+        cd ~/linux
+        git pull
+        # checkout to latest stable version       
+        LATEST_VERSION=$(git tag | grep -P 'v\d+\.\d+$' | sort -V | tail -n 1)
+        git checkout $LATEST_VERSION
+
+    - name: Test Kunai Hooks
+      run: |
+        set -euxo pipefail
+        # we get kernel functions prototypes
+        grep -oPR --include='*.h' '^(\w+\s+)+\w+\(' | awk '{print$NF}' | tr -d '(' | sort -u > linux.sym
+        # we get kunai hook points (only kprobes for the moment)
+        grep -iPR '#\[k(ret)?probe.*\]' kunai-ebpf | grep -oP 'function\s+=\s+"\w+?"' | cut -d '"' -f 2 | sort -u > probes.sym
+        # we check that every function hooked in Kunai still exists in the kernel
+        for p in $(cat probes.sym);do grep -P "^$p$" linux.sym ;done
+        
+        
+        
