@@ -3,6 +3,9 @@ name: Kernel Change Tracker
 on: 
   schedule:
   - cron: '37 13 * * *'
+  
+  pull_request:
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,6 +17,12 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v3
+
+    # Define the variable (e.g., from a file or a specific command)
+    - name: Define Cache Key Variable
+      run: |
+        LATEST_LINUX_VERSION=$(git ls-remote --tags https://github.com/torvalds/linux.git | grep -P 'refs/tags/v\d+\.\d+$' | awk '{print$NF}' | awk -F'/' '{print$NF}' | sort -V | tail -1)
+        echo "cache-key=cache-linux-$LATEST_LINUX_VERSION" >> $GITHUB_ENV
         
     - name: Cache
       uses: actions/cache@v4.0.2
@@ -21,7 +30,7 @@ jobs:
         # A list of files, directories, and wildcard patterns to cache and restore
         path: ~/linux/
         # An explicit key for restoring and saving the cache
-        key: linux-kernel
+        key: ${{ env.cache-key }}
 
     - name: Clone Kernel
       run: |
@@ -31,10 +40,11 @@ jobs:
           git clone https://github.com/torvalds/linux.git ~/linux
         fi
         
-    - name: Update Kernel
+    - name: Checkout Latest Kernel
       run: |
         set -euxo pipefail
         cd ~/linux
+        git checkout master
         git pull
         # checkout to latest stable version       
         LATEST_VERSION=$(git tag | grep -P 'v\d+\.\d+$' | sort -V | tail -n 1)
@@ -44,7 +54,7 @@ jobs:
       run: |
         set -euxo pipefail
         # we get kernel functions prototypes
-        grep -oPR --include='*.h' '^(\w+\s+)+\w+\(' | awk '{print$NF}' | tr -d '(' | sort -u > linux.sym
+        grep -oPR --include='*.h' --include='*.c' '^(\w+\s+)+\w+\(' ~/linux | awk '{print$NF}' | tr -d '(' | sort -u > linux.sym
         # we get kunai hook points (only kprobes for the moment)
         grep -iPR '#\[k(ret)?probe.*\]' kunai-ebpf | grep -oP 'function\s+=\s+"\w+?"' | cut -d '"' -f 2 | sort -u > probes.sym
         # we check that every function hooked in Kunai still exists in the kernel
