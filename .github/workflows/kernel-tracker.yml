@@ -25,6 +25,8 @@ jobs:
         path: ~/linux/
         # An explicit key for restoring and saving the cache
         key: linux-kernel
+        # Run the post step to save the cache even if another step before fails
+        save-always: true
 
     - name: Clone Kernel
       run: |
