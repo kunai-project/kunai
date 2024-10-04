@@ -47,7 +47,7 @@ jobs:
       run: |
         set -euxo pipefail
         # we get kernel functions prototypes
-        grep -oPR --include='*.h' '^(\w+\s+)+\w+\(' ~/linux | awk '{print$NF}' | tr -d '(' | sort -u > linux.sym
+        grep -oPR --include='*.h' --include='*.c' '^(\w+\s+)+\w+\(' ~/linux | awk '{print$NF}' | tr -d '(' | sort -u > linux.sym
         # we get kunai hook points (only kprobes for the moment)
         grep -iPR '#\[k(ret)?probe.*\]' kunai-ebpf | grep -oP 'function\s+=\s+"\w+?"' | cut -d '"' -f 2 | sort -u > probes.sym
         # we check that every function hooked in Kunai still exists in the kernel
