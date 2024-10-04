@@ -20,8 +20,7 @@ jobs:
       with:
         path: kunai
 
-    # Define the variable (e.g., from a file or a specific command)
-    - name: Define Cache Key Variable
+    - name: Define Variable
       run: |
         LATEST_LINUX_VERSION=$(git ls-remote --tags https://github.com/torvalds/linux.git | grep -P 'refs/tags/v\d+\.\d+$' | awk '{print$NF}' | awk -F'/' '{print$NF}' | sort -V | tail -1)
         echo "latest-linux-version=$LATEST_LINUX_VERSION" >> $GITHUB_ENV
@@ -33,7 +32,7 @@ jobs:
         # A list of files, directories, and wildcard patterns to cache and restore
         path: ./linux/
         # An explicit key for restoring and saving the cache
-        key: linux-${{ env.latest-linux-version }}
+        key: cache-linux-${{ env.latest-linux-version }}
 
     - name: Clone Kernel
       # run the stuff only if we failed at retrieve from cache
