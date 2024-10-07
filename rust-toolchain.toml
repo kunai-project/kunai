@@ -1,5 +1,8 @@
 [toolchain]
-channel = "1.80"
+# this channel needs to be aligned with the 
+# one in kunai-ebpf if we want to benefit from
+# proc-macro analysis
+channel = "nightly-2024-07-07"
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 
 # to have the necessary for code analysis

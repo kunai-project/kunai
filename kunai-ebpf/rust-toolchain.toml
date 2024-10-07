@@ -1,4 +1,7 @@
 [toolchain]
+# this channel needs to be aligned with the 
+# one in workspace if we want to benefit from
+# proc-macro analysis
 channel = "nightly-2024-07-07"
 
 # The source code of rustc, provided by the rust-src component, is needed for
