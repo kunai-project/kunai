@@ -360,16 +360,61 @@ impl<'s> EventConsumer<'s> {
         for p in self.config.rules.iter() {
             let w = wo.clone().walk(p);
             for r in w {
-                let rule = r?;
+                let rule_file = r?;
 
                 info!(
                     "loading detection/filter rules from: {}",
-                    rule.to_string_lossy()
+                    rule_file.to_string_lossy()
                 );
 
-                self.engine
-                    .load_rules_yaml_reader(File::open(&rule)?)
-                    .map_err(|e| anyhow!("failed to load file {}: {e}", rule.to_string_lossy()))?;
+                for document in serde_yaml::Deserializer::from_reader(File::open(&rule_file)?) {
+                    // we deserialize into a value so that we can process string event ids
+                    let mut value = serde_yaml::Value::deserialize(document)?;
+
+                    // get rule name. We don't check here if there is a name as
+                    // later parsing is supposed to catch it.
+                    let rule_name = value
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or(String::from("unknown"));
+
+                    if let Some(events) = value
+                        .get_mut("match-on")
+                        .and_then(|mo| mo.get_mut("events"))
+                        .and_then(|e| e.get_mut("kunai"))
+                        .and_then(|events| events.as_sequence_mut())
+                    {
+                        for v in events.iter_mut() {
+                            // we handle string event name
+                            if let Some(event_name) = v.as_str() {
+                                let id = if event_name.starts_with('-') {
+                                    let event_name = event_name.trim_start_matches('-');
+                                    let ty = Type::from_str(event_name)
+                                        .map_err(|_| {anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())})?;
+                                    -i64::from(ty as u32)
+                                } else {
+                                    let ty = Type::from_str(event_name).map_err(|_| {
+                                        anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())
+                                    })?;
+                                    i64::from(ty as u32)
+                                };
+
+                                // we actually replace string by i64
+                                *v = serde_yaml::Value::Number(id.into());
+                            }
+                        }
+                    }
+
+                    // we insert rule into the engine
+                    self.engine
+                        .insert_rule(gene::Rule::deserialize(value).map_err(|e| {
+                            anyhow!(
+                                "file={} rule={rule_name} parse error: {e}",
+                                rule_file.to_string_lossy()
+                            )
+                        })?)?;
+                }
             }
         }
 

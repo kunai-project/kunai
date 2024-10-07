@@ -59,6 +59,7 @@ firo = { version = "0.1" }
 yara-x = { version = "0.8.0" }
 fs-walk = { version = "0.1.0" }
 communityid = { version = "0.1", features = ["serde"] }
+serde_yaml = "0.9"
 
 [dev-dependencies]
 tempfile = "3.12.0"
