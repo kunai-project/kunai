@@ -6,7 +6,7 @@ use aya::maps::MapData;
 use bytes::BytesMut;
 
 use clap::builder::styling;
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
 use fs_walk::WalkOptions;
 use gene::rules::MAX_SEVERITY;
@@ -185,14 +185,25 @@ impl io::Write for Output {
 
 /// enum of supported actions
 #[derive(StrEnum)]
-enum Actions {
+enum Action {
     #[str("kill")]
     Kill,
     #[str("scan-files")]
     ScanFiles,
 }
 
-impl std::fmt::Display for Actions {
+impl Action {
+    fn description(&self) -> &'static str {
+        match self {
+            Action::Kill => "kill the process",
+            Action::ScanFiles => {
+                "scan any file path available in the event with all the Yara rules loaded"
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
     }
@@ -1405,7 +1416,7 @@ impl<'s> EventConsumer<'s> {
             // Generally speaking killing action must be done with
             // care as sending a SIGKILL to a critical process
             // might impact the system.
-            if actions.contains(Actions::Kill.as_str()) {
+            if actions.contains(Action::Kill.as_str()) {
                 let pid = event.info().task.pid;
                 // this is the kind of information we want to have
                 // at all time so we put this as a warning not to
@@ -1418,10 +1429,10 @@ impl<'s> EventConsumer<'s> {
         }
 
         // if action contains scan-file and if scan events are enabled
-        if self.scan_events_enabled && actions.contains(Actions::ScanFiles.as_str()) {
+        if self.scan_events_enabled && actions.contains(Action::ScanFiles.as_str()) {
             let _ = self
                 .action_scan_files(event)
-                .inspect_err(|e| error!("{} action failed: {e}", Actions::ScanFiles));
+                .inspect_err(|e| error!("{} action failed: {e}", Action::ScanFiles));
         }
     }
 
@@ -2319,6 +2330,21 @@ impl TryFrom<RunOpt> for Config {
     }
 }
 
+#[derive(Debug, Args)]
+struct ConfigOpt {
+    /// Dump a default configuration on the terminal
+    #[arg(long, exclusive = true)]
+    dump: bool,
+
+    /// List the available remediation actions supported
+    #[arg(long, exclusive = true)]
+    list_actions: bool,
+
+    /// List available events
+    #[arg(long, exclusive = true)]
+    list_events: bool,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Run kunai with custom options
@@ -2326,9 +2352,7 @@ enum Command {
     /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
     Replay(ReplayOpt),
     /// Dump a default configuration
-    Config,
-    /// Show information about Kunai events
-    Events,
+    Config(ConfigOpt),
 }
 
 impl Command {
@@ -2565,6 +2589,34 @@ impl Command {
             }
         })
     }
+
+    fn config(co: ConfigOpt) -> anyhow::Result<()> {
+        if co.dump {
+            let conf = Config::default().generate_host_uuid();
+            println!("{}", conf.to_toml()?);
+            return Ok(());
+        }
+
+        if co.list_actions {
+            for a in Action::variants() {
+                let pad = 12usize.saturating_sub(a.as_str().len());
+                println!("{a}: {:<pad$}{}", " ", a.description());
+            }
+            return Ok(());
+        }
+
+        if co.list_events {
+            for v in bpf_events::Type::variants() {
+                if v.is_configurable() {
+                    let pad = 25usize.saturating_sub(v.as_str().len());
+                    println!("{v}: {:>pad$}", v as u32)
+                }
+            }
+            return Ok(());
+        }
+
+        Ok(())
+    }
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -2622,21 +2674,7 @@ fn main() -> Result<(), anyhow::Error> {
     Builder::new().filter_level(log_level).init();
 
     match cli.command {
-        Some(Command::Events) => {
-            for v in bpf_events::Type::variants() {
-                if v.is_configurable() {
-                    let pad = 25 - v.as_str().len();
-                    println!("{}: {:>pad$}", v.as_str(), v as u32)
-                }
-            }
-            Ok(())
-        }
-        Some(Command::Config) => {
-            let mut conf = Config::default();
-            conf.generate_host_uuid();
-            println!("{}", conf.to_toml()?);
-            Ok(())
-        }
+        Some(Command::Config(o)) => Command::config(o),
         Some(Command::Replay(o)) => Command::replay(o),
         Some(Command::Run(o)) => Command::run(Some(o), verifier_level),
         None => Command::run(None, verifier_level),
