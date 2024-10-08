@@ -201,6 +201,7 @@ impl std::fmt::Display for Actions {
 struct EventConsumer<'s> {
     system_info: SystemInfo,
     config: Config,
+    filter: Filter,
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
     random: u32,
@@ -270,9 +271,12 @@ impl<'s> EventConsumer<'s> {
 
         let output = Self::prepare_output(&config)?;
 
+        let filter = Filter::try_from(&config)?;
+
         let mut ep = Self {
             system_info,
             config,
+            filter,
             engine: Engine::new(),
             iocs: HashMap::new(),
             random: util::getrandom::<u32>().unwrap(),
@@ -1565,12 +1569,15 @@ impl<'s> EventConsumer<'s> {
                             std_info.clone(),
                             &bpf_events::CorrelationEvent::from(e),
                         );
-                        // we have to rebuild std_info as it has it is uses correlation
-                        // information
-                        let std_info = self.build_std_event_info(std_info.info);
-                        let mut e = self.execve_event(std_info, e);
 
-                        self.scan_and_print(&mut e);
+                        if self.filter.is_enabled(std_info.info.etype) {
+                            // we have to rebuild std_info as it has it is uses correlation
+                            // information
+                            let std_info = self.build_std_event_info(std_info.info);
+                            let mut e = self.execve_event(std_info, e);
+
+                            self.scan_and_print(&mut e);
+                        }
                     }
                     Err(e) => error!("failed to decode {} event: {:?}", etype, e),
                 }
@@ -1584,11 +1591,15 @@ impl<'s> EventConsumer<'s> {
                         std_info.clone(),
                         &bpf_events::CorrelationEvent::from(e),
                     );
-                    // we have to rebuild std_info as it has it is uses correlation
-                    // information
-                    let std_info = self.build_std_event_info(std_info.info);
-                    let mut e = self.clone_event(std_info, e);
-                    self.scan_and_print(&mut e);
+
+                    // we let clone event go in EventProducer not to break correlation
+                    if self.filter.is_enabled(Type::Clone) {
+                        // we have to rebuild std_info as it has it is uses correlation
+                        // information
+                        let std_info = self.build_std_event_info(std_info.info);
+                        let mut e = self.clone_event(std_info, e);
+                        self.scan_and_print(&mut e);
+                    }
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -2041,8 +2052,11 @@ impl EventProducer {
                         // info_unchecked can be used here as we are sure info is valid
                         let etype = unsafe { dec.info_unchecked() }.etype;
 
-                        // filtering out unwanted events
-                        if !ep.filter.is_enabled(etype) {
+                        // filtering out unwanted events but let Clone go as it is used
+                        // for correlation on consumer side.
+                        if ep.filter.is_disabled(etype)
+                            && !matches!(etype, Type::Execve | Type::ExecveScript | Type::Clone)
+                        {
                             continue;
                         }
 
