@@ -61,10 +61,11 @@ pub enum Type {
     Execve,
     #[str("execve_script")]
     ExecveScript,
-    #[str("task_sched")]
-    TaskSched,
+    // there is hole here on purpose
+    // it used to be the spot of task_sched
+    // but it didn't aim at being configurable
     #[str("exit")]
-    Exit,
+    Exit = 4, // we start at 4 as we moved one event type
     #[str("exit_group")]
     ExitGroup,
     #[str("clone")]
@@ -81,8 +82,6 @@ pub enum Type {
     BpfProgLoad,
     #[str("bpf_socket_filter")]
     BpfSocketFilter,
-    //#[str("bpf_socket_prog")]
-    //BpfSocketProg,
 
     // memory stuffs
     #[str("mprotect_exec")]
@@ -125,6 +124,8 @@ pub enum Type {
     EndConfigurable = 1000,
 
     // specific events
+    #[str("task_sched")]
+    TaskSched,
     #[str("correlation")]
     Correlation,
     #[str("cache_hash")]
