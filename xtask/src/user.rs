@@ -148,6 +148,14 @@ fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
         rustflags.push(format!("-C linker={linker}"))
     }
 
+    let cargo_version = Command::new("cargo").arg("-V").output()?;
+
+    // address issue when building yara with rust nightly
+    // https://github.com/VirusTotal/yara-x/issues/217
+    if String::from_utf8(cargo_version.stdout)?.contains("nightly") {
+        rustflags.push("-C link-args=-znostart-stop-gc".into());
+    }
+
     args.push(format!("--target={}", opts.target));
 
     opts.build_args.iter().for_each(|ba| args.push(ba.clone()));
