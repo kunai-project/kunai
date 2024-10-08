@@ -41,16 +41,24 @@ impl Filter {
         }
     }
 
+    #[inline(always)]
     pub fn disable(&mut self, ty: bpf_events::Type) {
         self.enabled[ty as usize] = false;
     }
 
+    #[inline(always)]
     pub fn enable(&mut self, ty: bpf_events::Type) {
         self.enabled[ty as usize] = true;
     }
 
+    #[inline(always)]
     pub fn is_enabled(&self, ty: bpf_events::Type) -> bool {
         self.enabled[ty as usize]
+    }
+
+    #[inline(always)]
+    pub fn is_disabled(&self, ty: bpf_events::Type) -> bool {
+        !self.is_enabled(ty)
     }
 }
 
