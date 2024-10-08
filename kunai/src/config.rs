@@ -138,8 +138,9 @@ impl Config {
         self
     }
 
-    pub fn generate_host_uuid(&mut self) {
+    pub fn generate_host_uuid(mut self) -> Self {
         self.host_uuid = host_uuid().or(Some(uuid::Uuid::new_v4()));
+        self
     }
 
     pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
