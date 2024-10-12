@@ -13,7 +13,14 @@ publish = false
 debug = []
 
 [dependencies]
-aya-ebpf = { version = "0.1.0" }
+# we fix version including patch as some APIs got changed
+# it is a temporary solutio until aya gets updated
+aya-ebpf = { version = "=0.1.0" }
+# this imports needs to be there otherwise 
+# aya-ebpf will use 0.1.1 by default (breaking API
+# compatibility). Can be removed if aya-ebpf gets
+# updated.
+aya-ebpf-macros = { version = "=0.1.0" }
 kunai-common = { path = "../kunai-common" }
 kunai-macros = { path = "../kunai-common/src/kunai-macros" }
 paste = "1.0"
