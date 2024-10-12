@@ -46,7 +46,7 @@ use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, Write};
 use std::net::IpAddr;
 
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use std::str::FromStr;
@@ -67,7 +67,7 @@ use tokio::{task, time};
 
 use kunai::cache::*;
 
-use kunai::config::Config;
+use kunai::config::{Config, FileSettings};
 use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
 
@@ -2345,8 +2345,38 @@ struct ConfigOpt {
     list_events: bool,
 }
 
+#[derive(Debug, Args)]
+struct InstallOpt {
+    /// Set a custom installation directory
+    #[arg(long, default_value_t = String::from("/usr/bin/"))]
+    install_dir: String,
+
+    /// Log file where kunai logs will be written
+    #[arg(long, default_value_t = String::from("/var/log/kunai/events.log"))]
+    log_file: String,
+
+    /// Where to write the configuration file. Any intermediate directory
+    /// will be created if needed.
+    #[arg(long, default_value_t = String::from("/etc/kunai/config.toml"))]
+    config: String,
+
+    /// Make a systemd unit installation
+    #[arg(long)]
+    systemd: bool,
+
+    /// Install a systemd unit but does not enable it.
+    #[arg(short, long = "systemd-unit", default_value_t = String::from("/lib/systemd/system/00-kunai.service"))]
+    unit: String,
+
+    /// Enable Kunai unit (kunai will start at boot)
+    #[arg(long)]
+    enable_unit: bool,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Install Kunai on the system
+    Install(InstallOpt),
     /// Run kunai with custom options
     Run(RunOpt),
     /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
@@ -2617,6 +2647,141 @@ impl Command {
 
         Ok(())
     }
+
+    fn run_command(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
+        let output = process::Command::new(cmd).args(args).output()?;
+
+        if !output.status.success() {
+            std::io::stdout().write_all(&output.stderr)?;
+            std::io::stderr().write_all(&output.stderr)?;
+            return Err(anyhow::format_err!("systemctl daemon-reload failed"));
+        }
+
+        Ok(())
+    }
+
+    fn systemd_install(
+        co: &InstallOpt,
+        install_bin: &Path,
+        config_path: &Path,
+    ) -> anyhow::Result<()> {
+        // we proceed with systemd installation
+        let unit_path = PathBuf::from(&co.unit);
+        let unit = format!(
+            r#"[Unit]
+Description=Start Kunai
+
+# Documentation
+Documentation=https://why.kunai.rocks
+Documentation=https://github.com/kunai-project/kunai
+
+# This is needed to start before sysinit.target
+DefaultDependencies=no
+Before=sysinit.target
+After=local-fs.target
+After=systemd-journald-audit.socket
+
+[Service]
+Type=exec
+ExecStart={install_bin} run -c {config_path}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+Alias=kunai.service
+WantedBy=sysinit.target"#,
+            install_bin = install_bin.to_string_lossy(),
+            config_path = config_path.to_string_lossy(),
+        );
+
+        println!(
+            "Writing systemd unit file to: {}",
+            unit_path.to_string_lossy()
+        );
+        fs::write(&unit_path, unit)?;
+
+        // we want to enable systemd unit
+        if co.enable_unit {
+            let unit_name = unit_path
+                .file_name()
+                .ok_or(anyhow!(
+                    "unknown unit name: {}",
+                    unit_path.to_string_lossy()
+                ))?
+                .to_string_lossy();
+            println!("Enabling kunai systemd unit");
+            // we first need to run daemon-reload because we added a new unit
+            Self::run_command("systemctl", &["daemon-reload"])?;
+            // then we can enable the unit
+            Self::run_command("systemctl", &["enable", &unit_name])?;
+        }
+
+        Ok(())
+    }
+
+    fn install(co: InstallOpt) -> anyhow::Result<()> {
+        let log_path = PathBuf::from(&co.log_file);
+        let log_dir = log_path.parent().ok_or(anyhow!(
+            "cannot find dirname for log path: {}",
+            log_path.to_string_lossy()
+        ))?;
+        // we create the directory where to store logs
+        println!("Creating log directory: {}", log_dir.to_string_lossy());
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(log_dir)?;
+
+        let config_path = PathBuf::from(&co.config);
+        let config_dir = config_path.parent().ok_or(anyhow!(
+            "cannot find dirname for config path: {}",
+            config_path.to_string_lossy()
+        ))?;
+        println!(
+            "Creating configuration directory: {}",
+            config_dir.to_string_lossy()
+        );
+        // we create the directory where to store configuration
+        fs::create_dir_all(config_dir)?;
+
+        // create configuration for installation
+        let conf = Config::default()
+            .generate_host_uuid()
+            .output(log_path)
+            .output_settings(FileSettings {
+                rotate_size: huby::ByteSize::from_mb(10),
+                max_size: huby::ByteSize::from_gb(1),
+            });
+        println!(
+            "Writing configuration file: {}",
+            config_path.to_string_lossy()
+        );
+        // we write configuration file
+        fs::write(&config_path, conf.to_toml()?)?;
+
+        // we read our own binary
+        let self_bin = fs::read("/proc/self/exe")?;
+        let install_bin = PathBuf::from(&co.install_dir).join("kunai");
+        println!("Writing kunai binary to: {}", install_bin.to_string_lossy());
+        // we write kunai bin
+        fs::write(&install_bin, self_bin)?;
+
+        // setting file permission
+        let mode = fs::metadata(&install_bin)?.permissions().mode() & 0o000777;
+
+        println!(
+            "Setting file permission: chmod +x {}",
+            install_bin.to_string_lossy()
+        );
+        // make the binary executable
+        fs::set_permissions(&install_bin, PermissionsExt::from_mode(mode | 0o111))?;
+
+        if !co.systemd {
+            return Ok(());
+        }
+
+        Self::systemd_install(&co, &install_bin, &config_path)
+    }
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -2674,6 +2839,7 @@ fn main() -> Result<(), anyhow::Error> {
     Builder::new().filter_level(log_level).init();
 
     match cli.command {
+        Some(Command::Install(o)) => Command::install(o),
         Some(Command::Config(o)) => Command::config(o),
         Some(Command::Replay(o)) => Command::replay(o),
         Some(Command::Run(o)) => Command::run(Some(o), verifier_level),
