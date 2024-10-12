@@ -5,7 +5,7 @@ use kunai_common::{
     config::{BpfConfig, Filter, Loader},
 };
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{fs, path::Path};
 use thiserror::Error;
 
 pub const DEFAULT_SEND_DATA_MIN_LEN: u64 = 256;
@@ -131,6 +131,16 @@ impl Config {
     pub fn host_uuid(&self) -> Option<uuid::Uuid> {
         // host_uuid in config supersedes system host_uuid
         self.host_uuid.or(host_uuid())
+    }
+
+    pub fn output<P: AsRef<Path>>(mut self, p: P) -> Self {
+        self.output = p.as_ref().to_string_lossy().to_string();
+        self
+    }
+
+    pub fn output_settings(mut self, s: FileSettings) -> Self {
+        self.output_settings = Some(s);
+        self
     }
 
     pub fn stdout_output(mut self) -> Self {
