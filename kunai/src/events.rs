@@ -993,7 +993,6 @@ pub struct FileScanData {
     pub signatures: Vec<String>,
     pub positives: usize,
     pub source_event: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub scan_error: Option<String>,
 }
 

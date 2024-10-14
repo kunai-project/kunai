@@ -52,7 +52,6 @@ pub struct FileMeta {
     pub sha256: String,
     pub sha512: String,
     pub size: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
