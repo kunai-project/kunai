@@ -1,11 +1,10 @@
-use core::str::FromStr;
 use huby::ByteSize;
 use kunai_common::{
     bpf_events,
     config::{BpfConfig, Filter, Loader},
 };
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 use thiserror::Error;
 
 pub const DEFAULT_SEND_DATA_MIN_LEN: u64 = 256;
@@ -21,16 +20,10 @@ pub enum Error {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Event {
-    name: String,
     enable: bool,
 }
 
 impl Event {
-    #[inline(always)]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
     #[inline(always)]
     pub fn disable(&mut self) {
         self.enable = false
@@ -67,12 +60,12 @@ pub struct Config {
     pub yara: Vec<String>,
     pub always_show_positive_scans: bool,
     pub harden: bool,
-    pub events: Vec<Event>,
+    pub events: BTreeMap<bpf_events::Type, Event>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let mut events = vec![];
+        let mut events = BTreeMap::new();
         for v in bpf_events::Type::variants() {
             // some events get disabled by default because there are too many
             let en = !matches!(
@@ -81,10 +74,7 @@ impl Default for Config {
             );
 
             if v.is_configurable() {
-                events.push(Event {
-                    name: v.as_str().into(),
-                    enable: en,
-                })
+                events.insert(v, Event { enable: en });
             }
         }
 
@@ -153,33 +143,12 @@ impl Config {
         self
     }
 
-    pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
-        toml::to_string(self)
-    }
-
-    pub fn from_toml<S: AsRef<str>>(toml: S) -> Result<Self, toml::de::Error> {
-        toml::from_str(toml.as_ref())
-    }
-
-    pub fn validate(&self) -> Result<(), Error> {
-        for e in self.events.iter() {
-            let Ok(ty) = bpf_events::Type::from_str(&e.name) else {
-                return Err(Error::InvalidEvent(e.name.clone()));
-            };
-
-            if !ty.is_configurable() {
-                return Err(Error::InvalidEvent(e.name.clone()));
-            }
-        }
-        Ok(())
-    }
-
     pub fn enable_all(&mut self) {
-        self.events.iter_mut().for_each(|e| e.enable())
+        self.events.iter_mut().for_each(|(_, e)| e.enable())
     }
 
     pub fn disable_all(&mut self) {
-        self.events.iter_mut().for_each(|e| e.disable())
+        self.events.iter_mut().for_each(|(_, e)| e.disable())
     }
 }
 
@@ -197,13 +166,10 @@ impl TryFrom<&Config> for Filter {
     fn try_from(value: &Config) -> Result<Self, Error> {
         let mut filter = Filter::all_disabled();
 
-        for e in value.events.iter() {
-            // config should have been verified so it should not fail
-            let ty = bpf_events::Type::from_str(&e.name)
-                .map_err(|_| Error::InvalidEvent(e.name.clone()))?;
+        for (ty, e) in value.events.iter() {
             // we enable event in BpfConfig only if it has been configured
             if e.enable {
-                filter.enable(ty);
+                filter.enable(*ty);
             }
         }
 
@@ -234,6 +200,9 @@ impl TryFrom<&Config> for BpfConfig {
 #[cfg(test)]
 mod test {
 
+    use serde_yaml;
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -242,9 +211,17 @@ mod test {
             ..Default::default()
         };
 
-        config.validate().unwrap();
+        println!("{}", serde_yaml::to_string(&config).unwrap());
+    }
 
-        println!("{}", toml::to_string_pretty(&config).unwrap());
+    #[test]
+    fn test_serialize_btreemap() {
+        let mut config = BTreeMap::<String, isize>::new();
+        config.insert("c".into(), 0);
+        config.insert("b".into(), 1);
+        config.insert("a".into(), 2);
+
+        println!("{}", serde_yaml::to_string(&config).unwrap());
     }
 
     #[test]

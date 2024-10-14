@@ -279,7 +279,7 @@ impl<'s> EventConsumer<'s> {
         let scan_events_enabled = config
             .events
             .iter()
-            .any(|e| e.name() == Type::FileScan.as_str() && e.is_enabled());
+            .any(|(&ty, e)| ty == Type::FileScan && e.is_enabled());
 
         let output = Self::prepare_output(&config)?;
 
@@ -2191,7 +2191,7 @@ impl TryFrom<ReplayOpt> for Config {
         let mut conf = Self::default();
 
         if let Some(conf_file) = opt.config {
-            conf = Self::from_toml(std::fs::read_to_string(conf_file)?)?;
+            conf = serde_yaml::from_str(&std::fs::read_to_string(conf_file)?)?;
         }
 
         // command line supersedes configuration
@@ -2268,7 +2268,7 @@ impl TryFrom<RunOpt> for Config {
         let mut conf = Self::default();
 
         if let Some(conf_file) = opt.config {
-            conf = Self::from_toml(std::fs::read_to_string(conf_file)?)?;
+            conf = serde_yaml::from_str(&std::fs::read_to_string(conf_file)?)?;
         }
 
         // command line supersedes configuration
@@ -2311,7 +2311,8 @@ impl TryFrom<RunOpt> for Config {
                 conf.disable_all()
             } else {
                 for exc in exclude {
-                    if let Some(e) = conf.events.iter_mut().find(|e| e.name() == exc) {
+                    if let Some((_, e)) = conf.events.iter_mut().find(|(ty, _)| ty.as_str() == exc)
+                    {
                         e.disable()
                     }
                 }
@@ -2325,7 +2326,8 @@ impl TryFrom<RunOpt> for Config {
                 conf.enable_all()
             } else {
                 for inc in include {
-                    if let Some(e) = conf.events.iter_mut().find(|e| e.name() == inc) {
+                    if let Some((_, e)) = conf.events.iter_mut().find(|(ty, _)| ty.as_str() == inc)
+                    {
                         e.enable()
                     }
                 }
@@ -2362,7 +2364,7 @@ struct InstallOpt {
 
     /// Where to write the configuration file. Any intermediate directory
     /// will be created if needed.
-    #[arg(long, default_value_t = String::from("/etc/kunai/config.toml"))]
+    #[arg(long, default_value_t = String::from("/etc/kunai/config.yaml"))]
     config: String,
 
     /// Make a systemd unit installation
@@ -2643,7 +2645,7 @@ impl Command {
     fn config(co: ConfigOpt) -> anyhow::Result<()> {
         if co.dump {
             let conf = Config::default().generate_host_uuid();
-            println!("{}", conf.to_toml()?);
+            println!("{}", serde_yaml::to_string(&conf)?);
             return Ok(());
         }
 
@@ -2777,7 +2779,7 @@ WantedBy=sysinit.target"#,
             config_path.to_string_lossy()
         );
         // we write configuration file
-        fs::write(&config_path, conf.to_toml()?)?;
+        fs::write(&config_path, serde_yaml::to_string(&conf)?)?;
 
         // we read our own binary
         let self_bin = fs::read("/proc/self/exe")?;
