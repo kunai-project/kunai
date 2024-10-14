@@ -1,5 +1,7 @@
 use aya::Pod;
 use core::fmt::{Debug, Display};
+use core::str::FromStr;
+use serde::{Deserialize, Serialize};
 
 use thiserror::Error;
 
@@ -8,6 +10,25 @@ unsafe impl Pod for Type {}
 impl Display for Type {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+impl Serialize for Type {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Type {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Type::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
