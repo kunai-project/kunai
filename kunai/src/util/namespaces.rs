@@ -176,8 +176,8 @@ impl Namespace {
 #[derive(Debug)]
 pub struct Switcher {
     pub namespace: Namespace,
-    src: File,
-    dst: File,
+    src: Option<File>,
+    dst: Option<File>,
 }
 
 #[derive(Debug, Error)]
@@ -191,15 +191,21 @@ pub enum Error {
 impl Switcher {
     pub fn new(kind: Kind, pid: u32) -> Result<Self, Error> {
         let self_pid = process::id();
-        let ns = Namespace::from_pid(kind, pid)?;
+        let self_ns = Namespace::from_pid(kind, self_pid)?;
+        let target_ns = Namespace::from_pid(kind, pid)?;
 
-        // namespace of the current process
-        let src = Namespace::open(kind, self_pid)?;
-        // namespace of the target process
-        let dst = Namespace::open(kind, pid)?;
+        let (src, dst) = if self_ns == target_ns {
+            (None, None)
+        } else {
+            // namespace of the current process
+            let src = Namespace::open(kind, self_pid)?;
+            // namespace of the target process
+            let dst = Namespace::open(kind, pid)?;
+            (Some(src), Some(dst))
+        };
 
         Ok(Self {
-            namespace: ns,
+            namespace: target_ns,
             src,
             dst,
         })
@@ -207,14 +213,22 @@ impl Switcher {
 
     #[inline]
     pub fn enter(&self) -> Result<(), Error> {
-        // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
-        setns(self.dst.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
+        if let Some(dst) = self.dst.as_ref() {
+            // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
+            setns(dst.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
+        } else {
+            Ok(())
+        }
     }
 
     #[inline]
     pub fn exit(&self) -> Result<(), Error> {
-        // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
-        setns(self.src.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
+        if let Some(src) = self.src.as_ref() {
+            // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
+            setns(src.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
+        } else {
+            Ok(())
+        }
     }
 }
 
