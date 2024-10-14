@@ -2691,7 +2691,7 @@ impl Command {
         let unit_path = PathBuf::from(&co.unit);
         let unit = format!(
             r#"[Unit]
-Description=Start Kunai
+Description=Kunai Service
 
 # Documentation
 Documentation=https://why.kunai.rocks
