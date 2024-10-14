@@ -2364,7 +2364,7 @@ struct InstallOpt {
     #[arg(long)]
     systemd: bool,
 
-    /// Install a systemd unit but does not enable it.
+    /// Install a systemd unit but do not enable it
     #[arg(short, long = "systemd-unit", default_value_t = String::from("/lib/systemd/system/00-kunai.service"))]
     unit: String,
 
