@@ -33,6 +33,7 @@ use kunai_common::{inspect_err, kernel};
 
 use kunai_macros::StrEnum;
 use log::LevelFilter;
+use procfs::ProcError;
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
@@ -2227,6 +2228,10 @@ struct RunOpt {
     #[arg(long)]
     harden: bool,
 
+    /// Force Kunai to run
+    #[arg(long)]
+    force: bool,
+
     /// Exclude events by name (comma separated).
     #[arg(long)]
     exclude: Option<String>,
@@ -2467,6 +2472,21 @@ impl Command {
             return Err(anyhow::Error::msg(
                 "You need to be root to run this program, this is necessary to load eBPF programs",
             ));
+        }
+
+        let self_proc: PathBuf = PathBuf::from("/proc/self/exe").canonicalize()?;
+        let force = opt_ro.as_ref().map(|o| o.force).unwrap_or_default();
+
+        // we check in procfs if we find another instance of kunai running
+        if !force
+            && procfs::process::all_processes()?
+                .flatten()
+                .flat_map(|p| Ok::<_, ProcError>((p.pid, p.exe()?)))
+                .flat_map(|(pid, exe)| Ok::<_, io::Error>((pid, exe.canonicalize()?)))
+                .any(|(pid, exe)| pid as u32 != process::id() && exe == self_proc)
+        {
+            warn!("An instance of Kunai is already running");
+            return Ok(());
         }
 
         let current_kernel = Utsname::kernel_version()?;
