@@ -33,5 +33,5 @@
   "rust-analyzer.runnables.extraArgs": [
     "--target=x86_64-unknown-linux-gnu"
   ],
-  "rust-analyzer.procMacro.enable": false,
+  "rust-analyzer.procMacro.enable": true,
 }
