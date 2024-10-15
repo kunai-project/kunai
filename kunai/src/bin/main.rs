@@ -2382,8 +2382,7 @@ struct InstallOpt {
 
 #[derive(Debug, Args)]
 struct LogsOpt {
-    /// Where to write the configuration file. Any intermediate directory
-    /// will be created if needed.
+    /// Path to the configuration file
     #[arg(short, long, default_value_t = String::from("/etc/kunai/config.yaml"))]
     config: String,
 }
@@ -2398,7 +2397,7 @@ enum Command {
     Replay(ReplayOpt),
     /// Dump a default configuration
     Config(ConfigOpt),
-    /// Easy way to show kunai logs. This will work only with a configuration file and with an output
+    /// Easy way to show Kunai logs. This will work only with a configuration file and with an output
     /// file being configured.
     Logs(LogsOpt),
 }
