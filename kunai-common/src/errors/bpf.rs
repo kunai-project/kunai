@@ -39,8 +39,8 @@ macro_rules! probe_name {
             i
         }
 
-        const fn string_loc<const N: usize>(st: &'static str) -> kunai_common::string::String<N> {
-            let mut s = kunai_common::string::String { s: [0; N], len: 0 };
+        const fn string_loc<const N: usize>(st: &'static str) -> $crate::string::String<N> {
+            let mut s = $crate::string::String { s: [0; N], len: 0 };
             let mut i = 0;
             let i_src = index("src/", st);
             let ext = ".rs";
@@ -55,27 +55,32 @@ macro_rules! probe_name {
                     break;
                 }
 
+                // if it is path separator we replace by ::
                 if bytes[i_bytes] == b'/' {
                     let mut k = 0;
                     loop {
                         if k == 2 {
                             break;
                         }
+
                         if s.len < N {
                             s.s[s.len] = b':';
                             s.len += 1;
                         }
+
                         k += 1;
                     }
                 } else {
+                    // we just copy other characters
                     s.s[s.len] = bytes[i_src + i];
+                    s.len += 1;
                 }
 
-                s.len += 1;
                 i += 1
             }
             s
         }
+
         string_loc(file!())
     }};
 }
@@ -108,10 +113,10 @@ pub unsafe fn error_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
 macro_rules! _error {
     ($ctx:expr, $msg:literal, $err:expr, $level:expr) => {{
         unsafe {
-            const _PROBE_NAME: kunai_common::string::String<32> = $crate::probe_name!();
-            const _MSG: kunai_common::string::String<64> = kunai_common::string::from_static($msg);
+            const _PROBE_NAME: $crate::string::String<32> = $crate::probe_name!();
+            const _MSG: $crate::string::String<64> = $crate::string::from_static($msg);
 
-            let args = kunai_common::errors::Args {
+            let args = $crate::errors::Args {
                 line: core::line!(),
                 location: _PROBE_NAME,
                 message: {
@@ -125,7 +130,7 @@ macro_rules! _error {
                 level: $level,
             };
 
-            kunai_common::errors::error_with_args($ctx, &args);
+            $crate::errors::error_with_args($ctx, &args);
         };
     }};
 }
@@ -141,7 +146,7 @@ macro_rules! error {
             $ctx,
             $msg,
             Some($err),
-            kunai_common::bpf_events::error::Level::Error
+            $crate::bpf_events::error::Level::Error
         );
     }};
 }
@@ -149,12 +154,7 @@ macro_rules! error {
 #[macro_export]
 macro_rules! error_msg {
     ($ctx:expr, $msg:literal) => {
-        $crate::_error!(
-            $ctx,
-            $msg,
-            None,
-            kunai_common::bpf_events::error::Level::Error
-        )
+        $crate::_error!($ctx, $msg, None, $crate::bpf_events::error::Level::Error)
     };
 }
 
@@ -169,7 +169,7 @@ macro_rules! warn {
             $ctx,
             $msg,
             Some($err),
-            kunai_common::bpf_events::error::Level::Warn
+            $crate::bpf_events::error::Level::Warn
         );
     };
 }
@@ -177,11 +177,6 @@ macro_rules! warn {
 #[macro_export]
 macro_rules! warn_msg {
     ($ctx:expr, $msg:literal) => {
-        $crate::_error!(
-            $ctx,
-            $msg,
-            None,
-            kunai_common::bpf_events::error::Level::Warn
-        )
+        $crate::_error!($ctx, $msg, None, $crate::bpf_events::error::Level::Warn)
     };
 }
