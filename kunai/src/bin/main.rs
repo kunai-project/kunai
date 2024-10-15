@@ -44,7 +44,7 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use std::fs::{self, DirBuilder, File};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::net::IpAddr;
 
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -2380,6 +2380,18 @@ struct InstallOpt {
     enable_unit: bool,
 }
 
+#[derive(Debug, Args)]
+struct LogsOpt {
+    /// Path to the configuration file
+    #[arg(short, long, default_value_t = String::from("/etc/kunai/config.yaml"))]
+    config: String,
+
+    /// Path to the log file to open. The path must point to the plain-text
+    /// log file, not to one of the archives.
+    #[arg(short, long, conflicts_with = "config")]
+    log_file: Option<PathBuf>,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Install Kunai on the system
@@ -2390,6 +2402,9 @@ enum Command {
     Replay(ReplayOpt),
     /// Dump a default configuration
     Config(ConfigOpt),
+    /// Easy way to show Kunai logs. This will work only with a configuration file and with an output
+    /// file being configured.
+    Logs(LogsOpt),
 }
 
 impl Command {
@@ -2804,6 +2819,47 @@ WantedBy=sysinit.target"#,
 
         Self::systemd_install(&co, &install_bin, &config_path)
     }
+
+    fn logs(o: LogsOpt) -> anyhow::Result<()> {
+        let output = if o.log_file.is_none() {
+            let config: Config = serde_yaml::from_reader(
+                File::open(o.config).map_err(|e| anyhow!("failed to read config file: {e}"))?,
+            )
+            .map_err(|e| anyhow!("failed to parse config file: {e}"))?;
+
+            PathBuf::from(config.output)
+        } else {
+            // cannot panic as it is Some
+            o.log_file.unwrap()
+        };
+
+        if !output.is_file() {
+            return Err(anyhow!(
+                "kunai output={} is not a regular file",
+                output.to_string_lossy()
+            ));
+        }
+
+        // for the time being kunai does not allow specifying custom
+        // log storage options so we can fix them
+        let fd = firo::OpenOptions::new()
+            .compression(firo::Compression::Gzip)
+            .open(&output)?;
+
+        let reader = BufReader::new(fd);
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| anyhow!("failed to read log file:{e}"))?;
+
+            // depending how the service got stopped some null
+            // bytes may appear in stop / start transition
+            let line = line.trim_matches('\0');
+
+            println!("{line}",);
+        }
+
+        Ok(())
+    }
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -2864,6 +2920,7 @@ fn main() -> Result<(), anyhow::Error> {
         Some(Command::Install(o)) => Command::install(o),
         Some(Command::Config(o)) => Command::config(o),
         Some(Command::Replay(o)) => Command::replay(o),
+        Some(Command::Logs(o)) => Command::logs(o),
         Some(Command::Run(o)) => Command::run(Some(o), verifier_level),
         None => Command::run(None, verifier_level),
     }
