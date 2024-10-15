@@ -44,7 +44,7 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use std::fs::{self, DirBuilder, File};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
 
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -138,6 +138,30 @@ impl SystemInfo {
     fn with_host_uuid(mut self, uuid: uuid::Uuid) -> Self {
         self.host_uuid = uuid;
         self
+    }
+}
+
+enum Input {
+    Stdin(std::io::Stdin),
+    File(std::fs::File),
+}
+
+impl Input {
+    fn from_file(f: fs::File) -> Self {
+        Self::File(f)
+    }
+
+    fn from_stdin() -> Self {
+        Self::Stdin(std::io::stdin())
+    }
+}
+
+impl Read for Input {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Stdin(stdin) => stdin.read(buf),
+            Self::File(f) => f.read(buf),
+        }
     }
 }
 
@@ -2414,15 +2438,14 @@ impl Command {
 
         let mut p = EventConsumer::with_config(conf.stdout_output())?;
         for f in log_files {
-            let f = {
-                if f == "-" {
-                    "/dev/stdin".into()
-                } else {
-                    f
-                }
+            let reader = if f == "-" {
+                std::io::BufReader::new(Input::from_stdin())
+            } else {
+                std::io::BufReader::new(Input::from_file(fs::File::open(f)?))
             };
-            let reader = std::io::BufReader::new(fs::File::open(f)?);
+
             let mut de = serde_json::Deserializer::from_reader(reader);
+
             while let Ok(v) = serde_json::Value::deserialize(&mut de) {
                 // we attempt at getting event name from json
                 if let Some(name) = v
@@ -2445,7 +2468,7 @@ impl Command {
                         Type::Execve | Type::ExecveScript => scan_event!(p, ExecveData),
                         Type::Clone => scan_event!(p, CloneData),
                         Type::Prctl => scan_event!(p, PrctlData),
-                        Type::Kill => unimplemented!(),
+                        Type::Kill => scan_event!(p, KillData),
                         Type::MmapExec => scan_event!(p, MmapExecData),
                         Type::MprotectExec => scan_event!(p, MprotectData),
                         Type::Connect => scan_event!(p, ConnectData),
