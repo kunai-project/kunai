@@ -2385,6 +2385,11 @@ struct LogsOpt {
     /// Path to the configuration file
     #[arg(short, long, default_value_t = String::from("/etc/kunai/config.yaml"))]
     config: String,
+
+    /// Path to the log file to open. The path must point to the plain-text
+    /// log file, not to one of the archives.
+    #[arg(short, long, conflicts_with = "config")]
+    log_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2816,12 +2821,18 @@ WantedBy=sysinit.target"#,
     }
 
     fn logs(o: LogsOpt) -> anyhow::Result<()> {
-        let config: Config = serde_yaml::from_reader(
-            File::open(o.config).map_err(|e| anyhow!("failed to read config file: {e}"))?,
-        )
-        .map_err(|e| anyhow!("failed to parse config file: {e}"))?;
+        let output = if o.log_file.is_none() {
+            let config: Config = serde_yaml::from_reader(
+                File::open(o.config).map_err(|e| anyhow!("failed to read config file: {e}"))?,
+            )
+            .map_err(|e| anyhow!("failed to parse config file: {e}"))?;
 
-        let output = PathBuf::from(config.output);
+            PathBuf::from(config.output)
+        } else {
+            // cannot panic as it is Some
+            o.log_file.unwrap()
+        };
+
         if !output.is_file() {
             return Err(anyhow!(
                 "kunai output={} is not a regular file",
