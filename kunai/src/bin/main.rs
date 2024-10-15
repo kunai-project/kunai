@@ -2849,10 +2849,13 @@ WantedBy=sysinit.target"#,
         let reader = BufReader::new(fd);
 
         for line in reader.lines() {
-            println!(
-                "{}",
-                line.map_err(|e| anyhow!("failed to read log file:{e}"))?
-            );
+            let line = line.map_err(|e| anyhow!("failed to read log file:{e}"))?;
+
+            // depending how the service got stopped some null
+            // bytes may appear in stop / start transition
+            let line = line.trim_matches('\0');
+
+            println!("{line}",);
         }
 
         Ok(())
