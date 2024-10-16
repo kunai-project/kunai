@@ -33,7 +33,6 @@ use kunai_common::{inspect_err, kernel};
 
 use kunai_macros::StrEnum;
 use log::LevelFilter;
-use procfs::ProcError;
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
@@ -2252,10 +2251,6 @@ struct RunOpt {
     #[arg(long)]
     harden: bool,
 
-    /// Force Kunai to run
-    #[arg(long)]
-    force: bool,
-
     /// Exclude events by name (comma separated).
     #[arg(long)]
     exclude: Option<String>,
@@ -2506,29 +2501,7 @@ impl Command {
         Ok(())
     }
 
-    fn run(opt_ro: Option<RunOpt>, vll: VerifierLogLevel) -> anyhow::Result<()> {
-        // checking that we are running as root
-        if get_current_uid() != 0 {
-            return Err(anyhow::Error::msg(
-                "You need to be root to run this program, this is necessary to load eBPF programs",
-            ));
-        }
-
-        let self_proc: PathBuf = PathBuf::from("/proc/self/exe").canonicalize()?;
-        let force = opt_ro.as_ref().map(|o| o.force).unwrap_or_default();
-
-        // we check in procfs if we find another instance of kunai running
-        if !force
-            && procfs::process::all_processes()?
-                .flatten()
-                .flat_map(|p| Ok::<_, ProcError>((p.pid, p.exe()?)))
-                .flat_map(|(pid, exe)| Ok::<_, io::Error>((pid, exe.canonicalize()?)))
-                .any(|(pid, exe)| pid as u32 != process::id() && exe == self_proc)
-        {
-            warn!("An instance of Kunai is already running");
-            return Ok(());
-        }
-
+    fn inner_run(opt_ro: Option<RunOpt>, vll: VerifierLogLevel) -> anyhow::Result<()> {
         let current_kernel = Utsname::kernel_version()?;
         let conf: Config = match opt_ro {
             Some(ro) => ro.try_into()?,
@@ -2678,6 +2651,61 @@ impl Command {
                 res = main => res
             }
         })
+    }
+
+    fn run(opt_ro: Option<RunOpt>, vll: VerifierLogLevel) -> anyhow::Result<()> {
+        // checking that we are running as root
+        if get_current_uid() != 0 {
+            return Err(anyhow::Error::msg(
+                "You need to be root to run this program, this is necessary to load eBPF programs",
+            ));
+        }
+
+        let harden = opt_ro.as_ref().map(|o| o.harden).unwrap_or_default();
+
+        let run_dir = PathBuf::from("/run/kunai");
+        let pid_file = run_dir.join("kunai.pid");
+
+        // we prevent the service manager to restart kunai when in harden mode
+        if harden {
+            if !run_dir.exists() {
+                let _ = DirBuilder::new()
+                    .mode(0o700)
+                    .create(&run_dir)
+                    .inspect_err(|e| {
+                        warn!(
+                            "failed to create run dir {}: {e}",
+                            run_dir.to_string_lossy()
+                        )
+                    });
+            }
+
+            // we read pid from file
+            if let Some(pid) = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.parse::<i32>().ok())
+            {
+                // the pid still exists
+                if kill(pid, 0).is_ok() {
+                    warn!("An instance of Kunai pid={pid} is already running");
+                    return Ok(());
+                }
+            }
+
+            // we write pid to file
+            let _ = fs::OpenOptions::new()
+                .mode(0o700)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&pid_file)
+                .and_then(|mut f| f.write(process::id().to_string().as_bytes()))
+                .inspect_err(|e| warn!("failed to write pid file: {e}"));
+        }
+
+        let res = Self::inner_run(opt_ro, vll);
+        let _ = fs::remove_file(&pid_file).inspect_err(|e| warn!("failed to delete pid file: {e}"));
+        res
     }
 
     fn config(co: ConfigOpt) -> anyhow::Result<()> {
