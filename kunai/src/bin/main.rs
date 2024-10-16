@@ -33,7 +33,6 @@ use kunai_common::{inspect_err, kernel};
 
 use kunai_macros::StrEnum;
 use log::LevelFilter;
-use procfs::ProcError;
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
