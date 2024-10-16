@@ -123,6 +123,11 @@ impl Config {
         self.host_uuid.or(host_uuid())
     }
 
+    pub fn harden(mut self, value: bool) -> Self {
+        self.harden = value;
+        self
+    }
+
     pub fn output<P: AsRef<Path>>(mut self, p: P) -> Self {
         self.output = p.as_ref().to_string_lossy().to_string();
         self

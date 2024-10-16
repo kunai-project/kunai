@@ -2373,6 +2373,11 @@ struct ConfigOpt {
 
 #[derive(Debug, Args)]
 struct InstallOpt {
+    /// Install in harden mode. First verify that
+    /// /sys/kernel/security/lsm contains bpf
+    #[arg(long)]
+    harden: bool,
+
     /// Set a custom installation directory
     #[arg(long, default_value_t = String::from("/usr/bin/"))]
     install_dir: String,
@@ -2661,47 +2666,43 @@ impl Command {
             ));
         }
 
-        let harden = opt_ro.as_ref().map(|o| o.harden).unwrap_or_default();
-
         let run_dir = PathBuf::from("/run/kunai");
         let pid_file = run_dir.join("kunai.pid");
 
         // we prevent the service manager to restart kunai when in harden mode
-        if harden {
-            if !run_dir.exists() {
-                let _ = DirBuilder::new()
-                    .mode(0o700)
-                    .create(&run_dir)
-                    .inspect_err(|e| {
-                        warn!(
-                            "failed to create run dir {}: {e}",
-                            run_dir.to_string_lossy()
-                        )
-                    });
-            }
-
-            // we read pid from file
-            if let Some(pid) = fs::read_to_string(&pid_file)
-                .ok()
-                .and_then(|s| s.parse::<i32>().ok())
-            {
-                // the pid still exists
-                if kill(pid, 0).is_ok() {
-                    warn!("An instance of Kunai pid={pid} is already running");
-                    return Ok(());
-                }
-            }
-
-            // we write pid to file
-            let _ = fs::OpenOptions::new()
+        if !run_dir.exists() {
+            let _ = DirBuilder::new()
                 .mode(0o700)
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&pid_file)
-                .and_then(|mut f| f.write(process::id().to_string().as_bytes()))
-                .inspect_err(|e| warn!("failed to write pid file: {e}"));
+                .create(&run_dir)
+                .inspect_err(|e| {
+                    warn!(
+                        "failed to create run dir {}: {e}",
+                        run_dir.to_string_lossy()
+                    )
+                });
         }
+
+        // we read pid from file
+        if let Some(pid) = fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok())
+        {
+            // the pid still exists
+            if kill(pid, 0).is_ok() {
+                warn!("An instance of Kunai pid={pid} is already running");
+                return Ok(());
+            }
+        }
+
+        // we write pid to file
+        let _ = fs::OpenOptions::new()
+            .mode(0o700)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&pid_file)
+            .and_then(|mut f| f.write(process::id().to_string().as_bytes()))
+            .inspect_err(|e| warn!("failed to write pid file: {e}"));
 
         let res = Self::inner_run(opt_ro, vll);
         let _ = fs::remove_file(&pid_file).inspect_err(|e| warn!("failed to delete pid file: {e}"));
@@ -2768,6 +2769,10 @@ DefaultDependencies=no
 Before=sysinit.target
 After=local-fs.target
 After=systemd-journald-audit.socket
+# If harden mode is configured, set this to true to
+# prevent systemd attempting to stop kunai, which would
+# fail.
+RefuseManualStop={harden}
 
 [Service]
 Type=exec
@@ -2778,6 +2783,7 @@ StandardError=journal
 [Install]
 Alias=kunai.service
 WantedBy=sysinit.target"#,
+            harden = co.harden,
             install_bin = install_bin.to_string_lossy(),
             config_path = config_path.to_string_lossy(),
         );
@@ -2808,11 +2814,29 @@ WantedBy=sysinit.target"#,
     }
 
     fn install(co: InstallOpt) -> anyhow::Result<()> {
+        let current_kernel = Utsname::kernel_version()
+            .map_err(|e| anyhow!("cannot retrieve kernel version: {e}"))?;
         let log_path = PathBuf::from(&co.log_file);
         let log_dir = log_path.parent().ok_or(anyhow!(
             "cannot find dirname for log path: {}",
             log_path.to_string_lossy()
         ))?;
+
+        // checks on harden mode
+        if co.harden {
+            if current_kernel < kernel!(5, 7, 0) {
+                return Err(anyhow!(
+                    "harden mode is not supported for kernels below 5.7.0"
+                ));
+            }
+
+            if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
+                return Err(anyhow!(
+                    "trying to install in harden mode but BPF LSM is not enabled"
+                ));
+            }
+        }
+
         // we create the directory where to store logs
         println!("Creating log directory: {}", log_dir.to_string_lossy());
         DirBuilder::new()
@@ -2834,6 +2858,7 @@ WantedBy=sysinit.target"#,
 
         // create configuration for installation
         let conf = Config::default()
+            .harden(co.harden)
             .generate_host_uuid()
             .output(log_path)
             .output_settings(FileSettings {
