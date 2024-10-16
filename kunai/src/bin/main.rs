@@ -2251,10 +2251,6 @@ struct RunOpt {
     #[arg(long)]
     harden: bool,
 
-    /// Force Kunai to run
-    #[arg(long)]
-    force: bool,
-
     /// Exclude events by name (comma separated).
     #[arg(long)]
     exclude: Option<String>,
