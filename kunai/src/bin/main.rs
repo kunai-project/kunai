@@ -2814,11 +2814,29 @@ WantedBy=sysinit.target"#,
     }
 
     fn install(co: InstallOpt) -> anyhow::Result<()> {
+        let current_kernel = Utsname::kernel_version()
+            .map_err(|e| anyhow!("cannot retrieve kernel version: {e}"))?;
         let log_path = PathBuf::from(&co.log_file);
         let log_dir = log_path.parent().ok_or(anyhow!(
             "cannot find dirname for log path: {}",
             log_path.to_string_lossy()
         ))?;
+
+        // checks on harden mode
+        if co.harden {
+            if current_kernel < kernel!(5, 7, 0) {
+                return Err(anyhow!(
+                    "harden mode is not supported for kernels below 5.7.0"
+                ));
+            }
+
+            if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
+                return Err(anyhow!(
+                    "trying to install in harden mode but BPF LSM is not enabled"
+                ));
+            }
+        }
+
         // we create the directory where to store logs
         println!("Creating log directory: {}", log_dir.to_string_lossy());
         DirBuilder::new()
