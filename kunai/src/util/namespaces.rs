@@ -182,10 +182,23 @@ pub struct Switcher {
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("setns failure namespace={0}: {1}")]
-    SetNs(Namespace, IoError),
+    #[error("setns enter error namespace={0}: {1}")]
+    Enter(Namespace, IoError),
+    #[error("setns exit error namespace={0}: {1}")]
+    Exit(Namespace, IoError),
     #[error("{0}")]
     Namespace(#[from] NsError),
+    #[error("{0}")]
+    Other(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl Error {
+    pub fn other<E>(err: E) -> Self
+    where
+        E: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        Self::Other(err.into())
+    }
 }
 
 impl Switcher {
@@ -211,21 +224,37 @@ impl Switcher {
         })
     }
 
+    /// Run function `f` after switching into the namespace. If
+    /// switching into/from a namespace fails the approriate error
+    /// is returned [Error::Enter] or [Error::Exit]. If any namespace
+    /// error is met it returns immediately, otherwise the result of
+    /// `f` is returned.
+    #[inline(always)]
+    pub fn do_in_namespace<F, T>(&self, f: F) -> Result<T, Error>
+    where
+        F: FnOnce() -> Result<T, Error>,
+    {
+        self.enter()?;
+        let res = f();
+        self.exit()?;
+        res
+    }
+
     #[inline]
-    pub fn enter(&self) -> Result<(), Error> {
+    fn enter(&self) -> Result<(), Error> {
         if let Some(dst) = self.dst.as_ref() {
             // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
-            setns(dst.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
+            setns(dst.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::Enter(self.namespace, e))
         } else {
             Ok(())
         }
     }
 
     #[inline]
-    pub fn exit(&self) -> Result<(), Error> {
+    fn exit(&self) -> Result<(), Error> {
         if let Some(src) = self.src.as_ref() {
             // according to setns doc we can set nstype = 0 if we know what kind of NS we navigate into
-            setns(src.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::SetNs(self.namespace, e))
+            setns(src.as_raw_fd(), CLONE_NEWNS).map_err(|e| Error::Exit(self.namespace, e))
         } else {
             Ok(())
         }

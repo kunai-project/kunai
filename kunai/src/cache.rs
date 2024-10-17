@@ -18,10 +18,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    util::{
-        defer::defer,
-        namespaces::{self, Kind, Namespace, Switcher},
-    },
+    util::namespaces::{self, Kind, Namespace, Switcher},
     yara::Scanner,
 };
 
@@ -287,36 +284,39 @@ impl Cache {
             return Err(Error::UnknownNs(ns));
         };
 
-        // we switch to a cached namespace that holds opened
-        // file descriptors to namespaces
-        entry.switcher.enter()?;
+        let res = entry.switcher.do_in_namespace(|| {
+            // we get a PathBuf as path ownership is passed down
+            let pb = path.to_path_buf();
+            // we create key to check if we already have cached
+            // signatures for that file
+            let key = Key::from_path_with_ns(&ns, path).map_err(namespaces::Error::other)?;
+
+            let sigs = match self.signatures.get(&key) {
+                // we have caches signatures
+                Some(sig) => sig.clone(),
+                // we don't have cached signatures
+                None => {
+                    let mut sigs = vec![];
+                    // lock should never fail as the scanner is used only in one thread
+                    let mut yx_scanner = scanner.lock().expect("failed to lock yara scanner");
+                    let sr = yx_scanner.scan_file(pb).map_err(namespaces::Error::other)?;
+                    // we extend the list of signatures
+                    sigs.extend(sr.matching_rules().map(|m| m.identifier().to_string()));
+                    // we update our cache
+                    self.signatures.insert(key.clone(), sigs.clone());
+                    sigs
+                }
+            };
+
+            Ok(sigs)
+        });
+
         // we must be sure that we restore our namespace
-        defer!(|| { entry.switcher.exit().expect("failed to restore namespace") });
+        if matches!(res.as_ref(), Err(namespaces::Error::Exit(_, _))) {
+            res.as_ref().expect("failed to restore namespace");
+        }
 
-        // we get a PathBuf as path ownership is passed down
-        let pb = path.to_path_buf();
-        // we create key to check if we already have cached
-        // signatures for that file
-        let key = Key::from_path_with_ns(&ns, path)?;
-
-        let sigs = match self.signatures.get(&key) {
-            // we have caches signatures
-            Some(sig) => sig.clone(),
-            // we don't have cached signatures
-            None => {
-                let mut sigs = vec![];
-                // lock should never fail as the scanner is used only in one thread
-                let mut yx_scanner = scanner.lock().expect("failed to lock yara scanner");
-                let sr = yx_scanner.scan_file(pb)?;
-                // we extend the list of signatures
-                sigs.extend(sr.matching_rules().map(|m| m.identifier().to_string()));
-                // we update our cache
-                self.signatures.insert(key.clone(), sigs.clone());
-                sigs
-            }
-        };
-
-        Ok(sigs)
+        res.map_err(Error::from)
     }
 
     #[inline]
@@ -333,23 +333,25 @@ impl Cache {
             return Err(Error::UnknownNs(ns));
         };
 
-        // we switch to namespace
-        entry.switcher.enter()?;
+        let res = entry.switcher.do_in_namespace(|| {
+            let pb = path.to_path_buf();
+
+            let key = Key::from_path_with_ns(&ns, path).map_err(namespaces::Error::other)?;
+
+            if !self.hashes.contains_key(&key) {
+                let h = Hashes::from_path_ref(pb);
+                self.hashes.insert(key.clone(), h);
+            }
+
+            // we cannot panic here as we are sure the cache contains value
+            Ok(self.hashes.get(&key).unwrap().clone())
+        });
+
         // we must be sure that we restore our namespace
-        defer!(|| { entry.switcher.exit().expect("failed to restore namespace") });
-
-        let pb = path.to_path_buf();
-
-        let key = Key::from_path_with_ns(&ns, path)?;
-
-        if !self.hashes.contains_key(&key) {
-            let h = Hashes::from_path_ref(pb);
-            self.hashes.insert(key.clone(), h);
+        if matches!(res.as_ref(), Err(namespaces::Error::Exit(_, _))) {
+            res.as_ref().expect("failed to restore namespace");
         }
 
-        // we cannot panic here as we are sure the cache contains value
-        let res = Ok(self.hashes.get(&key).unwrap().clone());
-
-        res
+        res.map_err(Error::from)
     }
 }
