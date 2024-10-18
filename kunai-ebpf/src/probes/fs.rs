@@ -2,7 +2,7 @@ use super::*;
 
 use aya_ebpf::cty::c_int;
 use aya_ebpf::maps::LruHashMap;
-use aya_ebpf::programs::ProbeContext;
+use aya_ebpf::programs::{ProbeContext, RetProbeContext};
 use kunai_common::inspect_err;
 use kunai_common::kprobe::ProbeFn;
 
@@ -326,7 +326,7 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 // do_unlinkat cannot be hooked at ret as path/dentry we wanna parse
 // seems to be cleaned up and cannot be parsed correctly.
 #[kretprobe(function = "vfs_unlink")]
-pub fn fs_exit_vfs_unlink(ctx: ProbeContext) -> u32 {
+pub fn fs_exit_vfs_unlink(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -340,7 +340,7 @@ pub fn fs_exit_vfs_unlink(ctx: ProbeContext) -> u32 {
     }
 }
 
-unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
+unsafe fn try_vfs_unlink(ctx: &RetProbeContext) -> ProbeResult<()> {
     // if event is disabled we return
     if_disabled_return!(Type::FileUnlink, ());
 

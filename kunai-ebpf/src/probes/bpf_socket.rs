@@ -1,4 +1,4 @@
-use aya_ebpf::programs::ProbeContext;
+use aya_ebpf::programs::{ProbeContext, RetProbeContext};
 use kunai_common::{co_re::sock_fprog_kern, kprobe::ProbeFn, net::SocketInfo};
 
 use super::*;
@@ -14,7 +14,7 @@ pub fn sk_enter_sk_attach_prog(ctx: ProbeContext) -> u32 {
 }
 
 #[kretprobe(function = "__sk_attach_prog")]
-pub fn sk_exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
+pub fn sk_exit_sk_attach_prog(exit_ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -54,7 +54,7 @@ pub fn sk_enter_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
 }
 
 #[kretprobe(function = "reuseport_attach_prog")]
-pub fn sk_exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
+pub fn sk_exit_reuseport_attach_prog(exit_ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -85,7 +85,7 @@ pub fn sk_exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn handle_socket_attach_prog(
-    exit_ctx: &ProbeContext,
+    exit_ctx: &RetProbeContext,
     prog: co_re::bpf_prog,
     sk: co_re::sock,
 ) -> ProbeResult<()> {

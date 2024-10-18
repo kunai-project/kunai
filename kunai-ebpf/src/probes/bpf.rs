@@ -1,5 +1,8 @@
 use super::*;
-use aya_ebpf::{maps::LruHashMap, programs::ProbeContext};
+use aya_ebpf::{
+    maps::LruHashMap,
+    programs::{ProbeContext, RetProbeContext},
+};
 
 #[map]
 static mut BPF_PROG_TRACK: LruHashMap<u64, co_re::bpf_prog> = LruHashMap::with_max_entries(1024, 0);
@@ -32,7 +35,7 @@ unsafe fn try_security_bpf_prog(ctx: &ProbeContext) -> ProbeResult<()> {
 
 // this probe gets executed after security_bpf_prog because of fexit
 #[kretprobe(function = "bpf_prog_load")]
-pub fn exit_bpf_prog_load(ctx: ProbeContext) -> u32 {
+pub fn exit_bpf_prog_load(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -46,7 +49,7 @@ pub fn exit_bpf_prog_load(ctx: ProbeContext) -> u32 {
     }
 }
 
-unsafe fn try_bpf_prog_load(ctx: &ProbeContext) -> ProbeResult<()> {
+unsafe fn try_bpf_prog_load(ctx: &RetProbeContext) -> ProbeResult<()> {
     let rc = ctx.ret().unwrap_or(-1);
     let key = bpf_task_tracking_id();
 
