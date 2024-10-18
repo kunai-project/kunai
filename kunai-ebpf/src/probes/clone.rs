@@ -5,6 +5,10 @@ use super::*;
 
 #[kprobe(function = "security_task_alloc")]
 pub fn clone_enter_security_task_alloc(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     // we just save kprobe context
     unsafe { ignore_result!(ProbeFn::security_task_alloc.save_ctx(&ctx)) }
     errors::BPF_PROG_SUCCESS
@@ -12,6 +16,10 @@ pub fn clone_enter_security_task_alloc(ctx: ProbeContext) -> u32 {
 
 #[kprobe(function = "wake_up_new_task")]
 pub fn clone_enter_wake_up_new_task(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     let rc = match unsafe { try_enter_wake_up_new_task(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

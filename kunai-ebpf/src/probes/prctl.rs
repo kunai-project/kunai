@@ -18,6 +18,10 @@ struct PrctlArgs {
 
 #[tracepoint(name = "sys_enter_prctl", category = "syscalls")]
 pub fn syscalls_sys_enter_prctl(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_enter_prctl(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -42,6 +46,10 @@ unsafe fn try_enter_prctl(ctx: &TracePointContext) -> ProbeResult<()> {
 
 #[tracepoint(name = "sys_exit_prctl", category = "syscalls")]
 pub fn syscalls_sys_exit_prctl(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_exit_prctl(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

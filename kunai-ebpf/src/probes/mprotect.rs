@@ -25,6 +25,10 @@ pub struct MprotectArgs {
 
 #[tracepoint(name = "sys_enter_mprotect", category = "syscalls")]
 pub fn syscalls_sys_enter_mprotect(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_enter_mprotect(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

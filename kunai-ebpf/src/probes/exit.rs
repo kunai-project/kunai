@@ -4,6 +4,10 @@ use kunai_common::syscalls::{SysEnterArgs, Syscall};
 
 #[tracepoint(name = "sys_enter_exit", category = "syscalls")]
 pub fn syscalls_sys_enter_exit(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_enter_exit(&ctx, Type::Exit) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -15,6 +19,10 @@ pub fn syscalls_sys_enter_exit(ctx: TracePointContext) -> u32 {
 
 #[tracepoint(name = "sys_enter_exit_group", category = "syscalls")]
 pub fn syscalls_sys_enter_exit_group(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_enter_exit(&ctx, Type::ExitGroup) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
