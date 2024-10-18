@@ -1,6 +1,9 @@
 use super::*;
 
-use aya_ebpf::{cty::c_int, programs::ProbeContext};
+use aya_ebpf::{
+    cty::c_int,
+    programs::{ProbeContext, RetProbeContext},
+};
 use co_re::task_struct;
 use kunai_common::{
     kprobe::{KProbeEntryContext, ProbeFn},
@@ -18,7 +21,7 @@ pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
 }
 
 #[kretprobe(function = "__sys_connect")]
-pub fn net_exit_sys_connect(ctx: ProbeContext) -> u32 {
+pub fn net_exit_sys_connect(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -43,7 +46,7 @@ const EINPROGRESS: i32 = 115;
 
 unsafe fn try_exit_connect(
     entry_ctx: &mut KProbeEntryContext,
-    exit_ctx: &ProbeContext,
+    exit_ctx: &RetProbeContext,
 ) -> ProbeResult<()> {
     let rc = exit_ctx.ret().unwrap_or(-1);
 

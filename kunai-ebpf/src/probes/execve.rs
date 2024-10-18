@@ -1,7 +1,7 @@
 use super::*;
 
 use aya_ebpf::maps::LruHashMap;
-use aya_ebpf::programs::{ProbeContext, TracePointContext};
+use aya_ebpf::programs::{ProbeContext, RetProbeContext, TracePointContext};
 use aya_ebpf::EbpfContext;
 use co_re::task_struct;
 use kunai_common::syscalls::SysExitArgs;
@@ -69,7 +69,7 @@ static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
 // by __do_execve_file (done in program loader)
 
 #[kretprobe(function = "bprm_execve")]
-pub fn execve_exit_bprm_execve(ctx: ProbeContext) -> u32 {
+pub fn execve_exit_bprm_execve(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -147,7 +147,7 @@ unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
     Ok(())
 }
 
-unsafe fn try_bprm_execve(ctx: &ProbeContext) -> ProbeResult<()> {
+unsafe fn try_bprm_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
     let rc = ctx.ret().unwrap_or(-1);
 
     // execve failed
