@@ -8,7 +8,7 @@ bpf_target_code! {
     use aya_ebpf::{macros::map, maps::{HashMap,PerfEventByteArray}, EbpfContext};
 
     #[map(name = "KUNAI_EVENTS")]
-    static mut EVENTS: PerfEventByteArray = PerfEventByteArray::with_max_entries(0x1ffff, 0);
+    static mut EVENTS: PerfEventByteArray = PerfEventByteArray::new(0);
 
     #[map(name = "KUNAI_STATS")]
     static mut STATS: HashMap<Type, usize> = HashMap::with_max_entries(Type::Max as u32, 0);
