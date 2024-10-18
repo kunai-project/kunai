@@ -463,7 +463,10 @@ impl<'s> EventConsumer<'s> {
 
         for p in self.config.rules.clone().iter().map(PathBuf::from) {
             if !p.exists() {
-                error!("kunai rule file {} does not exist", p.to_string_lossy());
+                error!(
+                    "kunai rule loader: no such file or directory {}",
+                    p.to_string_lossy()
+                );
             } else if p.is_file() {
                 // we load file regardless of its extension
                 self.load_kunai_rule_file(p)?;
@@ -498,7 +501,10 @@ impl<'s> EventConsumer<'s> {
 
         for p in self.config.iocs.clone().iter().map(PathBuf::from) {
             if !p.exists() {
-                error!("no such ioc file or directory: {}", p.to_string_lossy())
+                error!(
+                    "ioc file loader: no such file or directory {}",
+                    p.to_string_lossy()
+                )
             } else if p.is_file() {
                 self.load_iocs(&p)
                     .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
