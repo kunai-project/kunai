@@ -496,12 +496,20 @@ impl<'s> EventConsumer<'s> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.iocs.clone() {
-            let w = wo.clone().walk(p);
-            for r in w {
-                let f = r?;
-                self.load_iocs(&f)
-                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy()))?;
+        for p in self.config.iocs.clone().iter().map(PathBuf::from) {
+            if !p.exists() {
+                error!("no such ioc file or directory: {}", p.to_string_lossy())
+            } else if p.is_file() {
+                self.load_iocs(&p)
+                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
+            } else if p.is_dir() {
+                let w = wo.clone().walk(p);
+                for r in w {
+                    let f = r?;
+                    self.load_iocs(&f).map_err(|e| {
+                        anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy())
+                    })?;
+                }
             }
         }
 
