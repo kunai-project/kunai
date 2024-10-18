@@ -383,6 +383,66 @@ impl<'s> EventConsumer<'s> {
         Ok(())
     }
 
+    fn load_kunai_rule_file<P: AsRef<Path>>(&mut self, rule_file: P) -> anyhow::Result<()> {
+        let rule_file = rule_file.as_ref();
+
+        info!(
+            "loading detection/filter rules from: {}",
+            rule_file.to_string_lossy()
+        );
+
+        for document in serde_yaml::Deserializer::from_reader(File::open(rule_file)?) {
+            // we deserialize into a value so that we can process string event ids
+            let mut value = serde_yaml::Value::deserialize(document)?;
+
+            // get rule name. We don't check here if there is a name as
+            // later parsing is supposed to catch it.
+            let rule_name = value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or(String::from("unknown"));
+
+            if let Some(events) = value
+                .get_mut("match-on")
+                .and_then(|mo| mo.get_mut("events"))
+                .and_then(|e| e.get_mut("kunai"))
+                .and_then(|events| events.as_sequence_mut())
+            {
+                for v in events.iter_mut() {
+                    // we handle string event name
+                    if let Some(event_name) = v.as_str() {
+                        let id = if event_name.starts_with('-') {
+                            let event_name = event_name.trim_start_matches('-');
+                            let ty = Type::from_str(event_name)
+                                        .map_err(|_| {anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())})?;
+                            -i64::from(ty as u32)
+                        } else {
+                            let ty = Type::from_str(event_name).map_err(|_| {
+                                        anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())
+                                    })?;
+                            i64::from(ty as u32)
+                        };
+
+                        // we actually replace string by i64
+                        *v = serde_yaml::Value::Number(id.into());
+                    }
+                }
+            }
+
+            // we insert rule into the engine
+            self.engine
+                .insert_rule(gene::Rule::deserialize(value).map_err(|e| {
+                    anyhow!(
+                        "file={} rule={rule_name} parse error: {e}",
+                        rule_file.to_string_lossy()
+                    )
+                })?)?;
+        }
+
+        Ok(())
+    }
+
     fn init_event_scanner(&mut self) -> anyhow::Result<()> {
         // loading rules in the engine
         if self.config.rules.is_empty() {
@@ -394,68 +454,27 @@ impl<'s> EventConsumer<'s> {
             .files()
             // will list only files
             // with following extensions
+            .extension("kun")
+            .extension("kunai")
             .extension("gen")
             .extension("gene")
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.rules.iter() {
-            let w = wo.clone().walk(p);
-            for r in w {
-                let rule_file = r?;
-
-                info!(
-                    "loading detection/filter rules from: {}",
-                    rule_file.to_string_lossy()
+        for p in self.config.rules.clone().iter().map(PathBuf::from) {
+            if !p.exists() {
+                error!(
+                    "kunai rule loader: no such file or directory {}",
+                    p.to_string_lossy()
                 );
-
-                for document in serde_yaml::Deserializer::from_reader(File::open(&rule_file)?) {
-                    // we deserialize into a value so that we can process string event ids
-                    let mut value = serde_yaml::Value::deserialize(document)?;
-
-                    // get rule name. We don't check here if there is a name as
-                    // later parsing is supposed to catch it.
-                    let rule_name = value
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or(String::from("unknown"));
-
-                    if let Some(events) = value
-                        .get_mut("match-on")
-                        .and_then(|mo| mo.get_mut("events"))
-                        .and_then(|e| e.get_mut("kunai"))
-                        .and_then(|events| events.as_sequence_mut())
-                    {
-                        for v in events.iter_mut() {
-                            // we handle string event name
-                            if let Some(event_name) = v.as_str() {
-                                let id = if event_name.starts_with('-') {
-                                    let event_name = event_name.trim_start_matches('-');
-                                    let ty = Type::from_str(event_name)
-                                        .map_err(|_| {anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())})?;
-                                    -i64::from(ty as u32)
-                                } else {
-                                    let ty = Type::from_str(event_name).map_err(|_| {
-                                        anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())
-                                    })?;
-                                    i64::from(ty as u32)
-                                };
-
-                                // we actually replace string by i64
-                                *v = serde_yaml::Value::Number(id.into());
-                            }
-                        }
-                    }
-
-                    // we insert rule into the engine
-                    self.engine
-                        .insert_rule(gene::Rule::deserialize(value).map_err(|e| {
-                            anyhow!(
-                                "file={} rule={rule_name} parse error: {e}",
-                                rule_file.to_string_lossy()
-                            )
-                        })?)?;
+            } else if p.is_file() {
+                // we load file regardless of its extension
+                self.load_kunai_rule_file(p)?;
+            } else if p.is_dir() {
+                // we walk the directory
+                let w = wo.clone().walk(p);
+                for r in w {
+                    self.load_kunai_rule_file(r?)?;
                 }
             }
         }
@@ -480,12 +499,23 @@ impl<'s> EventConsumer<'s> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.iocs.clone() {
-            let w = wo.clone().walk(p);
-            for r in w {
-                let f = r?;
-                self.load_iocs(&f)
-                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy()))?;
+        for p in self.config.iocs.clone().iter().map(PathBuf::from) {
+            if !p.exists() {
+                error!(
+                    "ioc file loader: no such file or directory {}",
+                    p.to_string_lossy()
+                )
+            } else if p.is_file() {
+                self.load_iocs(&p)
+                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
+            } else if p.is_dir() {
+                let w = wo.clone().walk(p);
+                for r in w {
+                    let f = r?;
+                    self.load_iocs(&f).map_err(|e| {
+                        anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy())
+                    })?;
+                }
             }
         }
 
@@ -1530,6 +1560,7 @@ impl<'s> EventConsumer<'s> {
             // we run through event scanning engine
             let got_printed = self.scan_and_print(&mut event);
 
+            // we can force printing positive scans even if there is no filtering rule
             if !got_printed && self.config.always_show_positive_scans {
                 match serde_json::to_string(&event) {
                     Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
