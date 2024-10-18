@@ -1449,12 +1449,12 @@ impl<'s> EventConsumer<'s> {
                 // don't kill ourself: this check is redundant because kunai
                 // events aren't supposed to arrive until here but it is a cheap test
                 if pid as u32 != process::id() && !self.killed_tasks.contains(guuid) {
-                // this is the kind of information we want to have
-                // at all time so we put this as a warning not to
-                // be disabled by the default logging policy
-                warn!("sending SIGKILL to PID={pid}");
-                if let Err(e) = kill(pid, libc::SIGKILL) {
-                    error!("error sending SIGKILL to PID={pid}: {e}")
+                    // this is the kind of information we want to have
+                    // at all time so we put this as a warning not to
+                    // be disabled by the default logging policy
+                    warn!("sending SIGKILL to PID={pid}");
+                    if let Err(e) = kill(pid, libc::SIGKILL) {
+                        error!("error sending SIGKILL to PID={pid}: {e}")
                     } else {
                         self.killed_tasks.insert(guuid.clone());
                     }
@@ -2080,6 +2080,12 @@ impl EventProducer {
 
                         // we set the proper batch number
                         info.batch = ep.batch;
+
+                        // verify that we filter properly kunai events in eBPF
+                        debug_assert!(
+                            info.process.pid as u32 != process::id(),
+                            "kunai event should not reach userland"
+                        );
 
                         // pre-processing events
                         // we eventually change event type in this function
