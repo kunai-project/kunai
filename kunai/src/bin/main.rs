@@ -33,6 +33,7 @@ use kunai_common::{inspect_err, kernel};
 
 use kunai_macros::StrEnum;
 use log::LevelFilter;
+use lru_st::collections::LruHashSet;
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
@@ -243,6 +244,7 @@ struct EventConsumer<'s> {
     cache: cache::Cache,
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
+    killed_tasks: LruHashSet<String>,
     exited_tasks: u64,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
@@ -317,6 +319,7 @@ impl<'s> EventConsumer<'s> {
             random: util::getrandom::<u32>().unwrap(),
             cache: Cache::with_max_entries(10000),
             tasks: HashMap::with_capacity(512),
+            killed_tasks: LruHashSet::with_max_entries(512),
             exited_tasks: 0,
             resolved: HashMap::new(),
             output,
@@ -1442,12 +1445,19 @@ impl<'s> EventConsumer<'s> {
             // might impact the system.
             if actions.contains(Action::Kill.as_str()) {
                 let pid = event.info().task.pid;
+                let guuid = &event.info().task.guuid;
+                // don't kill ourself: this check is redundant because kunai
+                // events aren't supposed to arrive until here but it is a cheap test
+                if pid as u32 != process::id() && !self.killed_tasks.contains(guuid) {
                 // this is the kind of information we want to have
                 // at all time so we put this as a warning not to
                 // be disabled by the default logging policy
                 warn!("sending SIGKILL to PID={pid}");
                 if let Err(e) = kill(pid, libc::SIGKILL) {
                     error!("error sending SIGKILL to PID={pid}: {e}")
+                    } else {
+                        self.killed_tasks.insert(guuid.clone());
+                    }
                 }
             }
         }

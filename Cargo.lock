@@ -1580,9 +1580,9 @@ dependencies = [
 
 [[package]]
 name = "lru-st"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d024a287e83046bde6f02c57da9bcf220372e3a761dd8449d8dd31f19c4644a0"
+checksum = "d5abf83bbd65832f44a5318f05998dba245ba7222bc06153e4e799dae3803115"
 dependencies = [
  "thiserror",
 ]
