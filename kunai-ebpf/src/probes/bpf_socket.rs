@@ -5,12 +5,20 @@ use super::*;
 
 #[kprobe(function = "__sk_attach_prog")]
 pub fn sk_enter_sk_attach_prog(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     unsafe { ignore_result!(ProbeFn::sk_sk_attach_prog.save_ctx(&ctx)) }
     0
 }
 
 #[kretprobe(function = "__sk_attach_prog")]
 pub fn sk_exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     let rc = match unsafe {
         ProbeFn::sk_sk_attach_prog
             .restore_ctx()
@@ -37,12 +45,20 @@ pub fn sk_exit_sk_attach_prog(exit_ctx: ProbeContext) -> u32 {
 
 #[kprobe(function = "reuseport_attach_prog")]
 pub fn sk_enter_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     unsafe { ignore_result!(ProbeFn::sk_reuseport_attach_prog.save_ctx(&ctx)) }
     0
 }
 
 #[kretprobe(function = "reuseport_attach_prog")]
 pub fn sk_exit_reuseport_attach_prog(exit_ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     let rc = match unsafe {
         ProbeFn::sk_reuseport_attach_prog
             .restore_ctx()

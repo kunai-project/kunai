@@ -9,12 +9,20 @@ use kunai_common::{
 
 #[kprobe(function = "__sys_connect")]
 pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     unsafe { ignore_result!(ProbeFn::net_sys_connect.save_ctx(&ctx)) }
     0
 }
 
 #[kretprobe(function = "__sys_connect")]
 pub fn net_exit_sys_connect(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     let rc = match unsafe {
         ProbeFn::net_sys_connect
             .restore_ctx()

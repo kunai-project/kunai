@@ -15,6 +15,10 @@ static mut EXECVE_TRACKING: LruHashMap<u128, ExecveEvent> = LruHashMap::with_max
 
 #[kprobe(function = "security_bprm_check")]
 pub fn execve_security_bprm_check(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_security_bprm_check(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -66,6 +70,10 @@ static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
 
 #[kretprobe(function = "bprm_execve")]
 pub fn execve_exit_bprm_execve(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_bprm_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -152,6 +160,10 @@ unsafe fn try_bprm_execve(ctx: &ProbeContext) -> ProbeResult<()> {
 
 #[tracepoint(name = "sys_exit_execve", category = "syscalls")]
 pub fn syscalls_sys_exit_execve(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -163,6 +175,10 @@ pub fn syscalls_sys_exit_execve(ctx: TracePointContext) -> u32 {
 
 #[tracepoint(name = "sys_exit_execveat", category = "syscalls")]
 pub fn syscalls_sys_exit_execveat(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

@@ -79,6 +79,10 @@ unsafe fn file_key(file: &co_re::file) -> ProbeResult<FileKey> {
 
 #[kprobe(function = "vfs_read")]
 pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -90,6 +94,10 @@ pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
 
 #[kprobe(function = "vfs_readv")]
 pub fn fs_vfs_readv(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_vfs_read(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -142,6 +150,10 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 
 #[kprobe(function = "vfs_write")]
 pub fn fs_vfs_write(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_vfs_write(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -153,6 +165,10 @@ pub fn fs_vfs_write(ctx: ProbeContext) -> u32 {
 
 #[kprobe(function = "vfs_writev")]
 pub fn fs_vfs_writev(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_vfs_write(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -206,6 +222,10 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
 
 #[kprobe(function = "security_path_rename")]
 pub fn fs_security_path_rename(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_security_path_rename(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -266,6 +286,10 @@ static mut PATHS: LruHashMap<u128, Path> = LruHashMap::with_max_entries(4096, 0)
 
 #[kprobe(function = "security_path_unlink")]
 pub fn fs_security_path_unlink(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_security_path_unlink(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -303,6 +327,10 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 // seems to be cleaned up and cannot be parsed correctly.
 #[kretprobe(function = "vfs_unlink")]
 pub fn fs_exit_vfs_unlink(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_vfs_unlink(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -352,6 +380,10 @@ unsafe fn try_vfs_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 /// not much we can do for event re-ordering.
 #[kprobe(function = "fput")]
 pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_enter_fput(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -365,6 +397,10 @@ pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
 /// function gets called by the close syscall
 #[kprobe(function = "__fput_sync")]
 pub fn fs_enter_fput_sync(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_enter_fput(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {

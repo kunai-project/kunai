@@ -150,3 +150,11 @@ macro_rules! if_disabled_return {
 }
 
 use if_disabled_return;
+
+#[inline(always)]
+pub(crate) fn is_current_loader_task() -> bool {
+    if let Ok(true) = unsafe { get_cfg!().map(|c| c.current_is_loader()) } {
+        return true;
+    }
+    false
+}

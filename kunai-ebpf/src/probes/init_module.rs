@@ -10,6 +10,10 @@ static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
 
 #[kprobe(function = "mod_sysfs_setup")]
 pub fn lkm_mod_sysfs_setup(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_mod_sysfs_setup(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -38,6 +42,10 @@ unsafe fn try_mod_sysfs_setup(ctx: &ProbeContext) -> ProbeResult<()> {
 
 #[tracepoint(name = "sys_enter_init_module", category = "syscalls")]
 pub fn lkm_syscalls_sys_enter_init_module(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_enter_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -54,6 +62,10 @@ unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> 
 
 #[tracepoint(name = "sys_enter_finit_module", category = "syscalls")]
 pub fn lkm_syscalls_sys_enter_finit_module(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_enter_finit_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -100,6 +112,10 @@ unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> P
 
 #[tracepoint(name = "sys_exit_init_module", category = "syscalls")]
 pub fn lkm_syscalls_sys_exit_init_module(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_exit_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -111,6 +127,10 @@ pub fn lkm_syscalls_sys_exit_init_module(ctx: TracePointContext) -> u32 {
 
 #[tracepoint(name = "sys_exit_finit_module", category = "syscalls")]
 pub fn lkm_syscalls_sys_exit_finit_module(ctx: TracePointContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
     match unsafe { try_sys_exit_init_module(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
