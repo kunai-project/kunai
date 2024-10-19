@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use aya::{
-    include_bytes_aligned, programs::ProgramError, util::kernel_symbols, Bpf, BpfLoader, Btf,
+    include_bytes_aligned, programs::ProgramError, util::kernel_symbols, Btf, Ebpf, EbpfLoader,
     VerifierLogLevel,
 };
 use compat::Programs;
@@ -104,11 +104,11 @@ pub fn prepare_bpf(
     kernel: KernelVersion,
     conf: &Config,
     vll: VerifierLogLevel,
-) -> anyhow::Result<Bpf> {
+) -> anyhow::Result<Ebpf> {
     let page_size = page_size()? as u64;
     let page_shift = page_shift()? as u64;
 
-    let mut bpf = BpfLoader::new()
+    let mut bpf = EbpfLoader::new()
         .verifier_log_level(vll)
         .set_global("PAGE_SHIFT", &page_shift, true)
         .set_global("PAGE_SIZE", &page_size, true)
@@ -127,7 +127,7 @@ pub fn prepare_bpf(
 pub fn load_and_attach_bpf<'a>(
     conf: &'a Config,
     kernel: KernelVersion,
-    bpf: &'a mut Bpf,
+    bpf: &'a mut Ebpf,
 ) -> anyhow::Result<()> {
     // make possible probe selection in debug
     #[allow(unused_mut)]

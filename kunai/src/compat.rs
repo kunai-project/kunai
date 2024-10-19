@@ -1,10 +1,10 @@
 use aya::{
     programs::{
         self, kprobe::KProbeLinkId, lsm::LsmLinkId, trace_point::TracePointLinkId, ProgramError,
+        ProgramType,
     },
-    Bpf, Btf,
+    Btf, Ebpf,
 };
-use aya_obj::generated::bpf_prog_type;
 use kunai_common::version::KernelVersion;
 
 use std::collections::HashMap;
@@ -50,7 +50,7 @@ pub struct Programs<'a> {
 }
 
 impl<'a> Programs<'a> {
-    pub fn with_bpf(bpf: &'a mut Bpf) -> Self {
+    pub fn with_bpf(bpf: &'a mut Ebpf) -> Self {
         let m = bpf
             .programs_mut()
             .map(|(name, p)| {
@@ -225,7 +225,7 @@ impl<'a> Program<'a> {
         self
     }
 
-    pub fn prog_type(&self) -> bpf_prog_type {
+    pub fn prog_type(&self) -> ProgramType {
         self.program.prog_type()
     }
 
