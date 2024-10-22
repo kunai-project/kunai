@@ -1,7 +1,7 @@
 use super::*;
 use aya_ebpf::{
     cty::{c_int, c_void, size_t},
-    programs::ProbeContext,
+    programs::{ProbeContext, RetProbeContext},
 };
 
 use kunai_common::{
@@ -32,7 +32,7 @@ impl SockHelper {
     #[inline(always)]
     unsafe fn dns_event(
         &self,
-        ctx: &ProbeContext,
+        ctx: &RetProbeContext,
         opt_server: Option<SockAddr>, // optional server IpPort
         tcp_header: bool,             // whether the data contains tcp_header
     ) -> ProbeResult<()> {
@@ -140,7 +140,7 @@ unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kretprobe(function = "vfs_read")]
-pub fn net_dns_exit_vfs_read(ctx: ProbeContext) -> u32 {
+pub fn net_dns_exit_vfs_read(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -157,7 +157,7 @@ pub fn net_dns_exit_vfs_read(ctx: ProbeContext) -> u32 {
     rc
 }
 
-unsafe fn try_exit_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
+unsafe fn try_exit_vfs_read(ctx: &RetProbeContext) -> ProbeResult<()> {
     // we restore entry context
     let saved_ctx = match ProbeFn::dns_vfs_read.restore_ctx() {
         Ok(ctx) => ctx.probe_context(),
@@ -238,7 +238,7 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kretprobe(function = "__sys_recvfrom")]
-pub fn net_dns_exit_sys_recvfrom(ctx: ProbeContext) -> u32 {
+pub fn net_dns_exit_sys_recvfrom(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -255,7 +255,7 @@ pub fn net_dns_exit_sys_recvfrom(ctx: ProbeContext) -> u32 {
 }
 
 #[inline(always)]
-unsafe fn try_exit_sys_recvfrom(exit_ctx: &ProbeContext) -> ProbeResult<()> {
+unsafe fn try_exit_sys_recvfrom(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
     // we restore entry context
     let ent_probe_ctx = match ProbeFn::dns_sys_recv_from.restore_ctx() {
         Ok(ctx) => ctx.probe_context(),
@@ -343,7 +343,7 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 #[kretprobe(function = "__sys_recvmsg")]
-pub fn net_dns_exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
+pub fn net_dns_exit_sys_recvmsg(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
@@ -361,7 +361,7 @@ pub fn net_dns_exit_sys_recvmsg(ctx: ProbeContext) -> u32 {
 }
 
 #[inline(always)]
-unsafe fn try_exit_recvmsg(exit_ctx: &ProbeContext) -> ProbeResult<()> {
+unsafe fn try_exit_recvmsg(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
     // we restore saved context
     let saved_ctx = match ProbeFn::net_dns_sys_recvmsg.restore_ctx() {
         Ok(ctx) => ctx.probe_context(),

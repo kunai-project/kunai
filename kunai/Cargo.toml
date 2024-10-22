@@ -9,6 +9,14 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+# Aya deps
+aya = { version = "0.13.0", features = ["async_tokio"] }
+aya-obj = { version = "0.1.0" }
+
+# Kunai deps
+kunai-common = { path = "../kunai-common", features = ["user"] }
+kunai-macros = { path = "../kunai-common/src/kunai-macros" }
+
 # Non aya deps
 hex = "0.4.3"
 md-5 = "0.10.5"
@@ -19,21 +27,12 @@ libc = "0.2"
 thiserror = "1.0"
 procfs = "0.16"
 ip_network = "0.4"
-
 lru-st = { version = "0.2", features = ["sync"] }
-aya = { version = "0.12.0", features = ["async_tokio"] }
 
 # detection engine for events
 gene = { version = "0.2.0" }
 gene_derive = { version = "0.2.0" }
 
-kunai-common = { path = "../kunai-common", features = ["user"] }
-kunai-macros = { path = "../kunai-common/src/kunai-macros" }
-
-# part of tokio framework
-bytes = "1"
-
-aya-obj = { version = "0.1.0" }
 anyhow = "1.0.68"
 env_logger = "0.10"
 log = "0.4"
@@ -48,6 +47,7 @@ tokio = { version = "1.39", features = [
     "time",
     "sync",
 ] }
+bytes = "1"
 serde = { version = "1.0.164", features = ["derive"] }
 clap = { version = "4.3.4", features = ["derive"] }
 serde_json = "1.0.108"

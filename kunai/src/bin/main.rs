@@ -57,7 +57,7 @@ use std::sync::Arc;
 use std::process;
 use std::time::Duration;
 
-use aya::{maps::perf::AsyncPerfEventArray, maps::HashMap as AyaHashMap, util::online_cpus, Bpf};
+use aya::{maps::perf::AsyncPerfEventArray, maps::HashMap as AyaHashMap, util::online_cpus, Ebpf};
 
 use aya::VerifierLogLevel;
 
@@ -1840,7 +1840,7 @@ const fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: u
 
 impl EventProducer {
     pub fn with_params(
-        bpf: &mut Bpf,
+        bpf: &mut Ebpf,
         config: Config,
         sender: mpsc::Sender<EncodedEvent>,
     ) -> anyhow::Result<Self> {
