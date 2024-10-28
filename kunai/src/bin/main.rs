@@ -1544,8 +1544,13 @@ impl<'s> EventConsumer<'s> {
             None => return Err(anyhow!("namespace not found")),
         };
 
-        for p in event.scannable_files() {
-            let mut event = self.file_scan_event(event, ns, &p);
+        for p in event
+            .scannable_files()
+            .iter()
+            // we don't scan file paths being ?
+            .filter(|&p| p != &PathBuf::from("?").into())
+        {
+            let mut event = self.file_scan_event(event, ns, p);
             // print a warning if a positive scan happens so that a trace
             // is kept in system logs
             if event.data.positives > 0 {
@@ -1560,8 +1565,10 @@ impl<'s> EventConsumer<'s> {
             // we run through event scanning engine
             let got_printed = self.scan_and_print(&mut event);
 
-            // we can force printing positive scans even if there is no filtering rule
-            if !got_printed && self.config.always_show_positive_scans {
+            // - we can force printing positive scans even if there is no filtering rule for it
+            // - an attempt to print the event if there is an error was made but it generates
+            // noisy events. A better way to handle scan errors is to create a filtering rule
+            if !got_printed && self.config.always_show_positive_scans && event.data.positives > 0 {
                 match serde_json::to_string(&event) {
                     Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
                     Err(e) => error!("failed to serialize event to json: {e}"),
@@ -1588,7 +1595,8 @@ impl<'s> EventConsumer<'s> {
             };
         }
 
-        // we have neither rules nor iocs to inspect for
+        // default: we have neither rules nor iocs
+        // to scan for so we print event
         if self.iocs.is_empty() && self.engine.is_empty() {
             print_serialized!(event);
             return printed;
