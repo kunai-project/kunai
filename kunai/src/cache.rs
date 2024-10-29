@@ -66,7 +66,7 @@ impl FileMeta {
 
 #[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct Hashes {
-    pub file: PathBuf,
+    pub path: PathBuf,
     #[serde(flatten)]
     pub meta: FileMeta,
 }
@@ -75,7 +75,7 @@ impl Hashes {
     pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T) -> Self {
         let path = p.as_ref();
         let mut h = Hashes {
-            file: path.to_path_buf(),
+            path: path.to_path_buf(),
             ..Hashes::default()
         };
         let mut md5 = Md5::new();
@@ -108,7 +108,7 @@ impl Hashes {
 
     #[inline]
     pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.file.to_string_lossy()];
+        let mut v = vec![self.path.to_string_lossy()];
         v.extend(self.meta.iocs());
         v
     }
