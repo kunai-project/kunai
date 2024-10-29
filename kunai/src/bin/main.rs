@@ -103,12 +103,12 @@ impl Task {
         // check if flag contains PF_KTHREAD
         self.flags & 0x00200000 == 0x00200000
     }
-
+    
     #[inline(always)]
     fn command_line_string(&self) -> String {
         self.command_line.join(" ")
     }
-
+    
     // run on task exit
     #[inline(always)]
     fn on_exit(&mut self) {
@@ -134,7 +134,7 @@ impl SystemInfo {
             mount_ns: Namespace::from_pid(namespaces::Kind::Mnt, pid)?,
         })
     }
-
+    
     fn with_host_uuid(mut self, uuid: uuid::Uuid) -> Self {
         self.host_uuid = uuid;
         self
@@ -150,7 +150,7 @@ impl Input {
     fn from_file(f: fs::File) -> Self {
         Self::File(f)
     }
-
+    
     fn from_stdin() -> Self {
         Self::Stdin(std::io::stdin())
     }
@@ -177,7 +177,7 @@ impl Output {
     fn stdout() -> Self {
         Self::Stdout(std::io::stdout())
     }
-
+    
     #[inline(always)]
     fn stderr() -> Self {
         Self::Stderr(std::io::stderr())
@@ -198,7 +198,7 @@ impl io::Write for Output {
             Self::File(o) => o.write(buf),
         }
     }
-
+    
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Self::Stdout(o) => o.flush(),
@@ -259,13 +259,13 @@ impl<'s> EventConsumer<'s> {
             &"stderr" => String::from("/dev/stderr"),
             v => v.to_string(),
         };
-
+        
         let out = match output.as_str() {
             "/dev/stdout" => Output::stdout(),
             "/dev/stderr" => Output::stderr(),
             v => {
                 let path = PathBuf::from(v);
-
+                
                 if let Some(parent) = path.parent() {
                     if !parent.exists() {
                         // we only create parent directory
@@ -274,42 +274,42 @@ impl<'s> EventConsumer<'s> {
                         })?;
                     }
                 }
-
+                
                 match config.output_settings.as_ref() {
                     Some(s) => firo::OpenOptions::new()
-                        .mode(0o600)
-                        .max_size(s.max_size)
-                        .trigger(s.rotate_size.into())
-                        .compression(firo::Compression::Gzip)
-                        .create_append(v)?
-                        .into(),
+                    .mode(0o600)
+                    .max_size(s.max_size)
+                    .trigger(s.rotate_size.into())
+                    .compression(firo::Compression::Gzip)
+                    .create_append(v)?
+                    .into(),
                     None => firo::OpenOptions::new()
-                        .mode(0o600)
-                        .create_append(v)?
-                        .into(),
+                    .mode(0o600)
+                    .create_append(v)?
+                    .into(),
                 }
             }
         };
         Ok(out)
     }
-
+    
     pub fn with_config(config: Config) -> anyhow::Result<Self> {
         // building up system information
         let system_info = SystemInfo::from_sys()?.with_host_uuid(
             config
-                .host_uuid()
-                .ok_or(anyhow!("failed to read host_uuid"))?,
+            .host_uuid()
+            .ok_or(anyhow!("failed to read host_uuid"))?,
         );
-
+        
         let scan_events_enabled = config
-            .events
-            .iter()
-            .any(|(&ty, e)| ty == Type::FileScan && e.is_enabled());
-
+        .events
+        .iter()
+        .any(|(&ty, e)| ty == Type::FileScan && e.is_enabled());
+        
         let output = Self::prepare_output(&config)?;
-
+        
         let filter = Filter::try_from(&config)?;
-
+        
         let mut ep = Self {
             system_info,
             config,
@@ -326,39 +326,39 @@ impl<'s> EventConsumer<'s> {
             file_scanner: None,
             scan_events_enabled,
         };
-
+        
         // initializing yara rules
         ep.init_file_scanner()?;
-
+        
         // initializing event scanner
         ep.init_event_scanner()?;
-
+        
         // initialize IoCs
         ep.init_iocs()?;
-
+        
         // should not raise any error, we just print it
         let _ = inspect_err! {
             ep.init_tasks_from_procfs(),
             |e: &anyhow::Error| warn!("failed to initialize tasks with procfs: {}", e)
         };
-
+        
         Ok(ep)
     }
-
+    
     #[inline(always)]
     fn init_file_scanner(&mut self) -> anyhow::Result<()> {
         let wo = WalkOptions::new()
-            // we list only files
-            .files()
-            // will list only files
-            // with following extensions
-            .extension("yar")
-            .extension("yara")
-            // don't go recursive
-            .max_depth(0);
-
+        // we list only files
+        .files()
+        // will list only files
+        // with following extensions
+        .extension("yar")
+        .extension("yara")
+        // don't go recursive
+        .max_depth(0);
+        
         let mut c = yara_x::Compiler::new();
-
+        
         let mut files_loaded = 0;
         for p in self.config.yara.iter() {
             debug!("looking for yara rules in: {}", p);
@@ -374,40 +374,40 @@ impl<'s> EventConsumer<'s> {
                 files_loaded += 1;
             }
         }
-
+        
         // we don't actually initialize an empty scanner
         if files_loaded > 0 {
             self.file_scanner = Some(Scanner::with_rules(c.build()));
         }
-
+        
         Ok(())
     }
-
+    
     fn load_kunai_rule_file<P: AsRef<Path>>(&mut self, rule_file: P) -> anyhow::Result<()> {
         let rule_file = rule_file.as_ref();
-
+        
         info!(
             "loading detection/filter rules from: {}",
             rule_file.to_string_lossy()
         );
-
+        
         for document in serde_yaml::Deserializer::from_reader(File::open(rule_file)?) {
             // we deserialize into a value so that we can process string event ids
             let mut value = serde_yaml::Value::deserialize(document)?;
-
+            
             // get rule name. We don't check here if there is a name as
             // later parsing is supposed to catch it.
             let rule_name = value
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or(String::from("unknown"));
-
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or(String::from("unknown"));
+            
             if let Some(events) = value
-                .get_mut("match-on")
-                .and_then(|mo| mo.get_mut("events"))
-                .and_then(|e| e.get_mut("kunai"))
-                .and_then(|events| events.as_sequence_mut())
+            .get_mut("match-on")
+            .and_then(|mo| mo.get_mut("events"))
+            .and_then(|e| e.get_mut("kunai"))
+            .and_then(|events| events.as_sequence_mut())
             {
                 for v in events.iter_mut() {
                     // we handle string event name
@@ -415,52 +415,52 @@ impl<'s> EventConsumer<'s> {
                         let id = if event_name.starts_with('-') {
                             let event_name = event_name.trim_start_matches('-');
                             let ty = Type::from_str(event_name)
-                                        .map_err(|_| {anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())})?;
+                            .map_err(|_| {anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())})?;
                             -i64::from(ty as u32)
                         } else {
                             let ty = Type::from_str(event_name).map_err(|_| {
-                                        anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())
-                                    })?;
+                                anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())
+                            })?;
                             i64::from(ty as u32)
                         };
-
+                        
                         // we actually replace string by i64
                         *v = serde_yaml::Value::Number(id.into());
                     }
                 }
             }
-
+            
             // we insert rule into the engine
             self.engine
-                .insert_rule(gene::Rule::deserialize(value).map_err(|e| {
-                    anyhow!(
-                        "file={} rule={rule_name} parse error: {e}",
-                        rule_file.to_string_lossy()
-                    )
-                })?)?;
+            .insert_rule(gene::Rule::deserialize(value).map_err(|e| {
+                anyhow!(
+                    "file={} rule={rule_name} parse error: {e}",
+                    rule_file.to_string_lossy()
+                )
+            })?)?;
         }
-
+        
         Ok(())
     }
-
+    
     fn init_event_scanner(&mut self) -> anyhow::Result<()> {
         // loading rules in the engine
         if self.config.rules.is_empty() {
             return Ok(());
         }
-
+        
         let wo = WalkOptions::new()
-            // we list only files
-            .files()
-            // will list only files
-            // with following extensions
-            .extension("kun")
-            .extension("kunai")
-            .extension("gen")
-            .extension("gene")
-            // don't go recursive
-            .max_depth(0);
-
+        // we list only files
+        .files()
+        // will list only files
+        // with following extensions
+        .extension("kun")
+        .extension("kunai")
+        .extension("gen")
+        .extension("gene")
+        // don't go recursive
+        .max_depth(0);
+        
         for p in self.config.rules.clone().iter().map(PathBuf::from) {
             if !p.exists() {
                 error!(
@@ -478,27 +478,27 @@ impl<'s> EventConsumer<'s> {
                 }
             }
         }
-
+        
         info!("number of loaded rules: {}", self.engine.rules_count());
-
+        
         Ok(())
     }
-
+    
     fn init_iocs(&mut self) -> anyhow::Result<()> {
         // loading iocs
         if self.config.iocs.is_empty() {
             return Ok(());
         }
-
+        
         let wo = WalkOptions::new()
-            // we list only files
-            .files()
-            // will list only files
-            // with following extensions
-            .extension("ioc")
-            // don't go recursive
-            .max_depth(0);
-
+        // we list only files
+        .files()
+        // will list only files
+        // with following extensions
+        .extension("ioc")
+        // don't go recursive
+        .max_depth(0);
+        
         for p in self.config.iocs.clone().iter().map(PathBuf::from) {
             if !p.exists() {
                 error!(
@@ -507,7 +507,7 @@ impl<'s> EventConsumer<'s> {
                 )
             } else if p.is_file() {
                 self.load_iocs(&p)
-                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
+                .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
             } else if p.is_dir() {
                 let w = wo.clone().walk(p);
                 for r in w {
@@ -518,28 +518,28 @@ impl<'s> EventConsumer<'s> {
                 }
             }
         }
-
+        
         info!("number of IoCs loaded: {}", self.iocs.len());
-
+        
         Ok(())
     }
-
+    
     fn load_iocs<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
         let p = p.as_ref();
         let f = io::BufReader::new(File::open(p)?);
-
+        
         for line in f.lines() {
             let line = line?;
             let ioc: IoC = serde_json::from_str(&line)?;
             self.iocs
-                .entry(ioc.value)
-                .and_modify(|e| *e = max(*e, ioc.severity))
-                .or_insert(ioc.severity);
+            .entry(ioc.value)
+            .and_modify(|e| *e = max(*e, ioc.severity))
+            .or_insert(ioc.severity);
         }
-
+        
         Ok(())
     }
-
+    
     fn init_tasks_from_procfs(&mut self) -> anyhow::Result<()> {
         for p in (procfs::process::all_processes()?).flatten() {
             // flatten takes only the Ok() values of processes
@@ -550,13 +550,13 @@ impl<'s> EventConsumer<'s> {
                 )
             }
         }
-
+        
         // we try to resolve containers from tasks found in procfs
         for (tk, pk) in self
-            .tasks
-            .iter()
-            .map(|(&k, v)| (k, v.parent_key))
-            .collect::<Vec<(TaskKey, Option<TaskKey>)>>()
+        .tasks
+        .iter()
+        .map(|(&k, v)| (k, v.parent_key))
+        .collect::<Vec<(TaskKey, Option<TaskKey>)>>()
         {
             if let Some(parent) = pk {
                 if let Some(t) = self.tasks.get_mut(&tk) {
@@ -567,23 +567,23 @@ impl<'s> EventConsumer<'s> {
                         continue;
                     }
                 }
-
+                
                 // lookup in ancestors
                 let ancestors = self.get_ancestors(parent, 0);
                 if let Some(c) = Container::from_ancestors(&ancestors) {
                     self.tasks
-                        .entry(tk)
-                        .and_modify(|task| task.container = Some(c));
+                    .entry(tk)
+                    .and_modify(|task| task.container = Some(c));
                 }
             }
         }
-
+        
         Ok(())
     }
-
+    
     fn set_task_from_procfs(&mut self, p: &procfs::process::Process) -> anyhow::Result<()> {
         let stat = p.stat()?;
-
+        
         let parent_pid = p.status()?.ppid;
         let parent_key = {
             if parent_pid != 0 {
@@ -593,13 +593,13 @@ impl<'s> EventConsumer<'s> {
                 None
             }
         };
-
+        
         let tk = TaskKey::try_from(p)?;
-
+        
         if self.tasks.contains_key(&tk) {
             return Ok(());
         }
-
+        
         let image = {
             if stat.flags & 0x200000 == 0x200000 {
                 KERNEL_IMAGE.into()
@@ -607,15 +607,15 @@ impl<'s> EventConsumer<'s> {
                 p.exe().unwrap_or("?".into())
             }
         };
-
+        
         // we gather cgroups
         let cgroups = p
-            .cgroups()?
-            .0
-            .into_iter()
-            .map(|cg| cg.pathname)
-            .collect::<Vec<String>>();
-
+        .cgroups()?
+        .0
+        .into_iter()
+        .map(|cg| cg.pathname)
+        .collect::<Vec<String>>();
+        
         let task = Task {
             image,
             command_line: p.cmdline().unwrap_or(vec!["?".into()]),
@@ -630,12 +630,12 @@ impl<'s> EventConsumer<'s> {
             procfs: true,
             exit: false,
         };
-
+        
         self.tasks.insert(tk, task);
-
+        
         Ok(())
     }
-
+    
     #[inline]
     fn get_exe(&self, key: TaskKey) -> PathBuf {
         let mut exe = PathBuf::from("?");
@@ -644,7 +644,7 @@ impl<'s> EventConsumer<'s> {
         }
         exe
     }
-
+    
     #[inline]
     fn get_command_line(&self, key: TaskKey) -> String {
         let mut cl = String::from("?");
@@ -653,13 +653,13 @@ impl<'s> EventConsumer<'s> {
         }
         cl
     }
-
+    
     #[inline]
     fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
         let ck = i.task_key();
         (self.get_exe(ck), self.get_command_line(ck))
     }
-
+    
     /// get the list of ancestors given a [TaskKey]. If skip is 0 the last
     /// item is the image of the task referenced by `tk`. One can skip ancestors
     /// by setting `skip` > 0.
@@ -667,7 +667,7 @@ impl<'s> EventConsumer<'s> {
     fn get_ancestors(&self, mut tk: TaskKey, mut skip: u16) -> Vec<String> {
         let mut ancestors = vec![];
         let mut last = None;
-
+        
         while let Some(task) = self.tasks.get(&tk) {
             last = Some(task);
             if skip == 0 {
@@ -675,7 +675,7 @@ impl<'s> EventConsumer<'s> {
             } else {
                 skip -= 1;
             }
-
+            
             tk = match task.parent_key {
                 Some(v) => v,
                 None => {
@@ -683,78 +683,78 @@ impl<'s> EventConsumer<'s> {
                 }
             };
         }
-
+        
         if let Some(last) = last {
             if last.pid != 1 && !last.is_kthread() && skip == 0 {
                 ancestors.insert(0, "?".into());
             }
         }
-
+        
         ancestors
     }
-
+    
     #[inline]
     fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
         self.get_ancestors(i.task_key(), 1).join("|")
     }
-
+    
     #[inline]
     fn get_parent_image(&self, i: &StdEventInfo) -> String {
         let ck = i.parent_key();
         self.tasks
-            .get(&ck)
-            .map(|c| c.image.to_string_lossy().to_string())
-            .unwrap_or("?".into())
+        .get(&ck)
+        .map(|c| c.image.to_string_lossy().to_string())
+        .unwrap_or("?".into())
     }
-
+    
     #[inline]
     fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
         let ck = i.task_key();
-
+        
         // update local resolve table
         self.tasks.get_mut(&ck).map(|c| {
             c.resolved
-                .entry(ip)
-                .and_modify(|r| *r = resolved.to_owned())
-                .or_insert(resolved.to_owned())
-        });
-
-        // update global resolve table
-        self.resolved
             .entry(ip)
             .and_modify(|r| *r = resolved.to_owned())
-            .or_insert(resolved.to_owned());
+            .or_insert(resolved.to_owned())
+        });
+        
+        // update global resolve table
+        self.resolved
+        .entry(ip)
+        .and_modify(|r| *r = resolved.to_owned())
+        .or_insert(resolved.to_owned());
     }
-
+    
     #[inline]
     fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.task_key();
-
+        
         // we lookup in the local table
         if let Some(domain) = self
-            .tasks
-            .get(&ck)
-            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
+        .tasks
+        .get(&ck)
+        .and_then(|c| c.resolved.get(&ip).map(Cow::from))
         {
             return domain;
         }
-
+        
         // we lookup in the global table
         if let Some(domain) = self.resolved.get(&ip) {
             return domain.into();
         }
-
+        
         // default value
         "?".into()
     }
-
+    
     #[inline]
     fn get_hashes_with_ns(&mut self, ns: Option<Namespace>, p: &cache::Path) -> Hashes {
         if let Some(ns) = ns {
             match self.cache.get_or_cache_in_ns(ns, p) {
                 Ok(h) => h,
                 Err(e) => Hashes {
-                    file: p.to_path_buf().clone(),
+                    path: p.to_path_buf().clone(),
                     meta: FileMeta {
                         error: Some(format!("{e}")),
                         ..Default::default()
@@ -763,7 +763,7 @@ impl<'s> EventConsumer<'s> {
             }
         } else {
             Hashes {
-                file: p.to_path_buf().clone(),
+                path: p.to_path_buf().clone(),
                 meta: FileMeta {
                     error: Some("unknown namespace".into()),
                     ..Default::default()
@@ -771,7 +771,7 @@ impl<'s> EventConsumer<'s> {
             }
         }
     }
-
+    
     #[inline(always)]
     /// method acting as a central place to get the mnt namespace of a
     /// task and printing out an error if not found
@@ -784,7 +784,7 @@ impl<'s> EventConsumer<'s> {
             }
         }
     }
-
+    
     #[inline]
     fn execve_event(
         &mut self,
@@ -792,9 +792,9 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::ExecveEvent,
     ) -> UserEvent<ExecveData> {
         let ancestors = self.get_ancestors(info.parent_key(), 0);
-
+        
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
-
+        
         let mut data = ExecveData {
             ancestors: ancestors.join("|"),
             parent_exe: self.get_parent_image(&info),
@@ -802,16 +802,16 @@ impl<'s> EventConsumer<'s> {
             exe: self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
             interpreter: None,
         };
-
+        
         if event.data.executable != event.data.interpreter {
             data.interpreter = Some(
                 self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.interpreter)),
             )
         }
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn clone_event(
         &mut self,
@@ -826,7 +826,7 @@ impl<'s> EventConsumer<'s> {
         };
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn prctl_event(
         &mut self,
@@ -834,12 +834,12 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::PrctlEvent,
     ) -> UserEvent<PrctlData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let option = PrctlOption::try_from_uint(event.data.option)
-            .map(|o| o.as_str().into())
-            .unwrap_or(format!("unknown({})", event.data.option))
-            .to_string();
-
+        .map(|o| o.as_str().into())
+        .unwrap_or(format!("unknown({})", event.data.option))
+        .to_string();
+        
         let data = PrctlData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
@@ -851,10 +851,10 @@ impl<'s> EventConsumer<'s> {
             arg5: event.data.arg5,
             success: event.data.success,
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn kill_event(
         &mut self,
@@ -862,16 +862,16 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::KillEvent,
     ) -> UserEvent<KillData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let signal = Signal::from_uint_to_string(event.data.signal);
-
+        
         // we need to set uuid part of target task
         let mut target = event.data.target;
         target.set_uuid_random(self.random);
-
+        
         // get the command line
         let tk = TaskKey::from(target.tg_uuid);
-
+        
         let data = KillData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
@@ -883,10 +883,10 @@ impl<'s> EventConsumer<'s> {
                 task: target.into(),
             },
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn mmap_exec_event(
         &mut self,
@@ -896,21 +896,21 @@ impl<'s> EventConsumer<'s> {
         let filename = event.data.filename;
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
         let mmapped_hashes = self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&filename));
-
+        
         let ck = info.task_key();
-
+        
         let exe = self.get_exe(ck);
-
+        
         let data = kunai::events::MmapExecData {
             ancestors: self.get_ancestors_string(&info),
             command_line: self.get_command_line(ck),
             exe: exe.into(),
             mapped: mmapped_hashes,
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn dns_query_events(
         &mut self,
@@ -921,11 +921,11 @@ impl<'s> EventConsumer<'s> {
         let ck = info.task_key();
         let exe = self.get_exe(ck);
         let command_line = self.get_command_line(ck);
-
+        
         let src: SockAddr = event.data.src.into();
         let dst: SockAddr = event.data.dst.into();
         let si = SocketInfo::from(event.data.socket);
-
+        
         let community_id = Flow::new(
             // this is valid to cast as a u8
             Protocol::from(event.data.socket.proto as u8),
@@ -936,10 +936,10 @@ impl<'s> EventConsumer<'s> {
         )
         .community_id_v1(0)
         .base64();
-
+        
         let responses = event.data.answers().unwrap_or_default();
         let ancestors = self.get_ancestors_string(&info);
-
+        
         for r in responses {
             let mut data = DnsQueryData::new().with_responses(r.answers);
             data.ancestors = ancestors.clone();
@@ -956,7 +956,7 @@ impl<'s> EventConsumer<'s> {
                 is_v6: dst.ip.is_ipv6(),
             };
             data.community_id = community_id.clone();
-
+            
             // update the resolution map
             data.responses().iter().for_each(|a| {
                 // if we manage to parse IpAddr
@@ -964,13 +964,13 @@ impl<'s> EventConsumer<'s> {
                     self.update_resolved(ip, &r.question, &info);
                 }
             });
-
+            
             out.push(UserEvent::new(data, info.clone()));
         }
-
+        
         out
     }
-
+    
     #[inline]
     fn file_event(
         &mut self,
@@ -978,17 +978,17 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::FileEvent,
     ) -> UserEvent<FileData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let data = FileData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             path: event.data.path.to_path_buf(),
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn unlink_event(
         &mut self,
@@ -996,7 +996,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::UnlinkEvent,
     ) -> UserEvent<UnlinkData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let data = UnlinkData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
@@ -1004,10 +1004,10 @@ impl<'s> EventConsumer<'s> {
             path: event.data.path.into(),
             success: event.data.success,
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn bpf_prog_load_event(
         &mut self,
@@ -1015,7 +1015,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::BpfProgLoadEvent,
     ) -> UserEvent<BpfProgLoadData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let mut data = BpfProgLoadData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
@@ -1039,7 +1039,7 @@ impl<'s> EventConsumer<'s> {
             verified_insns: event.data.verified_insns,
             loaded: event.data.loaded,
         };
-
+        
         if let Some(h) = &event.data.hashes {
             data.bpf_prog.md5 = h.md5.into();
             data.bpf_prog.sha1 = h.sha1.into();
@@ -1047,10 +1047,10 @@ impl<'s> EventConsumer<'s> {
             data.bpf_prog.sha512 = h.sha512.into();
             data.bpf_prog.size = h.size;
         }
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn bpf_socket_filter_event(
         &mut self,
@@ -1058,7 +1058,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::BpfSocketFilterEvent,
     ) -> UserEvent<BpfSocketFilterData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let data = BpfSocketFilterData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
@@ -1074,11 +1074,11 @@ impl<'s> EventConsumer<'s> {
             },
             attached: event.data.attached,
         };
-
+        
         //Self::json_event(info, data)
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn mprotect_event(
         &self,
@@ -1086,7 +1086,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::MprotectEvent,
     ) -> UserEvent<MprotectData> {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
-
+        
         let data = MprotectData {
             ancestors: self.get_ancestors_string(&info),
             command_line: cmd_line,
@@ -1094,10 +1094,10 @@ impl<'s> EventConsumer<'s> {
             addr: event.data.start,
             prot: event.data.prot,
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn connect_event(
         &self,
@@ -1107,7 +1107,7 @@ impl<'s> EventConsumer<'s> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
         let src: SockAddr = event.data.src.into();
         let dst: SockAddr = event.data.dst.into();
-
+        
         let flow: Flow = Flow::new(
             Protocol::from(event.data.socket.proto as u8),
             src.ip,
@@ -1115,7 +1115,7 @@ impl<'s> EventConsumer<'s> {
             dst.ip,
             dst.port,
         );
-
+        
         let data = ConnectData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
@@ -1132,10 +1132,10 @@ impl<'s> EventConsumer<'s> {
             community_id: flow.community_id_v1(0).base64(),
             connected: event.data.connected,
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn send_data_event(
         &self,
@@ -1145,7 +1145,7 @@ impl<'s> EventConsumer<'s> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
         let dst: SockAddr = event.data.dst.into();
         let src: SockAddr = event.data.src.into();
-
+        
         let flow = Flow::new(
             Protocol::from(event.data.socket.proto as u8),
             src.ip,
@@ -1153,7 +1153,7 @@ impl<'s> EventConsumer<'s> {
             dst.ip,
             dst.port,
         );
-
+        
         let data = SendDataData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
@@ -1171,10 +1171,10 @@ impl<'s> EventConsumer<'s> {
             data_entropy: event.shannon_entropy(),
             data_size: event.data.real_data_size,
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn init_module_event(
         &self,
@@ -1182,7 +1182,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::InitModuleEvent,
     ) -> UserEvent<InitModuleData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let data = InitModuleData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
@@ -1192,10 +1192,10 @@ impl<'s> EventConsumer<'s> {
             args: event.data.uargs.to_string(),
             loaded: event.data.loaded,
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn file_rename_event(
         &self,
@@ -1203,7 +1203,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::FileRenameEvent,
     ) -> UserEvent<FileRenameData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let data = FileRenameData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
@@ -1211,10 +1211,10 @@ impl<'s> EventConsumer<'s> {
             old: event.data.old_name.into(),
             new: event.data.new_name.into(),
         };
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn exit_event(
         &mut self,
@@ -1222,36 +1222,36 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::ExitEvent,
     ) -> UserEvent<ExitData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-
+        
         let data = ExitData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
             error_code: event.data.error_code,
         };
-
+        
         let etype = event.ty();
         // cleanup tasks when process exits
         if (matches!(etype, Type::Exit) && info.info.process.pid == info.info.process.tgid)
-            || matches!(etype, Type::ExitGroup)
+        || matches!(etype, Type::ExitGroup)
         {
             let tk = info.task_key();
-
+            
             // we are exiting so our parent has one child less
             self.tasks.entry(info.parent_key()).and_modify(|t| {
                 t.threads.remove(&tk);
             });
-
+            
             // hashset of threads to be removed
             let mut remove_threads = HashSet::new();
-
+            
             if let Some(t) = self.tasks.get(&tk) {
                 // in case on exit_group we need to clean child
                 // threads properly
                 if matches!(etype, Type::ExitGroup) {
                     remove_threads.extend(t.threads.clone());
                 }
-
+                
                 if t.threads.is_empty() && !t.procfs {
                     // if the task has no child and is not coming from procfs
                     // we can remove it from the table.
@@ -1261,19 +1261,19 @@ impl<'s> EventConsumer<'s> {
                     self.tasks.entry(tk).and_modify(|t| t.on_exit());
                 }
             }
-
+            
             if !remove_threads.is_empty() {
                 // as parent we can decrease the number of our children
                 self.tasks
-                    .entry(tk)
-                    .and_modify(|t| t.threads.retain(|k| !remove_threads.contains(k)));
-
+                .entry(tk)
+                .and_modify(|t| t.threads.retain(|k| !remove_threads.contains(k)));
+                
                 // for every child, we mark it as exited
                 for c in remove_threads {
                     self.tasks.entry(c).and_modify(|t| t.on_exit());
                 }
             }
-
+            
             // we trigger some very specific cleanup
             if self.exited_tasks % 1000 == 0 {
                 // we remove shadow tasks exited with no child
@@ -1281,13 +1281,13 @@ impl<'s> EventConsumer<'s> {
                 // shrinking tasks HashMap
                 self.tasks.shrink_to_fit();
             }
-
+            
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
         }
-
+        
         UserEvent::new(data, info)
     }
-
+    
     #[inline]
     fn handle_correlation_event(
         &mut self,
@@ -1295,13 +1295,13 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::CorrelationEvent,
     ) {
         let ck = info.task_key();
-
+        
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
         if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
             self.tasks.remove(&ck);
         }
-
+        
         // early return if task key exists
         if let Some(v) = self.tasks.get_mut(&ck) {
             // we fix nodename if not set yet
@@ -1311,23 +1311,23 @@ impl<'s> EventConsumer<'s> {
             }
             return;
         }
-
+        
         let cgroup = event.data.cgroup;
-
+        
         // we encountered some cgroup parsing error in eBPF
         // so we need to resolve cgroup in userland
         let cgroups = match cgroup.error {
             None => vec![cgroup.to_string()],
             Some(_) => {
                 if let Ok(cgroups) =
-                    procfs::process::Process::new(info.info.process.pid).and_then(|p| p.cgroups())
+                procfs::process::Process::new(info.info.process.pid).and_then(|p| p.cgroups())
                 {
                     // we return cgroup from procfs
                     cgroups
-                        .0
-                        .into_iter()
-                        .map(|cg| cg.pathname)
-                        .collect::<Vec<String>>()
+                    .0
+                    .into_iter()
+                    .map(|cg| cg.pathname)
+                    .collect::<Vec<String>>()
                 } else {
                     // we report an error
                     warn!(
@@ -1340,14 +1340,14 @@ impl<'s> EventConsumer<'s> {
                 }
             }
         };
-
+        
         let mut container_type = Container::from_cgroups(&cgroups);
-
+        
         if container_type.is_none() {
             let ancestors = self.get_ancestors(info.parent_key(), 0);
             container_type = Container::from_ancestors(&ancestors);
         }
-
+        
         let image = {
             if info.info.process.is_kernel_thread() {
                 KERNEL_IMAGE.into()
@@ -1355,7 +1355,7 @@ impl<'s> EventConsumer<'s> {
                 event.data.exe.to_path_buf()
             }
         };
-
+        
         // we update parent's information
         if matches!(event.data.origin, Type::Clone) {
             // the source is a Clone event so our task has spawned a child thread
@@ -1363,7 +1363,7 @@ impl<'s> EventConsumer<'s> {
                 e.threads.insert(info.task_key());
             });
         }
-
+        
         // we insert only if not existing
         self.tasks.entry(ck).or_insert(Task {
             image,
@@ -1380,27 +1380,27 @@ impl<'s> EventConsumer<'s> {
             exit: false,
         });
     }
-
+    
     #[inline]
     fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
         let opt_mnt_ns = Self::task_mnt_ns(&info.info);
         self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.path));
     }
-
+    
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let opt_mnt_ns = Self::task_mnt_ns(&i);
-
+        
         let std_info = StdEventInfo::from_bpf(i, self.random);
-
+        
         let cd = self.tasks.get(&std_info.task_key());
-
+        
         let host = kunai::info::HostInfo {
             name: self.system_info.hostname.clone(),
             uuid: self.system_info.host_uuid,
         };
-
+        
         let mut container = None;
-
+        
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
                 container = Some(kunai::info::ContainerInfo {
@@ -1409,14 +1409,14 @@ impl<'s> EventConsumer<'s> {
                 });
             }
         }
-
+        
         std_info.with_additional_info(AdditionalInfo { host, container })
     }
-
+    
     #[inline(always)]
     fn scan<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> Option<ScanResult> {
         let mut scan_result: Option<ScanResult> = None;
-
+        
         if !self.engine.is_empty() {
             scan_result = match self.engine.scan(event) {
                 Ok(sr) => sr.map(ScanResult::from),
@@ -1426,36 +1426,36 @@ impl<'s> EventConsumer<'s> {
                 }
             };
         }
-
+        
         // we collect a vector of ioc matching
         let matching_iocs = event
-            .iocs()
-            .iter()
-            .filter(|ioc| self.iocs.contains_key(&ioc.to_string()))
-            .map(|ioc| ioc.to_string())
-            .collect::<HashSet<String>>();
-
+        .iocs()
+        .iter()
+        .filter(|ioc| self.iocs.contains_key(&ioc.to_string()))
+        .map(|ioc| ioc.to_string())
+        .collect::<HashSet<String>>();
+        
         let ioc_severity: usize = matching_iocs
-            .iter()
-            .map(|ioc| self.iocs.get(ioc).map(|e| *e as usize).unwrap_or_default())
-            .sum();
-
+        .iter()
+        .map(|ioc| self.iocs.get(ioc).map(|e| *e as usize).unwrap_or_default())
+        .sum();
+        
         if !matching_iocs.is_empty() {
             // we create a new ScanResult if necessary
             if scan_result.is_none() {
                 scan_result = Some(ScanResult::default());
             }
-
+            
             // we add ioc matching to the list of matching rules
             if let Some(sr) = scan_result.as_mut() {
                 sr.iocs = matching_iocs;
                 sr.severity = ioc_severity.clamp(0, MAX_SEVERITY as usize) as u8;
             }
         }
-
+        
         scan_result
     }
-
+    
     #[inline(always)]
     fn handle_actions<T: Serialize + KunaiEvent>(
         &mut self,
@@ -1491,15 +1491,15 @@ impl<'s> EventConsumer<'s> {
                 }
             }
         }
-
+        
         // if action contains scan-file and if scan events are enabled
         if self.scan_events_enabled && actions.contains(Action::ScanFiles.as_str()) {
             let _ = self
-                .action_scan_files(event)
-                .inspect_err(|e| error!("{} action failed: {e}", Action::ScanFiles));
+            .action_scan_files(event)
+            .inspect_err(|e| error!("{} action failed: {e}", Action::ScanFiles));
         }
     }
-
+    
     #[inline(always)]
     fn file_scan_event<T: Serialize + KunaiEvent>(
         &mut self,
@@ -1510,15 +1510,15 @@ impl<'s> EventConsumer<'s> {
         // if the scanner is None, signatures will be an empty Vec
         let (sigs, err) = match self.file_scanner.as_mut() {
             Some(s) => match self
-                .cache
-                .get_sig_or_cache(ns, &cache::Path::from(p.to_path_buf()), s)
+            .cache
+            .get_sig_or_cache(ns, &cache::Path::from(p.to_path_buf()), s)
             {
                 Ok(sigs) => (sigs, None),
                 Err(e) => (vec![], Some(format!("{e}"))),
             },
             None => (vec![], None),
         };
-
+        
         let pos = sigs.len();
         let mut data = FileScanData::from_hashes(
             self.get_hashes_with_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
@@ -1527,28 +1527,28 @@ impl<'s> EventConsumer<'s> {
         data.signatures = sigs;
         data.positives = pos;
         data.scan_error = err;
-
+        
         let info = EventInfo::from_other_with_type(event.info().clone(), Type::FileScan);
         UserEvent::with_data_and_info(data, info)
     }
-
+    
     #[inline(always)]
     fn action_scan_files<T: Serialize + KunaiEvent>(&mut self, event: &T) -> anyhow::Result<()> {
         // this check prevents infinite loop for FileScan events
         if event.info().event.id == Type::FileScan.id() {
             return Ok(());
         }
-
+        
         let ns = match event.info().task.namespaces.as_ref() {
             Some(ns) => Namespace::mnt(ns.mnt),
             None => return Err(anyhow!("namespace not found")),
         };
-
+        
         for p in event
-            .scannable_files()
-            .iter()
-            // we don't scan file paths being ?
-            .filter(|&p| p != &PathBuf::from("?").into())
+        .scannable_files()
+        .iter()
+        // we don't scan file paths being ?
+        .filter(|&p| p != &PathBuf::from("?").into())
         {
             let mut event = self.file_scan_event(event, ns, p);
             // print a warning if a positive scan happens so that a trace
@@ -1561,10 +1561,10 @@ impl<'s> EventConsumer<'s> {
                     &event.info().event.uuid,
                 );
             }
-
+            
             // we run through event scanning engine
             let got_printed = self.scan_and_print(&mut event);
-
+            
             // - we can force printing positive scans even if there is no filtering rule for it
             // - an attempt to print the event if there is an error was made but it generates
             // noisy events. A better way to handle scan errors is to create a filtering rule
@@ -1575,14 +1575,14 @@ impl<'s> EventConsumer<'s> {
                 }
             }
         }
-
+        
         Ok(())
     }
-
+    
     #[inline(always)]
     fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> bool {
         let mut printed = false;
-
+        
         macro_rules! print_serialized {
             ($event:expr) => {
                 match serde_json::to_string($event) {
@@ -1594,14 +1594,14 @@ impl<'s> EventConsumer<'s> {
                 }
             };
         }
-
+        
         // default: we have neither rules nor iocs
         // to scan for so we print event
         if self.iocs.is_empty() && self.engine.is_empty() {
             print_serialized!(event);
             return printed;
         }
-
+        
         // scan for iocs and filter/matching rules
         if let Some(sr) = self.scan(event) {
             if sr.is_detection() {
@@ -1616,29 +1616,29 @@ impl<'s> EventConsumer<'s> {
                 self.handle_actions(event, &sr.actions, false);
             }
         }
-
+        
         printed
     }
-
+    
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
         let i = unsafe { enc_event.info() }.unwrap();
-
+        
         // we don't handle our own events
         if i.process.tgid as u32 == std::process::id() {
             debug!("skipping our event");
         }
-
+        
         let etype = i.etype;
-
+        
         if let Some(mnt_ns) = Self::task_mnt_ns(i) {
             let pid = i.process.pid;
             if let Err(e) = self.cache.cache_ns(pid, mnt_ns) {
                 debug!("failed to cache namespace pid={pid} ns={mnt_ns}: {e}");
             }
         }
-
+        
         let std_info = self.build_std_event_info(*i);
-
+        
         match etype {
             Type::Unknown => {
                 error!("Unknown event type: {}", etype as u64)
@@ -1653,20 +1653,20 @@ impl<'s> EventConsumer<'s> {
                             std_info.clone(),
                             &bpf_events::CorrelationEvent::from(e),
                         );
-
+                        
                         if self.filter.is_enabled(std_info.info.etype) {
                             // we have to rebuild std_info as it has it is uses correlation
                             // information
                             let std_info = self.build_std_event_info(std_info.info);
                             let mut e = self.execve_event(std_info, e);
-
+                            
                             self.scan_and_print(&mut e);
                         }
                     }
                     Err(e) => error!("failed to decode {} event: {:?}", etype, e),
                 }
             }
-
+            
             Type::Clone => match event!(enc_event, bpf_events::CloneEvent) {
                 Ok(e) => {
                     // this event is used for correlation but cannot be processed
@@ -1675,7 +1675,7 @@ impl<'s> EventConsumer<'s> {
                         std_info.clone(),
                         &bpf_events::CorrelationEvent::from(e),
                     );
-
+                    
                     // we let clone event go in EventProducer not to break correlation
                     if self.filter.is_enabled(Type::Clone) {
                         // we have to rebuild std_info as it has it is uses correlation
@@ -1687,7 +1687,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::Prctl => match event!(enc_event, bpf_events::PrctlEvent) {
                 Ok(e) => {
                     let mut e = self.prctl_event(std_info, e);
@@ -1695,7 +1695,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::Kill => match event!(enc_event, bpf_events::KillEvent) {
                 Ok(e) => {
                     let mut e = self.kill_event(std_info, e);
@@ -1703,7 +1703,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::MmapExec => match event!(enc_event, bpf_events::MmapExecEvent) {
                 Ok(e) => {
                     let mut e = self.mmap_exec_event(std_info, e);
@@ -1711,7 +1711,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::MprotectExec => match event!(enc_event, bpf_events::MprotectEvent) {
                 Ok(e) => {
                     let mut e = self.mprotect_event(std_info, e);
@@ -1719,7 +1719,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::Connect => match event!(enc_event, bpf_events::ConnectEvent) {
                 Ok(e) => {
                     let mut e = self.connect_event(std_info, e);
@@ -1727,7 +1727,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::DnsQuery => match event!(enc_event, bpf_events::DnsQueryEvent) {
                 Ok(e) => {
                     for e in self.dns_query_events(std_info, e).iter_mut() {
@@ -1736,7 +1736,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::SendData => match event!(enc_event, bpf_events::SendEntropyEvent) {
                 Ok(e) => {
                     let mut e = self.send_data_event(std_info, e);
@@ -1744,7 +1744,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::InitModule => match event!(enc_event, bpf_events::InitModuleEvent) {
                 Ok(e) => {
                     let mut e = self.init_module_event(std_info, e);
@@ -1752,7 +1752,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::WriteConfig
             | Type::Write
             | Type::ReadConfig
@@ -1764,7 +1764,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
                 Ok(e) => {
                     let mut e = self.unlink_event(std_info, e);
@@ -1772,7 +1772,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::FileRename => match event!(enc_event, bpf_events::FileRenameEvent) {
                 Ok(e) => {
                     let mut e = self.file_rename_event(std_info, e);
@@ -1780,7 +1780,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::BpfProgLoad => match event!(enc_event, bpf_events::BpfProgLoadEvent) {
                 Ok(e) => {
                     let mut e = self.bpf_prog_load_event(std_info, e);
@@ -1788,7 +1788,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::BpfSocketFilter => match event!(enc_event, bpf_events::BpfSocketFilterEvent) {
                 Ok(e) => {
                     let mut e = self.bpf_socket_filter_event(std_info, e);
@@ -1796,7 +1796,7 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::Exit | Type::ExitGroup => match event!(enc_event, bpf_events::ExitEvent) {
                 Ok(e) => {
                     let mut e = self.exit_event(std_info, e);
@@ -1804,21 +1804,21 @@ impl<'s> EventConsumer<'s> {
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::Correlation => match event!(enc_event) {
                 Ok(e) => {
                     self.handle_correlation_event(std_info, e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::CacheHash => match event!(enc_event) {
                 Ok(e) => {
                     self.handle_hash_event(std_info, e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
-
+            
             Type::Error => panic!("error events should be processed earlier"),
             Type::SyscoreResume => { /*  just ignore it */ }
         }
@@ -1854,12 +1854,12 @@ impl EventProducer {
     ) -> anyhow::Result<Self> {
         let filter = (&config).try_into()?;
         let stats_map: AyaHashMap<_, Type, u64> =
-            AyaHashMap::try_from(bpf.take_map(bpf_events::KUNAI_STATS_MAP).unwrap()).unwrap();
-
+        AyaHashMap::try_from(bpf.take_map(bpf_events::KUNAI_STATS_MAP).unwrap()).unwrap();
+        
         let perf_array =
-            AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
-                .unwrap();
-
+        AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
+        .unwrap();
+        
         Ok(EventProducer {
             config,
             pipe: VecDeque::new(),
@@ -1873,7 +1873,7 @@ impl EventProducer {
             reload: false,
         })
     }
-
+    
     // Event ordering is a very important piece as it impacts on-host correlations.
     // Additionaly it is very useful as it guarantees events are printed/piped into
     // other tools in the damn good order.
@@ -1884,14 +1884,14 @@ impl EventProducer {
         if self.pipe.is_empty() {
             return Ok(c);
         }
-
+        
         // we sort events out by timestamp
         // this should never fail because we pushed only
         // events for which info can be decoded
         self.pipe
-            .make_contiguous()
-            .sort_unstable_by_key(|enc_evt| unsafe { enc_evt.info_unchecked().timestamp });
-
+        .make_contiguous()
+        .sort_unstable_by_key(|enc_evt| unsafe { enc_evt.info_unchecked().timestamp });
+        
         while let Some(enc_evt) = self.pipe.front() {
             let eb = unsafe { enc_evt.info_unchecked() }.batch;
             // process all events but the current batch
@@ -1900,12 +1900,12 @@ impl EventProducer {
             }
             // send event to event processor
             self.sender
-                // unwrap cannot fail as we are sure there is an element at front
-                .send(self.pipe.pop_front().unwrap())
-                .await?;
+            // unwrap cannot fail as we are sure there is an element at front
+            .send(self.pipe.pop_front().unwrap())
+            .await?;
             c += 1;
         }
-
+        
         Ok(c)
     }
 
@@ -1913,7 +1913,7 @@ impl EventProducer {
     async fn send_event<T>(&self, event: Event<T>) -> Result<(), SendError<EncodedEvent>> {
         self.sender.send(EncodedEvent::from_event(event)).await
     }
-
+    
     /// function used to pre-process some targetted events where time is critical and for which
     /// processing can be done in EventReader
     /// this function must return true if main processing loop has to pass to the next event
@@ -1921,7 +1921,7 @@ impl EventProducer {
     #[inline]
     fn process_time_critical(&mut self, e: &mut EncodedEvent) -> bool {
         let i = unsafe { e.info() }.expect("info should not fail here");
-
+        
         #[allow(clippy::single_match)]
         match i.etype {
             Type::Execve => {
@@ -1932,7 +1932,7 @@ impl EventProducer {
             }
             Type::BpfProgLoad => {
                 let event = mut_event!(e, bpf_events::BpfProgLoadEvent).unwrap();
-
+                
                 // dumping eBPF program from userland
                 match util::bpf::bpf_dump_xlated_by_id_and_tag(event.data.id, event.data.tag) {
                     Ok(insns) => {
@@ -1943,10 +1943,10 @@ impl EventProducer {
                             sha512: sha512_data(insns.as_slice()).try_into().unwrap(),
                             size: insns.len(),
                         };
-
+                        
                         event.data.hashes = Some(h);
                     }
-
+                    
                     Err(e) => {
                         if e.is_io_error_not_found() {
                             // It may happen that we do not manage to get program's metadata. This happens
@@ -1976,15 +1976,15 @@ impl EventProducer {
             }
             _ => {}
         }
-
+        
         false
     }
-
+    
     /// this method pass through some events directly to the event processor
     /// only events that can be processed asynchronously should be passed through
     async fn pass_through_events(&self, e: &EncodedEvent) {
         let i = unsafe { e.info() }.unwrap();
-
+        
         match i.etype {
             Type::Execve | Type::ExecveScript => {
                 let event = event!(e, bpf_events::ExecveEvent).unwrap();
@@ -1992,18 +1992,18 @@ impl EventProducer {
                     self.send_event(e).await.unwrap();
                 }
             }
-
+            
             Type::MmapExec => {
                 let event = event!(e, bpf_events::MmapExecEvent).unwrap();
                 self.send_event(bpf_events::HashEvent::from(event))
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
             }
-
+            
             _ => {}
         }
     }
-
+    
     async fn produce(self) -> Arc<Mutex<Self>> {
         let online_cpus = online_cpus().expect("failed to get online cpus");
         let barrier = Arc::new(Barrier::new(online_cpus.len()));
@@ -2011,80 +2011,80 @@ impl EventProducer {
         let leader_cpu_id = online_cpus[0];
         let config = self.config.clone();
         let shared = Arc::new(Mutex::new(self));
-
+        
         let event_producer = shared.clone();
-
+        
         // we spawn a task processing events waiting in the pipe
         let t = task::spawn(async move {
             loop {
                 let c = event_producer.lock().await.process_piped_events().await?;
-
+                
                 // we break the loop if producer is stopped
                 if event_producer.lock().await.stop {
                     break;
                 }
-
+                
                 // we adapt sleep time when load increases
                 let millis = match c {
                     0..=500 => 100,
                     501..=1000 => 50,
                     1001.. => 25,
                 };
-
+                
                 tokio::time::sleep(Duration::from_millis(millis)).await;
             }
-
+            
             Ok::<_, anyhow::Error>(())
         });
-
+        
         shared.lock().await.tasks.push(t);
-
+        
         for cpu_id in online_cpus {
             // open a separate perf buffer for each cpu
             let mut buf = shared
-                .lock()
-                .await
-                .perf_array
-                .open(
-                    cpu_id,
-                    Some(optimal_page_count(
-                        PAGE_SIZE,
-                        MAX_BPF_EVENT_SIZE,
-                        config.max_buffered_events as usize,
-                    )),
-                )
-                .unwrap();
+            .lock()
+            .await
+            .perf_array
+            .open(
+                cpu_id,
+                Some(optimal_page_count(
+                    PAGE_SIZE,
+                    MAX_BPF_EVENT_SIZE,
+                    config.max_buffered_events as usize,
+                )),
+            )
+            .unwrap();
             let event_producer = shared.clone();
             let bar = barrier.clone();
             let conf = config.clone();
-
+            
             // process each perf buffer in a separate task
             let t = task::spawn(async move {
                 // the number of buffers we want to use gives us the number of events we can read
                 // in one go in userland
                 let mut buffers = (0..conf.max_buffered_events)
-                    .map(|_| BytesMut::with_capacity(MAX_BPF_EVENT_SIZE))
-                    .collect::<Vec<_>>();
-
+                .map(|_| BytesMut::with_capacity(MAX_BPF_EVENT_SIZE))
+                .collect::<Vec<_>>();
+                
                 let timeout = time::Duration::from_millis(10);
-
+                
                 loop {
                     // we time this out so that the barrier does not wait too long
                     let events =
                     // this is timing out only if we cannot access the perf array as long as the buffer
                     // is available events will be read (because only waiting for the buffer is async).
-                        match time::timeout(timeout, buf.read_events(&mut buffers)).await {
-                            Ok(r) => r?,
-                            _ => Events { read: 0, lost: 0 },
-                        };
-
+                    match time::timeout(timeout, buf.read_events(&mut buffers)).await {
+                        Ok(r) => r?,
+                        _ => Events { read: 0, lost: 0 },
+                    };
+                    
                     // checking out lost events
                     if events.lost > 0 {
                         error!(
                             "some events have been lost in the way from kernel read={} lost={}: consider filtering out some events or increase the number of buffered events in configuration",
                             events.read, events.lost
                         );
-
+                        
                         {
                             let ep = event_producer.lock().await;
                             for ty in Type::variants() {
@@ -2099,13 +2099,13 @@ impl EventProducer {
                             // drop producer
                         }
                     }
-
+                    
                     // events.read contains the number of events that have been read,
                     // and is always <= buffers.len()
                     for buf in buffers.iter().take(events.read) {
                         let mut dec = EncodedEvent::from_bytes(buf);
                         let mut ep = event_producer.lock().await;
-
+                        
                         // we make sure here that only events for which we can grab info for
                         // are pushed to the pipe. It is simplifying the error handling process
                         // in sorting the pipe afterwards
@@ -2116,16 +2116,16 @@ impl EventProducer {
                                 continue;
                             }
                         };
-
+                        
                         // we set the proper batch number
                         info.batch = ep.batch;
-
+                        
                         // verify that we filter properly kunai events in eBPF
                         debug_assert!(
                             info.process.pid as u32 != process::id(),
                             "kunai event should not reach userland"
                         );
-
+                        
                         // pre-processing events
                         // we eventually change event type in this function
                         // example: Execve -> ExecveScript if necessary
@@ -2133,59 +2133,59 @@ impl EventProducer {
                         if ep.process_time_critical(&mut dec) {
                             continue;
                         }
-
+                        
                         // passing through some events directly to the consumer
                         // this is mostly usefull for correlation purposes
                         ep.pass_through_events(&dec).await;
-
+                        
                         // we must get the event type here because we eventually changed it
                         // info_unchecked can be used here as we are sure info is valid
                         let etype = unsafe { dec.info_unchecked() }.etype;
-
+                        
                         // filtering out unwanted events but let Clone go as it is used
                         // for correlation on consumer side.
                         if ep.filter.is_disabled(etype)
-                            && !matches!(etype, Type::Execve | Type::ExecveScript | Type::Clone)
+                        && !matches!(etype, Type::Execve | Type::ExecveScript | Type::Clone)
                         {
                             continue;
                         }
-
+                        
                         ep.pipe.push_back(dec);
                     }
-
+                    
                     // all threads wait here after some events have been collected
                     bar.wait().await;
-
+                    
                     // we increase batch number in one task only
                     if cpu_id == leader_cpu_id {
                         event_producer.lock().await.batch += 1;
                     }
-
+                    
                     // we break the loop if processor is stopped
                     if event_producer.lock().await.stop {
                         break;
                     }
                 }
-
+                
                 #[allow(unreachable_code)]
                 Ok::<_, anyhow::Error>(())
             });
-
+            
             shared.lock().await.tasks.push(t);
         }
-
+        
         shared
     }
-
+    
     fn stop(&mut self) {
         self.stop = true
     }
-
+    
     #[inline(always)]
     fn is_finished(&self) -> bool {
         self.tasks.iter().all(|t| t.is_finished())
     }
-
+    
     async fn join(&mut self) -> anyhow::Result<()> {
         for t in self.tasks.iter_mut() {
             if t.is_finished() {
@@ -2194,7 +2194,7 @@ impl EventProducer {
         }
         Ok(())
     }
-
+    
     async fn arc_join(arc: &Arc<Mutex<Self>>, sleep: Duration) -> anyhow::Result<()> {
         loop {
             // drop lock  before sleep
@@ -2232,15 +2232,15 @@ struct Cli {
     /// Enable debugging
     #[arg(short, long)]
     debug: bool,
-
+    
     /// Silents out debug, info, error logging.
     #[arg(short, long)]
     silent: bool,
-
+    
     /// Set verbosity level, repeat option for more verbosity.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
-
+    
     /// Specify a kunai command (if any)
     #[clap(subcommand)]
     command: Option<Command>,
@@ -2251,15 +2251,15 @@ struct ReplayOpt {
     /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
-
+    
     /// Detection/filtering rule file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
     rule_file: Option<Vec<String>>,
-
+    
     /// File containing IoCs (json line).
     #[arg(short, long, value_name = "FILE")]
     ioc_file: Option<Vec<String>>,
-
+    
     log_files: Vec<String>,
 }
 
@@ -2267,23 +2267,23 @@ impl TryFrom<ReplayOpt> for Config {
     type Error = anyhow::Error;
     fn try_from(opt: ReplayOpt) -> Result<Self, Self::Error> {
         let mut conf = Self::default();
-
+        
         if let Some(conf_file) = opt.config {
             conf = serde_yaml::from_str(&std::fs::read_to_string(conf_file)?)?;
         }
-
+        
         // command line supersedes configuration
-
+        
         // supersedes configuration
         if let Some(rules) = opt.rule_file {
             conf.rules = rules;
         }
-
+        
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
             conf.iocs = iocs;
         }
-
+        
         Ok(conf)
     }
 }
@@ -2293,44 +2293,44 @@ struct RunOpt {
     /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
-
+    
     /// Number of worker threads used by kunai. By default kunai runs
     /// in a single threaded mode. If you want to use all available
     /// threads, set this option to 0.
     #[arg(short, long)]
     workers: Option<usize>,
-
+    
     /// Harden Kunai at runtime by preventing process tampering attempts.
     /// If Kunai is run as a service, the only way to stop it may be
     /// to disable the service and then reboot the machine.
     #[arg(long)]
     harden: bool,
-
+    
     /// Exclude events by name (comma separated).
     #[arg(long)]
     exclude: Option<String>,
-
+    
     /// Include events by name (comma separated). Supersedes any exclude filter.
     #[arg(long)]
     include: Option<String>,
-
+    
     /// Increase the size of the buffer shared between eBPF probes and userland.
     #[arg(long)]
     max_buffered_events: Option<u16>,
-
+    
     /// Minimum amount of data sent to trigger a send_data event,
     /// set it to 0 to get all send_data events.
     #[arg(long)]
     send_data_min_len: Option<u64>,
-
+    
     /// Detection/filtering rule file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
     rule_file: Option<Vec<String>>,
-
+    
     /// File containing IoCs (json line).
     #[arg(short, long, value_name = "FILE")]
     ioc_file: Option<Vec<String>>,
-
+    
     /// Yara rules dir/file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
     yara_rules: Option<Vec<String>>,
@@ -2340,44 +2340,44 @@ impl TryFrom<RunOpt> for Config {
     type Error = anyhow::Error;
     fn try_from(opt: RunOpt) -> Result<Self, Self::Error> {
         let mut conf = Self::default();
-
+        
         if let Some(conf_file) = opt.config {
             conf = serde_yaml::from_str(&std::fs::read_to_string(conf_file)?)?;
         }
-
+        
         // command line supersedes configuration
         if let Some(workers) = opt.workers {
             conf.workers = Some(workers);
         }
-
+        
         // supersedes configuration
         if let Some(rules) = opt.rule_file {
             conf.rules = rules;
         }
-
+        
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
             conf.iocs = iocs;
         }
-
+        
         // supersedes configuration
         if let Some(yara_rules) = opt.yara_rules {
             conf.yara = yara_rules;
         }
-
+        
         // supersedes configuration if true
         if opt.harden {
             conf.harden = opt.harden
         }
-
+        
         // we want to increase max_buffered_events
         if opt.max_buffered_events.is_some() {
             conf.max_buffered_events = opt.max_buffered_events.unwrap();
         }
-
+        
         // we configure min len for send_data events
         conf.send_data_min_len = opt.send_data_min_len;
-
+        
         // we exclude events
         if let Some(exclude) = opt.exclude {
             let exclude: Vec<&str> = exclude.split(',').collect();
@@ -2392,7 +2392,7 @@ impl TryFrom<RunOpt> for Config {
                 }
             }
         }
-
+        
         // we include events
         if let Some(include) = opt.include {
             let include: Vec<&str> = include.split(',').collect();
@@ -2416,11 +2416,11 @@ struct ConfigOpt {
     /// Dump a default configuration on the terminal
     #[arg(long, exclusive = true)]
     dump: bool,
-
+    
     /// List the available remediation actions supported
     #[arg(long, exclusive = true)]
     list_actions: bool,
-
+    
     /// List available events
     #[arg(long, exclusive = true)]
     list_events: bool,
@@ -2432,28 +2432,28 @@ struct InstallOpt {
     /// /sys/kernel/security/lsm contains bpf
     #[arg(long)]
     harden: bool,
-
+    
     /// Set a custom installation directory
     #[arg(long, default_value_t = String::from("/usr/bin/"))]
     install_dir: String,
-
+    
     /// Log file where kunai logs will be written
     #[arg(long, default_value_t = String::from("/var/log/kunai/events.log"))]
     log_file: String,
-
+    
     /// Where to write the configuration file. Any intermediate directory
     /// will be created if needed.
     #[arg(long, default_value_t = String::from("/etc/kunai/config.yaml"))]
     config: String,
-
+    
     /// Make a systemd unit installation
     #[arg(long)]
     systemd: bool,
-
+    
     /// Install a systemd unit but do not enable it
     #[arg(short, long = "systemd-unit", default_value_t = String::from("/lib/systemd/system/00-kunai.service"))]
     unit: String,
-
+    
     /// Enable Kunai unit (kunai will start at boot)
     #[arg(long)]
     enable_unit: bool,
@@ -2464,7 +2464,7 @@ struct LogsOpt {
     /// Path to the configuration file
     #[arg(short, long, default_value_t = String::from("/etc/kunai/config.yaml"))]
     config: String,
-
+    
     /// Path to the log file to open. The path must point to the plain-text
     /// log file, not to one of the archives.
     #[arg(short, long, conflicts_with = "config")]
@@ -2490,7 +2490,7 @@ impl Command {
     fn replay(o: ReplayOpt) -> anyhow::Result<()> {
         let log_files = o.log_files.clone();
         let conf: Config = o.try_into()?;
-
+        
         let mut p = EventConsumer::with_config(conf.stdout_output())?;
         for f in log_files {
             let reader = if f == "-" {
@@ -2498,16 +2498,16 @@ impl Command {
             } else {
                 std::io::BufReader::new(Input::from_file(fs::File::open(f)?))
             };
-
+            
             let mut de = serde_json::Deserializer::from_reader(reader);
-
+            
             while let Ok(v) = serde_json::Value::deserialize(&mut de) {
                 // we attempt at getting event name from json
                 if let Some(name) = v
-                    .get("info")
-                    .and_then(|info| info.get("event"))
-                    .and_then(|event| event.get("name"))
-                    .and_then(|name| name.as_str())
+                .get("info")
+                .and_then(|info| info.get("event"))
+                .and_then(|event| event.get("name"))
+                .and_then(|name| name.as_str())
                 {
                     macro_rules! scan_event {
                         ($scanner:expr, $into:ty) => {{
@@ -2515,9 +2515,9 @@ impl Command {
                             $scanner.scan_and_print(&mut e);
                         }};
                     }
-
+                    
                     let t = Type::from_str(name).map_err(|e| anyhow!("{e}"))?;
-
+                    
                     // exhaustive pattern matching so that we don't miss new events
                     match t {
                         Type::Execve | Type::ExecveScript => scan_event!(p, ExecveData),
@@ -2543,7 +2543,7 @@ impl Command {
                         Type::BpfSocketFilter => scan_event!(p, BpfSocketFilterData),
                         Type::Exit | Type::ExitGroup => scan_event!(p, ExitData),
                         Type::FileScan => scan_event!(p, FileScanData),
-
+                        
                         // types that shound never be seen in replay
                         Type::Unknown
                         | Type::CacheHash
@@ -2557,17 +2557,17 @@ impl Command {
                 }
             }
         }
-
+        
         Ok(())
     }
-
+    
     fn inner_run(opt_ro: Option<RunOpt>, vll: VerifierLogLevel) -> anyhow::Result<()> {
         let current_kernel = Utsname::kernel_version()?;
         let conf: Config = match opt_ro {
             Some(ro) => ro.try_into()?,
             None => Config::default(),
         };
-
+        
         // checks on harden mode
         if conf.harden {
             if current_kernel < kernel!(5, 7, 0) {
@@ -2575,14 +2575,14 @@ impl Command {
                     "harden mode is not supported for kernels below 5.7.0"
                 ));
             }
-
+            
             if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
                 return Err(anyhow!(
                     "trying to run in harden mode but BPF LSM is not enabled"
                 ));
             }
         }
-
+        
         // create the tokio runtime builder
         let mut builder = {
             match conf.workers {
@@ -2599,19 +2599,19 @@ impl Command {
                 None => tokio::runtime::Builder::new_current_thread(),
             }
         };
-
+        
         // creating tokio runtime
         let runtime = builder
-            // the thread must drop CLONE_FS in order to be able to navigate in mnt namespaces
-            .on_thread_start(|| unshare(libc::CLONE_FS).unwrap())
-            .enable_all()
-            .build()
-            .unwrap();
-
+        // the thread must drop CLONE_FS in order to be able to navigate in mnt namespaces
+        .on_thread_start(|| unshare(libc::CLONE_FS).unwrap())
+        .enable_all()
+        .build()
+        .unwrap();
+        
         // we start event reader and event processor before loading the programs
         // if we load the programs first we might have some event lost errors
         let (sender, mut receiver) = mpsc::channel::<EncodedEvent>(512);
-
+        
         // we start consumer
         let mut cons = EventConsumer::with_config(conf.clone())?;
         let mut cons_task = runtime.spawn(async move {
@@ -2621,38 +2621,38 @@ impl Command {
             let mut hist = vec![];
             #[cfg(debug_assertions)]
             let mut last_batch = 0;
-
+            
             while let Some(mut enc) = receiver.recv().await {
-                // this is a debug_assertion testing that events arrive in
-                // the order they were generated in eBPF. At this time
-                // encoded event's timestamp is the one generated in eBPF
-                #[cfg(debug_assertions)]
-                {
-                    let info = unsafe { enc.info_unchecked() };
-                    // we skip correlation (passe through events)
-                    if !matches!(info.etype, Type::CacheHash) {
-                        let evt_ts = info.timestamp;
-                        let batch = info.batch;
-                        debug_assert!(
-                            evt_ts >= last_ts,
-                            "last={last_ts} (batch={last_batch}) > current={evt_ts} (batch={batch}"
-                        );
-                        // all historical ts must be smaller than current
-                        debug_assert!(hist.iter().all(|&ts| ts <= evt_ts));
-                        last_ts = evt_ts;
-                        last_batch = batch;
-                        // we insert at front so that we can truncate
-                        hist.insert(0, evt_ts);
-                        hist.truncate(30_000);
-                    }
-                };
-
-                cons.handle_event(&mut enc);
+                        // this is a debug_assertion testing that events arrive in
+                        // the order they were generated in eBPF. At this time
+                        // encoded event's timestamp is the one generated in eBPF
+                        #[cfg(debug_assertions)]
+                        {
+                            let info = unsafe { enc.info_unchecked() };
+                            // we skip correlation (passe through events)
+                            if !matches!(info.etype, Type::CacheHash) {
+                                let evt_ts = info.timestamp;
+                                let batch = info.batch;
+                                debug_assert!(
+                                    evt_ts >= last_ts,
+                                    "last={last_ts} (batch={last_batch}) > current={evt_ts} (batch={batch}"
+                                );
+                                // all historical ts must be smaller than current
+                                debug_assert!(hist.iter().all(|&ts| ts <= evt_ts));
+                                last_ts = evt_ts;
+                                last_batch = batch;
+                                // we insert at front so that we can truncate
+                                hist.insert(0, evt_ts);
+                                hist.truncate(30_000);
+                            }
+                        };
+                        
+                        cons.handle_event(&mut enc);
             }
-
+            
             Ok::<(), anyhow::Error>(())
         });
-
+        
         runtime.block_on(async move {
             // we spawn a task to reload producer when needed
             let main = async move {
@@ -2662,12 +2662,12 @@ impl Command {
                     let mut bpf = kunai::prepare_bpf(current_kernel, &conf, vll)?;
                     let arc_prod =
                         EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?
-                            .produce()
-                            .await;
-
+                    .produce()
+                    .await;
+                    
                     // we load and attach bpf programs
                     kunai::load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
-
+                    
                     loop {
                         // block make sure lock is dropped before sleeping
                         if arc_prod.lock().await.reload {
@@ -2675,18 +2675,18 @@ impl Command {
                             arc_prod.lock().await.stop();
                             // we wait for event producer to be ready
                             EventProducer::arc_join(&arc_prod, Duration::from_millis(500)).await?;
-
+                            
                             // we do not need to unload programs as this will be done at drop
                             break;
                         }
-
+                        
                         // we check if task spawned by consumer failed
                         // if yes we make it panic
                         let cons = &mut cons_task;
                         if let Ok(res) = timeout(Duration::from_nanos(1), cons).await {
                             res.unwrap().unwrap();
                         }
-
+                        
                         // we check if a task spawned by the producer failed
                         // if yes we make it panic
                         for t in arc_prod.lock().await.tasks.iter_mut() {
@@ -2696,15 +2696,15 @@ impl Command {
                                 res.unwrap().unwrap();
                             }
                         }
-
+                        
                         time::sleep(Duration::from_millis(500)).await;
                     }
                 }
-
+                
                 #[allow(unreachable_code)]
                 Ok::<_, anyhow::Error>(())
             };
-
+            
             info!("Waiting for Ctrl-C...");
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => Ok(()),
@@ -2712,7 +2712,7 @@ impl Command {
             }
         })
     }
-
+    
     fn run(opt_ro: Option<RunOpt>, vll: VerifierLogLevel) -> anyhow::Result<()> {
         // checking that we are running as root
         if get_current_uid() != 0 {
@@ -2720,27 +2720,27 @@ impl Command {
                 "You need to be root to run this program, this is necessary to load eBPF programs",
             ));
         }
-
+        
         let run_dir = PathBuf::from("/run/kunai");
         let pid_file = run_dir.join("kunai.pid");
-
+        
         // we prevent the service manager to restart kunai when in harden mode
         if !run_dir.exists() {
             let _ = DirBuilder::new()
-                .mode(0o700)
-                .create(&run_dir)
-                .inspect_err(|e| {
-                    warn!(
-                        "failed to create run dir {}: {e}",
-                        run_dir.to_string_lossy()
-                    )
-                });
+            .mode(0o700)
+            .create(&run_dir)
+            .inspect_err(|e| {
+                warn!(
+                    "failed to create run dir {}: {e}",
+                    run_dir.to_string_lossy()
+                )
+            });
         }
-
+        
         // we read pid from file
         if let Some(pid) = fs::read_to_string(&pid_file)
-            .ok()
-            .and_then(|s| s.parse::<i32>().ok())
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
         {
             // the pid still exists
             if kill(pid, 0).is_ok() {
@@ -2748,29 +2748,29 @@ impl Command {
                 return Ok(());
             }
         }
-
+        
         // we write pid to file
         let _ = fs::OpenOptions::new()
-            .mode(0o700)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&pid_file)
-            .and_then(|mut f| f.write(process::id().to_string().as_bytes()))
-            .inspect_err(|e| warn!("failed to write pid file: {e}"));
-
+        .mode(0o700)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&pid_file)
+        .and_then(|mut f| f.write(process::id().to_string().as_bytes()))
+        .inspect_err(|e| warn!("failed to write pid file: {e}"));
+        
         let res = Self::inner_run(opt_ro, vll);
         let _ = fs::remove_file(&pid_file).inspect_err(|e| warn!("failed to delete pid file: {e}"));
         res
     }
-
+    
     fn config(co: ConfigOpt) -> anyhow::Result<()> {
         if co.dump {
             let conf = Config::default().generate_host_uuid();
             println!("{}", serde_yaml::to_string(&conf)?);
             return Ok(());
         }
-
+        
         if co.list_actions {
             for a in Action::variants() {
                 let pad = 12usize.saturating_sub(a.as_str().len());
@@ -2778,7 +2778,7 @@ impl Command {
             }
             return Ok(());
         }
-
+        
         if co.list_events {
             for v in bpf_events::Type::variants() {
                 if v.is_configurable() {
@@ -2788,22 +2788,22 @@ impl Command {
             }
             return Ok(());
         }
-
+        
         Ok(())
     }
-
+    
     fn run_command(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
         let output = process::Command::new(cmd).args(args).output()?;
-
+        
         if !output.status.success() {
             std::io::stdout().write_all(&output.stderr)?;
             std::io::stderr().write_all(&output.stderr)?;
             return Err(anyhow::format_err!("systemctl daemon-reload failed"));
         }
-
+        
         Ok(())
     }
-
+    
     fn systemd_install(
         co: &InstallOpt,
         install_bin: &Path,
@@ -2814,11 +2814,11 @@ impl Command {
         let unit = format!(
             r#"[Unit]
 Description=Kunai Service
-
+            
 # Documentation
 Documentation=https://why.kunai.rocks
 Documentation=https://github.com/kunai-project/kunai
-
+            
 # This is needed to start before sysinit.target
 DefaultDependencies=no
 Before=sysinit.target
@@ -2828,13 +2828,13 @@ After=systemd-journald-audit.socket
 # prevent systemd attempting to stop kunai, which would
 # fail.
 RefuseManualStop={harden}
-
+            
 [Service]
 Type=exec
 ExecStart={install_bin} run -c {config_path}
 StandardOutput=journal
 StandardError=journal
-
+            
 [Install]
 Alias=kunai.service
 WantedBy=sysinit.target"#,
@@ -2842,41 +2842,41 @@ WantedBy=sysinit.target"#,
             install_bin = install_bin.to_string_lossy(),
             config_path = config_path.to_string_lossy(),
         );
-
+        
         println!(
             "Writing systemd unit file to: {}",
             unit_path.to_string_lossy()
         );
         fs::write(&unit_path, unit)?;
-
+        
         // we want to enable systemd unit
         if co.enable_unit {
             let unit_name = unit_path
-                .file_name()
-                .ok_or(anyhow!(
-                    "unknown unit name: {}",
-                    unit_path.to_string_lossy()
-                ))?
-                .to_string_lossy();
+            .file_name()
+            .ok_or(anyhow!(
+                "unknown unit name: {}",
+                unit_path.to_string_lossy()
+            ))?
+            .to_string_lossy();
             println!("Enabling kunai systemd unit");
             // we first need to run daemon-reload because we added a new unit
             Self::run_command("systemctl", &["daemon-reload"])?;
             // then we can enable the unit
             Self::run_command("systemctl", &["enable", &unit_name])?;
         }
-
+        
         Ok(())
     }
-
+    
     fn install(co: InstallOpt) -> anyhow::Result<()> {
         let current_kernel = Utsname::kernel_version()
-            .map_err(|e| anyhow!("cannot retrieve kernel version: {e}"))?;
+        .map_err(|e| anyhow!("cannot retrieve kernel version: {e}"))?;
         let log_path = PathBuf::from(&co.log_file);
         let log_dir = log_path.parent().ok_or(anyhow!(
             "cannot find dirname for log path: {}",
             log_path.to_string_lossy()
         ))?;
-
+        
         // checks on harden mode
         if co.harden {
             if current_kernel < kernel!(5, 7, 0) {
@@ -2884,21 +2884,21 @@ WantedBy=sysinit.target"#,
                     "harden mode is not supported for kernels below 5.7.0"
                 ));
             }
-
+            
             if current_kernel >= kernel!(5, 7, 0) && !is_bpf_lsm_enabled()? {
                 return Err(anyhow!(
                     "trying to install in harden mode but BPF LSM is not enabled"
                 ));
             }
         }
-
+        
         // we create the directory where to store logs
         println!("Creating log directory: {}", log_dir.to_string_lossy());
         DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(log_dir)?;
-
+        .recursive(true)
+        .mode(0o700)
+        .create(log_dir)?;
+        
         let config_path = PathBuf::from(&co.config);
         let config_dir = config_path.parent().ok_or(anyhow!(
             "cannot find dirname for config path: {}",
@@ -2910,85 +2910,85 @@ WantedBy=sysinit.target"#,
         );
         // we create the directory where to store configuration
         fs::create_dir_all(config_dir)?;
-
+        
         // create configuration for installation
         let conf = Config::default()
-            .harden(co.harden)
-            .generate_host_uuid()
-            .output(log_path)
-            .output_settings(FileSettings {
-                rotate_size: huby::ByteSize::from_mb(10),
-                max_size: huby::ByteSize::from_gb(1),
-            });
+        .harden(co.harden)
+        .generate_host_uuid()
+        .output(log_path)
+        .output_settings(FileSettings {
+            rotate_size: huby::ByteSize::from_mb(10),
+            max_size: huby::ByteSize::from_gb(1),
+        });
         println!(
             "Writing configuration file: {}",
             config_path.to_string_lossy()
         );
         // we write configuration file
         fs::write(&config_path, serde_yaml::to_string(&conf)?)?;
-
+        
         // we read our own binary
         let self_bin = fs::read("/proc/self/exe")?;
         let install_bin = PathBuf::from(&co.install_dir).join("kunai");
         println!("Writing kunai binary to: {}", install_bin.to_string_lossy());
         // we write kunai bin
         fs::write(&install_bin, self_bin)?;
-
+        
         // setting file permission
         let mode = fs::metadata(&install_bin)?.permissions().mode() & 0o000777;
-
+        
         println!(
             "Setting file permission: chmod +x {}",
             install_bin.to_string_lossy()
         );
         // make the binary executable
         fs::set_permissions(&install_bin, PermissionsExt::from_mode(mode | 0o111))?;
-
+        
         if !co.systemd {
             return Ok(());
         }
-
+        
         Self::systemd_install(&co, &install_bin, &config_path)
     }
-
+    
     fn logs(o: LogsOpt) -> anyhow::Result<()> {
         let output = if o.log_file.is_none() {
             let config: Config = serde_yaml::from_reader(
                 File::open(o.config).map_err(|e| anyhow!("failed to read config file: {e}"))?,
             )
             .map_err(|e| anyhow!("failed to parse config file: {e}"))?;
-
+            
             PathBuf::from(config.output)
         } else {
             // cannot panic as it is Some
             o.log_file.unwrap()
         };
-
+        
         if !output.is_file() {
             return Err(anyhow!(
                 "kunai output={} is not a regular file",
                 output.to_string_lossy()
             ));
         }
-
+        
         // for the time being kunai does not allow specifying custom
         // log storage options so we can fix them
         let fd = firo::OpenOptions::new()
-            .compression(firo::Compression::Gzip)
-            .open(&output)?;
-
+        .compression(firo::Compression::Gzip)
+        .open(&output)?;
+        
         let reader = BufReader::new(fd);
-
+        
         for line in reader.lines() {
             let line = line.map_err(|e| anyhow!("failed to read log file:{e}"))?;
-
+            
             // depending how the service got stopped some null
             // bytes may appear in stop / start transition
             let line = line.trim_matches('\0');
-
+            
             println!("{line}",);
         }
-
+        
         Ok(())
     }
 }
@@ -2997,22 +2997,22 @@ fn main() -> Result<(), anyhow::Error> {
     let c = {
         let c: clap::Command = Cli::command();
         let styles = styling::Styles::styled()
-            .header(styling::AnsiColor::Green.on_default() | styling::Effects::BOLD)
-            .usage(styling::AnsiColor::Green.on_default() | styling::Effects::BOLD)
-            .literal(styling::AnsiColor::Blue.on_default() | styling::Effects::BOLD)
-            .placeholder(styling::AnsiColor::Cyan.on_default());
-
+        .header(styling::AnsiColor::Green.on_default() | styling::Effects::BOLD)
+        .usage(styling::AnsiColor::Green.on_default() | styling::Effects::BOLD)
+        .literal(styling::AnsiColor::Blue.on_default() | styling::Effects::BOLD)
+        .placeholder(styling::AnsiColor::Cyan.on_default());
+        
         c.styles(styles).help_template(
             r#"{about-with-newline}
 {author-with-newline}
 {usage-heading} {usage}
-
+            
 {all-args}"#,
         )
     };
-
+    
     let cli: Cli = Cli::from_arg_matches(&c.get_matches())?;
-
+    
     // Handling any CLI argument not needing to run eBPF
     // setting log level according to the verbosity level
     let mut log_level = LevelFilter::Warn;
@@ -3022,12 +3022,12 @@ fn main() -> Result<(), anyhow::Error> {
         3..=u8::MAX => log_level = LevelFilter::Trace,
         _ => {}
     }
-
+    
     // silent out logging if specified in CLI
     if cli.silent {
         log_level = LevelFilter::Off;
     }
-
+    
     let mut verifier_level = match std::env::var("VERIFIER_LOG_LEVEL") {
         Ok(s) => match s.as_str() {
             "debug" => VerifierLogLevel::DEBUG,
@@ -3037,16 +3037,16 @@ fn main() -> Result<(), anyhow::Error> {
         },
         _ => VerifierLogLevel::STATS,
     };
-
+    
     // handling debugging flag
     if cli.debug {
         log_level = LevelFilter::Debug;
         verifier_level = VerifierLogLevel::DEBUG;
     }
-
+    
     // building the logger
     Builder::new().filter_level(log_level).init();
-
+    
     match cli.command {
         Some(Command::Install(o)) => Command::install(o),
         Some(Command::Config(o)) => Command::config(o),

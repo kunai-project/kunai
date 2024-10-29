@@ -21,12 +21,12 @@ use crate::{
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
 pub struct File {
-    pub file: PathBuf,
+    pub path: PathBuf,
 }
 
 impl From<PathBuf> for File {
     fn from(value: PathBuf) -> Self {
-        Self { file: value }
+        Self { path: value }
     }
 }
 
@@ -452,7 +452,7 @@ macro_rules! def_user_data {
                 impl $struct_name {
                     #[inline(always)]
                     fn _iocs(&self) -> Vec<Cow<'_,str>>{
-                        vec![self.exe.file.to_string_lossy()]
+                        vec![self.exe.path.to_string_lossy()]
                     }
                 }
             };
@@ -471,9 +471,9 @@ pub struct ExecveData {
 impl Scannable for ExecveData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        let mut v = vec![Cow::Borrowed(&self.exe.file)];
+        let mut v = vec![Cow::Borrowed(&self.exe.path)];
         if let Some(interp) = self.interpreter.as_ref() {
-            v.push(Cow::Borrowed(&interp.file));
+            v.push(Cow::Borrowed(&interp.path));
         }
         v
     }
@@ -506,7 +506,7 @@ def_user_data!(
 impl Scannable for CloneData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -532,7 +532,7 @@ impl_std_iocs!(PrctlData);
 impl Scannable for PrctlData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -553,7 +553,7 @@ def_user_data!(
 impl Scannable for KillData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -569,15 +569,15 @@ impl Scannable for MmapExecData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
         vec![
-            Cow::Borrowed(&self.exe.file),
-            Cow::Borrowed(&self.mapped.file),
+            Cow::Borrowed(&self.exe.path),
+            Cow::Borrowed(&self.mapped.path),
         ]
     }
 }
 
 impl IocGetter for MmapExecData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.exe.file.to_string_lossy()];
+        let mut v = vec![self.exe.path.to_string_lossy()];
         v.extend(self.mapped.iocs());
         v
     }
@@ -595,7 +595,7 @@ def_user_data!(
 impl Scannable for MprotectData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -672,7 +672,7 @@ def_user_data!(
 impl Scannable for ConnectData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -728,7 +728,7 @@ impl DnsQueryData {
 impl Scannable for DnsQueryData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -738,7 +738,7 @@ impl IocGetter for DnsQueryData {
         self.cache_responses();
 
         // set executable
-        let mut v = vec![self.exe.file.to_string_lossy()];
+        let mut v = vec![self.exe.path.to_string_lossy()];
         // the ip addresses in the response
         v.extend(
             self.responses
@@ -768,13 +768,13 @@ def_user_data!(
 impl Scannable for SendDataData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
 impl IocGetter for SendDataData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.exe.file.to_string_lossy()];
+        let mut v = vec![self.exe.path.to_string_lossy()];
         v.extend(self.dst.iocs());
         v
     }
@@ -793,14 +793,14 @@ pub struct InitModuleData {
 
 impl IocGetter for InitModuleData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.file.to_string_lossy()]
+        vec![self.exe.path.to_string_lossy()]
     }
 }
 
 impl Scannable for InitModuleData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -812,14 +812,14 @@ def_user_data!(
 
 impl IocGetter for FileData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
+        vec![self.exe.path.to_string_lossy(), self.path.to_string_lossy()]
     }
 }
 
 impl Scannable for FileData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file), Cow::Borrowed(&self.path)]
+        vec![Cow::Borrowed(&self.exe.path), Cow::Borrowed(&self.path)]
     }
 }
 
@@ -832,14 +832,14 @@ def_user_data!(
 
 impl IocGetter for UnlinkData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.file.to_string_lossy(), self.path.to_string_lossy()]
+        vec![self.exe.path.to_string_lossy(), self.path.to_string_lossy()]
     }
 }
 
 impl Scannable for UnlinkData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -853,7 +853,7 @@ def_user_data!(
 impl IocGetter for FileRenameData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.file.to_string_lossy(),
+            self.exe.path.to_string_lossy(),
             self.old.to_string_lossy(),
             self.new.to_string_lossy(),
         ]
@@ -863,7 +863,7 @@ impl IocGetter for FileRenameData {
 impl Scannable for FileRenameData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file), Cow::Borrowed(&self.new)]
+        vec![Cow::Borrowed(&self.exe.path), Cow::Borrowed(&self.new)]
     }
 }
 
@@ -899,7 +899,7 @@ def_user_data!(
 impl IocGetter for BpfProgLoadData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.file.to_string_lossy(),
+            self.exe.path.to_string_lossy(),
             self.bpf_prog.md5.as_str().into(),
             self.bpf_prog.sha1.as_str().into(),
             self.bpf_prog.sha256.as_str().into(),
@@ -911,7 +911,7 @@ impl IocGetter for BpfProgLoadData {
 impl Scannable for BpfProgLoadData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -954,14 +954,14 @@ def_user_data!(
 impl Scannable for BpfSocketFilterData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
 impl IocGetter for BpfSocketFilterData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.file.to_string_lossy(),
+            self.exe.path.to_string_lossy(),
             self.filter.md5.as_str().into(),
             self.filter.sha1.as_str().into(),
             self.filter.sha256.as_str().into(),
@@ -979,7 +979,7 @@ def_user_data!(
 impl Scannable for ExitData {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.file)]
+        vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
@@ -987,7 +987,7 @@ impl_std_iocs!(ExitData);
 
 #[derive(Default, Debug, Serialize, Deserialize, FieldGetter)]
 pub struct FileScanData {
-    pub file: PathBuf,
+    pub path: PathBuf,
     pub meta: FileMeta,
     #[getter(skip)]
     pub signatures: Vec<String>,
@@ -999,7 +999,7 @@ pub struct FileScanData {
 impl FileScanData {
     pub fn from_hashes(h: Hashes) -> Self {
         Self {
-            file: h.file,
+            path: h.path,
             meta: h.meta,
             ..Default::default()
         }
@@ -1017,7 +1017,7 @@ impl IocGetter for FileScanData {
     // we might want to scan hashes against IoCs later than execve
     #[inline(always)]
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.file.to_string_lossy()];
+        let mut v = vec![self.path.to_string_lossy()];
         v.extend(self.meta.iocs());
         v
     }
