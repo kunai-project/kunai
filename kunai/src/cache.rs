@@ -72,6 +72,7 @@ pub struct Hashes {
 }
 
 impl Hashes {
+    #[inline(always)]
     pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T) -> Self {
         let path = p.as_ref();
         let mut h = Hashes {
@@ -106,7 +107,7 @@ impl Hashes {
         h
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
         let mut v = vec![self.path.to_string_lossy()];
         v.extend(self.meta.iocs());
@@ -180,6 +181,7 @@ impl Default for Key {
 }
 
 impl Key {
+    #[inline(always)]
     fn from_path_with_ns(ns: &Namespace, path: &Path) -> Result<Self, Error> {
         let pb = path.to_path_buf();
 
@@ -251,7 +253,7 @@ impl Cache {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn cache_ns(&mut self, pid: i32, ns: Namespace) -> Result<(), Error> {
         if !self.namespaces.contains_key(&ns) {
             self.namespaces.insert(
@@ -265,7 +267,7 @@ impl Cache {
         Ok(())
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_sig_or_cache(
         &mut self,
         ns: Namespace,
@@ -319,7 +321,7 @@ impl Cache {
         res.map_err(Error::from)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_or_cache_in_ns(&mut self, ns: Namespace, path: &Path) -> Result<Hashes, Error> {
         // check that the namespace is a mount namespace
         if !ns.is_kind(Kind::Mnt) {
