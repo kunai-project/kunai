@@ -105,6 +105,12 @@ impl From<BuildOptions> for ebpf::BuildOptions {
 
 impl From<&BuildOptions> for ebpf::BuildOptions {
     fn from(value: &BuildOptions) -> Self {
+        let release = if value.profile() == Some("release") {
+            true
+        } else {
+            value.release
+        };
+
         Self {
             target_arch: value
                 .target
@@ -112,7 +118,7 @@ impl From<&BuildOptions> for ebpf::BuildOptions {
                 .map_or(&*value.target, |x| x.0)
                 .into(),
             target: value.bpf_target,
-            release: value.release,
+            release,
             linker: value.bpf_linker.clone(),
             link_arg: value.bpf_link_arg.clone(),
             // we don't propagate build arguments as they will very likely
