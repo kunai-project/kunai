@@ -70,7 +70,7 @@ impl Default for Config {
             // some events get disabled by default because there are too many
             let en = !matches!(
                 v,
-                bpf_events::Type::Read | bpf_events::Type::Write | bpf_events::Type::WriteAndClose
+                bpf_events::Type::Read | bpf_events::Type::Write | bpf_events::Type::WriteClose
             );
 
             if v.is_configurable() {
