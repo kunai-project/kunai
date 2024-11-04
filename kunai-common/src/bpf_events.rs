@@ -113,8 +113,8 @@ pub enum Type {
     FileRename,
     #[str("file_unlink")]
     FileUnlink,
-    #[str("write_and_close")]
-    WriteAndClose,
+    #[str("write_close")]
+    WriteClose,
 
     // specific userland events
     // those should never be used in eBPF

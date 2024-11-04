@@ -412,7 +412,7 @@ pub fn fs_enter_fput_sync(ctx: ProbeContext) -> u32 {
 
 unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
     // if event is disabled we return early
-    if get_cfg!().map(|c| c.is_event_disabled(Type::WriteAndClose))? {
+    if get_cfg!().map(|c| c.is_event_disabled(Type::WriteClose))? {
         return Ok(());
     }
 
@@ -432,7 +432,7 @@ unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
 
     let event = alloc::alloc_zero::<FileEvent>()?;
 
-    event.init_from_current_task(Type::WriteAndClose)?;
+    event.init_from_current_task(Type::WriteClose)?;
 
     ignore_result!(inspect_err!(
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
