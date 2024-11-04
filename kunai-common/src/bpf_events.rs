@@ -74,6 +74,8 @@ pub enum Type {
     Prctl,
     #[str("kill")]
     Kill,
+    #[str("ptrace")]
+    Ptrace,
 
     // stuff loaded in kernel
     #[str("init_module")]
