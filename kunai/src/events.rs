@@ -560,6 +560,23 @@ impl Scannable for KillData {
 impl_std_iocs!(KillData);
 
 def_user_data!(
+    pub struct PtraceData {
+        #[serde(with = "u32_hex")]
+        pub mode: u32,
+        pub target: TargetTask,
+    }
+);
+
+impl Scannable for PtraceData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.path)]
+    }
+}
+
+impl_std_iocs!(PtraceData);
+
+def_user_data!(
     pub struct MmapExecData {
         pub mapped: Hashes,
     }

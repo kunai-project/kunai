@@ -36,6 +36,8 @@ mod syscore_resume;
 pub use syscore_resume::*;
 mod kill;
 pub use kill::*;
+mod ptrace;
+pub use ptrace::*;
 
 // prevent using correlation event in bpf code
 not_bpf_target_code! {
@@ -66,6 +68,7 @@ const fn max_bpf_event_size() -> usize {
             Type::Clone => CloneEvent::size_of(),
             Type::Prctl => PrctlEvent::size_of(),
             Type::Kill => KillEvent::size_of(),
+            Type::Ptrace => PtraceEvent::size_of(),
             Type::InitModule => InitModuleEvent::size_of(),
             Type::BpfProgLoad => BpfProgLoadEvent::size_of(),
             Type::BpfSocketFilter => BpfSocketFilterEvent::size_of(),

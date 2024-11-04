@@ -16,7 +16,7 @@ use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
     EventInfo, ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo,
     InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
-    ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, UnlinkData, UserEvent,
+    PtraceData, ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
 use kunai::ioc::IoC;
@@ -888,6 +888,36 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
+    fn ptrace_event(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::PtraceEvent,
+    ) -> UserEvent<PtraceData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        // we need to set uuid part of target task
+        let mut target = event.data.target;
+        target.set_uuid_random(self.random);
+
+        // get the command line
+        let tk = TaskKey::from(target.tg_uuid);
+
+        let data = PtraceData {
+            ancestors: self.get_ancestors_string(&info),
+            exe: exe.into(),
+            command_line,
+            mode: event.data.mode,
+            target: TargetTask {
+                command_line: self.get_command_line(tk),
+                exe: self.get_exe(tk).into(),
+                task: target.into(),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
     fn mmap_exec_event(
         &mut self,
         info: StdEventInfo,
@@ -1701,6 +1731,14 @@ impl<'s> EventConsumer<'s> {
             Type::Kill => match event!(enc_event, bpf_events::KillEvent) {
                 Ok(e) => {
                     let mut e = self.kill_event(std_info, e);
+                    self.scan_and_print(&mut e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
+            Type::Ptrace => match event!(enc_event, bpf_events::PtraceEvent) {
+                Ok(e) => {
+                    let mut e = self.ptrace_event(std_info, e);
                     self.scan_and_print(&mut e);
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
@@ -2527,6 +2565,7 @@ impl Command {
                         Type::Clone => scan_event!(p, CloneData),
                         Type::Prctl => scan_event!(p, PrctlData),
                         Type::Kill => scan_event!(p, KillData),
+                        Type::Ptrace => scan_event!(p, PtraceData),
                         Type::MmapExec => scan_event!(p, MmapExecData),
                         Type::MprotectExec => scan_event!(p, MprotectData),
                         Type::Connect => scan_event!(p, ConnectData),
