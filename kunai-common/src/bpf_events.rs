@@ -113,7 +113,7 @@ pub enum Type {
     FileRename,
     #[str("file_unlink")]
     FileUnlink,
-    #[str("write_and_close")]
+    #[str("write_close")]
     WriteAndClose,
 
     // specific userland events
