@@ -1022,9 +1022,9 @@ dependencies = [
 
 [[package]]
 name = "firo"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a45ffbf801908139f8cd2a9069f6b86061761b6f41a1d6c2955b939bf651026"
+checksum = "3543c7854eef24e0186ff049d0a562c5b9be91dfa52bce651f378c12b4a6631f"
 dependencies = [
  "flate2",
  "huby",
@@ -1274,9 +1274,9 @@ dependencies = [
 
 [[package]]
 name = "huby"
-version = "0.1.5"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7b227425d1ceea9ffa6f8cf4c11d001c3982076a7c0ff6b094af53be628d9d0"
+checksum = "2a143ed717dca57c4e0b41768ed89352872e17150962cd2929c6ec84dc28f1d8"
 dependencies = [
  "serde",
  "thiserror",
