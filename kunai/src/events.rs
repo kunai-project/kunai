@@ -1015,9 +1015,10 @@ pub struct FileScanData {
 
 impl FileScanData {
     pub fn from_hashes(h: Hashes) -> Self {
+        let p = h.path.clone();
         Self {
-            path: h.path,
-            meta: h.meta,
+            path: p,
+            meta: h.into(),
             ..Default::default()
         }
     }

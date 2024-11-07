@@ -753,22 +753,20 @@ impl<'s> EventConsumer<'s> {
         if let Some(ns) = ns {
             match self.cache.get_or_cache_in_ns(ns, p) {
                 Ok(h) => h,
-                Err(e) => Hashes {
-                    path: p.to_path_buf().clone(),
-                    meta: FileMeta {
+                Err(e) => {
+                    let meta = FileMeta {
                         error: Some(format!("{e}")),
                         ..Default::default()
-                    },
-                },
+                    };
+                    Hashes::with_meta(p.to_path_buf().clone(), meta)
+                }
             }
         } else {
-            Hashes {
-                path: p.to_path_buf().clone(),
-                meta: FileMeta {
-                    error: Some("unknown namespace".into()),
-                    ..Default::default()
-                },
-            }
+            let meta = FileMeta {
+                error: Some("unknown namespace".into()),
+                ..Default::default()
+            };
+            Hashes::with_meta(p.to_path_buf().clone(), meta)
         }
     }
 

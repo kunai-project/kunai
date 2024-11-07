@@ -52,6 +52,19 @@ pub struct FileMeta {
     pub error: Option<String>,
 }
 
+impl From<Hashes> for FileMeta {
+    fn from(value: Hashes) -> Self {
+        Self {
+            md5: value.md5,
+            sha1: value.sha1,
+            sha256: value.sha256,
+            sha512: value.sha512,
+            size: value.size,
+            error: value.error,
+        }
+    }
+}
+
 impl FileMeta {
     #[inline]
     pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
@@ -67,11 +80,27 @@ impl FileMeta {
 #[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct Hashes {
     pub path: PathBuf,
-    #[serde(flatten)]
-    pub meta: FileMeta,
+    pub md5: String,
+    pub sha1: String,
+    pub sha256: String,
+    pub sha512: String,
+    pub size: usize,
+    pub error: Option<String>,
 }
 
 impl Hashes {
+    pub fn with_meta(p: PathBuf, meta: FileMeta) -> Self {
+        Self {
+            path: p,
+            md5: meta.md5,
+            sha1: meta.sha1,
+            sha256: meta.sha256,
+            sha512: meta.sha512,
+            size: meta.size,
+            error: meta.error,
+        }
+    }
+
     #[inline(always)]
     pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T) -> Self {
         let path = p.as_ref();
@@ -95,13 +124,13 @@ impl Hashes {
                 sha1.update(&buf[..n]);
                 sha256.update(&buf[..n]);
                 sha512.update(&buf[..n]);
-                h.meta.size += n;
+                h.size += n;
             }
 
-            h.meta.md5 = hex::encode(md5.finalize());
-            h.meta.sha1 = hex::encode(sha1.finalize());
-            h.meta.sha256 = hex::encode(sha256.finalize());
-            h.meta.sha512 = hex::encode(sha512.finalize());
+            h.md5 = hex::encode(md5.finalize());
+            h.sha1 = hex::encode(sha1.finalize());
+            h.sha256 = hex::encode(sha256.finalize());
+            h.sha512 = hex::encode(sha512.finalize());
         }
 
         h
@@ -109,9 +138,13 @@ impl Hashes {
 
     #[inline(always)]
     pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.path.to_string_lossy()];
-        v.extend(self.meta.iocs());
-        v
+        vec![
+            self.path.to_string_lossy(),
+            self.md5.as_str().into(),
+            self.sha1.as_str().into(),
+            self.sha256.as_str().into(),
+            self.sha512.as_str().into(),
+        ]
     }
 }
 
