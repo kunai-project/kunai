@@ -34,7 +34,7 @@ On the implementation side, Kunai is written for its majority in Rust, leveragin
 # FAQ
 
 * **Is it compatible with my OS/Kernel ?** : Check out [the compatibility page](https://why.kunai.rocks/docs/compatibility)
-* **What kind of events can I get ?** : Please take a read to [events documentation](https://why.kunai.rocks/docs/category/kunai---events)
+* **What kind of events can I get ?** : Please take a read to [events documentation](https://why.kunai.rocks/docs/events/)
 * **Which version should I use ?**: If it is just to test the tool, use the latest build as it is always the best in terms of features and bug fix. However keep in mind that events in **non stable** releases **are subject to change**.
 
 # How to build the project ?
