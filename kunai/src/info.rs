@@ -2,7 +2,7 @@ use std::io;
 
 use chrono::{DateTime, Utc};
 use kunai_common::{
-    bpf_events::{self, EventInfo},
+    bpf_events::{self, EventInfo, TaskInfo},
     uuid::TaskUuid,
 };
 use thiserror::Error;
@@ -68,20 +68,30 @@ pub struct AdditionalInfo {
 
 #[derive(Default, Debug, Clone)]
 pub struct StdEventInfo {
-    pub info: bpf_events::EventInfo,
+    pub bpf: bpf_events::EventInfo,
     pub additional: AdditionalInfo,
     pub utc_timestamp: DateTime<Utc>,
 }
 
 impl StdEventInfo {
     #[inline(always)]
+    pub fn task_info(&self) -> &TaskInfo {
+        &self.bpf.process
+    }
+
+    #[inline(always)]
+    pub fn parent_info(&self) -> &TaskInfo {
+        &self.bpf.parent
+    }
+
+    #[inline(always)]
     pub fn task_key(&self) -> TaskKey {
-        TaskKey::from(self.info.process.tg_uuid)
+        TaskKey::from(self.task_info().tg_uuid)
     }
 
     #[inline(always)]
     pub fn parent_key(&self) -> TaskKey {
-        TaskKey::from(self.info.parent.tg_uuid)
+        TaskKey::from(self.parent_info().tg_uuid)
     }
 
     #[inline]
@@ -90,7 +100,7 @@ impl StdEventInfo {
         info.set_uuid_random(rand);
 
         StdEventInfo {
-            info,
+            bpf: info,
             // on older kernels bpf_ktime_get_boot_ns() is not available so it is not
             // easy to compute correct event timestamp from eBPF so utc_timestamp is
             // the time at which the event is processed.
