@@ -167,6 +167,8 @@ pub struct Namespaces {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TaskInfo {
+    // this flag is used/set in userland only
+    pub zombie: bool,
     pub flags: u32,
     pub comm: [u8; COMM_SIZE],
     pub uid: u32,
