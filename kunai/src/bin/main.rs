@@ -89,7 +89,7 @@ struct Task {
     // needs to be vec because of procfs
     cgroups: Vec<String>,
     nodename: Option<String>,
-    parent_key: Option<TaskKey>,
+    real_parent_key: Option<TaskKey>,
     threads: HashSet<TaskKey>,
     // flag telling if this task comes from procfs
     // parsing at kunai start
@@ -555,7 +555,7 @@ impl<'s> EventConsumer<'s> {
         for (tk, pk) in self
             .tasks
             .iter()
-            .map(|(&k, v)| (k, v.parent_key))
+            .map(|(&k, v)| (k, v.real_parent_key))
             .collect::<Vec<(TaskKey, Option<TaskKey>)>>()
         {
             if let Some(parent) = pk {
@@ -625,7 +625,7 @@ impl<'s> EventConsumer<'s> {
             container: None,
             cgroups,
             nodename: None,
-            parent_key,
+            real_parent_key: parent_key,
             threads: HashSet::new(),
             procfs: true,
             exit: false,
@@ -676,7 +676,7 @@ impl<'s> EventConsumer<'s> {
                 skip -= 1;
             }
 
-            tk = match task.parent_key {
+            tk = match task.real_parent_key {
                 Some(v) => v,
                 None => {
                     break;
@@ -700,9 +700,11 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     fn get_parent_image(&self, i: &StdEventInfo) -> String {
-        let ck = i.parent_key();
+        let ck = i.task_key();
         self.tasks
             .get(&ck)
+            .and_then(|t| t.real_parent_key)
+            .and_then(|ptk| self.tasks.get(&ptk))
             .map(|c| c.image.to_string_lossy().to_string())
             .unwrap_or("?".into())
     }
@@ -789,12 +791,12 @@ impl<'s> EventConsumer<'s> {
         info: StdEventInfo,
         event: &bpf_events::ExecveEvent,
     ) -> UserEvent<ExecveData> {
-        let ancestors = self.get_ancestors(info.parent_key(), 0);
+        let ancestors = self.get_ancestors_string(&info);
 
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
 
         let mut data = ExecveData {
-            ancestors: ancestors.join("|"),
+            ancestors,
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
             exe: self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
@@ -1323,10 +1325,14 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::CorrelationEvent,
     ) {
         let ck = info.task_key();
+        let mut parent_key = info.parent_key();
 
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
         if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
+            if let Some(p) = self.tasks.get(&ck).and_then(|t| t.real_parent_key) {
+                parent_key = p;
+            }
             self.tasks.remove(&ck);
         }
 
@@ -1372,7 +1378,7 @@ impl<'s> EventConsumer<'s> {
         let mut container_type = Container::from_cgroups(&cgroups);
 
         if container_type.is_none() {
-            let ancestors = self.get_ancestors(info.parent_key(), 0);
+            let ancestors = self.get_ancestors(parent_key, 0);
             container_type = Container::from_ancestors(&ancestors);
         }
 
@@ -1387,7 +1393,7 @@ impl<'s> EventConsumer<'s> {
         // we update parent's information
         if matches!(event.data.origin, Type::Clone) {
             // the source is a Clone event so our task has spawned a child thread
-            self.tasks.entry(info.parent_key()).and_modify(|e| {
+            self.tasks.entry(parent_key).and_modify(|e| {
                 e.threads.insert(info.task_key());
             });
         }
@@ -1402,7 +1408,7 @@ impl<'s> EventConsumer<'s> {
             container: container_type,
             cgroups,
             nodename: event.data.nodename(),
-            parent_key: Some(info.parent_key()),
+            real_parent_key: Some(parent_key),
             threads: HashSet::new(),
             procfs: false,
             exit: false,
