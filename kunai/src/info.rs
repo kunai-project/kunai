@@ -16,6 +16,7 @@ pub struct TaskKey {
 }
 
 impl From<TaskUuid> for TaskKey {
+    #[inline(always)]
     fn from(value: TaskUuid) -> Self {
         // in task_struct start_time has a higher resolution so we need to scale it
         // down in order to have a comparable value with the procfs one
@@ -36,6 +37,7 @@ pub enum KeyError {
 
 impl TryFrom<&procfs::process::Process> for TaskKey {
     type Error = KeyError;
+    #[inline(always)]
     fn try_from(p: &procfs::process::Process) -> Result<Self, Self::Error> {
         let stat = p.stat()?;
         // panic here if we cannot get CLK_TCK

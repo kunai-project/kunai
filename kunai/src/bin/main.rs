@@ -1447,10 +1447,10 @@ impl<'s> EventConsumer<'s> {
             .tasks
             .get(&std_info.task_key())
             .and_then(|t| {
-                if !t.is_zombie() {
-                    None
-                } else {
+                if t.real_parent_key.is_some() && t.real_parent_key != Some(std_info.parent_key()) {
                     t.real_parent_key
+                } else {
+                    None
                 }
             })
             // we get real parent
