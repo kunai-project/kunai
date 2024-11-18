@@ -1,6 +1,6 @@
 use uuid;
 
-use super::{Uuid, TaskUuid};
+use super::{ProcUuid, Uuid};
 
 impl From<Uuid> for uuid::Uuid {
     fn from(value: Uuid) -> Self {
@@ -24,13 +24,13 @@ impl Uuid {
     }
 }
 
-impl From<TaskUuid> for uuid::Uuid {
-    fn from(value: TaskUuid) -> Self {
+impl From<ProcUuid> for uuid::Uuid {
+    fn from(value: ProcUuid) -> Self {
         unsafe { core::mem::transmute(value) }
     }
 }
 
-impl TaskUuid {
+impl ProcUuid {
     pub fn into_uuid(self) -> uuid::Uuid {
         self.into()
     }

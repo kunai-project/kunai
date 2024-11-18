@@ -18,7 +18,7 @@ use kunai::events::{
     InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
     PtraceData, ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
-use kunai::info::{AdditionalInfo, StdEventInfo, TaskKey};
+use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
 
@@ -78,7 +78,7 @@ const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
 
 #[derive(Debug, Clone)]
-struct Task {
+struct Process {
     image: PathBuf,
     command_line: Vec<String>,
     pid: i32,
@@ -89,9 +89,10 @@ struct Task {
     // needs to be vec because of procfs
     cgroups: Vec<String>,
     nodename: Option<String>,
-    // this is the TaskKey from correlation
-    real_parent_key: Option<TaskKey>,
-    threads: HashSet<TaskKey>,
+    // this is the key of the real parent process
+    real_parent_key: Option<ProcKey>,
+    // children processes
+    children: HashSet<ProcKey>,
     // ebpf task info for this task
     kernel_task_info: Option<TaskInfo>,
     // execve state of the task
@@ -105,7 +106,7 @@ struct Task {
     zombie: bool,
 }
 
-impl Task {
+impl Process {
     #[inline(always)]
     fn is_kthread(&self) -> bool {
         // check if flag contains PF_KTHREAD
@@ -250,7 +251,7 @@ struct EventConsumer<'s> {
     iocs: HashMap<String, u8>,
     random: u32,
     cache: cache::Cache,
-    tasks: HashMap<TaskKey, Task>,
+    processes: HashMap<ProcKey, Process>,
     resolved: HashMap<IpAddr, String>,
     killed_tasks: LruHashSet<String>,
     exited_tasks: u64,
@@ -326,7 +327,7 @@ impl<'s> EventConsumer<'s> {
             iocs: HashMap::new(),
             random: util::getrandom::<u32>().unwrap(),
             cache: Cache::with_max_entries(10000),
-            tasks: HashMap::with_capacity(512),
+            processes: HashMap::with_capacity(512),
             killed_tasks: LruHashSet::with_max_entries(512),
             exited_tasks: 0,
             resolved: HashMap::new(),
@@ -562,13 +563,13 @@ impl<'s> EventConsumer<'s> {
 
         // we try to resolve containers from tasks found in procfs
         for (tk, pk) in self
-            .tasks
+            .processes
             .iter()
             .map(|(&k, v)| (k, v.real_parent_key))
-            .collect::<Vec<(TaskKey, Option<TaskKey>)>>()
+            .collect::<Vec<(ProcKey, Option<ProcKey>)>>()
         {
             if let Some(parent) = pk {
-                if let Some(t) = self.tasks.get_mut(&tk) {
+                if let Some(t) = self.processes.get_mut(&tk) {
                     // trying to find container type in cgroups
                     t.container = Container::from_cgroups(&t.cgroups);
                     if t.container.is_some() {
@@ -580,7 +581,7 @@ impl<'s> EventConsumer<'s> {
                 // lookup in ancestors
                 let ancestors = self.get_ancestors(parent, 0);
                 if let Some(c) = Container::from_ancestors(&ancestors) {
-                    self.tasks
+                    self.processes
                         .entry(tk)
                         .and_modify(|task| task.container = Some(c));
                 }
@@ -597,15 +598,15 @@ impl<'s> EventConsumer<'s> {
         let parent_key = {
             if parent_pid != 0 {
                 let parent = procfs::process::Process::new(parent_pid)?;
-                Some(TaskKey::try_from(&parent)?)
+                Some(ProcKey::try_from(&parent)?)
             } else {
                 None
             }
         };
 
-        let tk = TaskKey::try_from(p)?;
+        let tk = ProcKey::try_from(p)?;
 
-        if self.tasks.contains_key(&tk) {
+        if self.processes.contains_key(&tk) {
             return Ok(());
         }
 
@@ -625,7 +626,7 @@ impl<'s> EventConsumer<'s> {
             .map(|cg| cg.pathname)
             .collect::<Vec<String>>();
 
-        let task = Task {
+        let task = Process {
             image,
             command_line: p.cmdline().unwrap_or(vec!["?".into()]),
             pid: p.pid,
@@ -636,31 +637,31 @@ impl<'s> EventConsumer<'s> {
             nodename: None,
             real_parent_key: parent_key,
             kernel_task_info: None,
-            threads: HashSet::new(),
+            children: HashSet::new(),
             execved: true,
             procfs: true,
             exit: false,
             zombie: false,
         };
 
-        self.tasks.insert(tk, task);
+        self.processes.insert(tk, task);
 
         Ok(())
     }
 
     #[inline(always)]
-    fn get_exe(&self, key: TaskKey) -> PathBuf {
+    fn get_exe(&self, key: ProcKey) -> PathBuf {
         let mut exe = PathBuf::from("?");
-        if let Some(task) = self.tasks.get(&key) {
+        if let Some(task) = self.processes.get(&key) {
             exe = task.image.clone();
         }
         exe
     }
 
     #[inline(always)]
-    fn get_command_line(&self, key: TaskKey) -> String {
+    fn get_command_line(&self, key: ProcKey) -> String {
         let mut cl = String::from("?");
-        if let Some(t) = self.tasks.get(&key) {
+        if let Some(t) = self.processes.get(&key) {
             cl = t.command_line_string();
         }
         cl
@@ -668,7 +669,7 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
-        let ck = i.task_key();
+        let ck = i.process_key();
         (self.get_exe(ck), self.get_command_line(ck))
     }
 
@@ -676,11 +677,11 @@ impl<'s> EventConsumer<'s> {
     /// item is the image of the task referenced by `tk`. One can skip ancestors
     /// by setting `skip` > 0.
     #[inline(always)]
-    fn get_ancestors(&self, mut tk: TaskKey, mut skip: u16) -> Vec<String> {
+    fn get_ancestors(&self, mut tk: ProcKey, mut skip: u16) -> Vec<String> {
         let mut ancestors = vec![];
         let mut last = None;
 
-        while let Some(task) = self.tasks.get(&tk) {
+        while let Some(task) = self.processes.get(&tk) {
             last = Some(task);
             if skip == 0 {
                 ancestors.insert(0, task.image.to_string_lossy().to_string());
@@ -707,26 +708,26 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
-        self.get_ancestors(i.task_key(), 1).join("|")
+        self.get_ancestors(i.process_key(), 1).join("|")
     }
 
     #[inline(always)]
     fn get_parent_image(&self, i: &StdEventInfo) -> String {
-        let ck = i.task_key();
-        self.tasks
+        let ck = i.process_key();
+        self.processes
             .get(&ck)
             .and_then(|t| t.real_parent_key)
-            .and_then(|ptk| self.tasks.get(&ptk))
+            .and_then(|ptk| self.processes.get(&ptk))
             .map(|c| c.image.to_string_lossy().to_string())
             .unwrap_or("?".into())
     }
 
     #[inline(always)]
     fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
-        let ck = i.task_key();
+        let ck = i.process_key();
 
         // update local resolve table
-        self.tasks.get_mut(&ck).map(|c| {
+        self.processes.get_mut(&ck).map(|c| {
             c.resolved
                 .entry(ip)
                 .and_modify(|r| *r = resolved.to_owned())
@@ -742,11 +743,11 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> Cow<'_, str> {
-        let ck = i.task_key();
+        let ck = i.process_key();
 
         // we lookup in the local table
         if let Some(domain) = self
-            .tasks
+            .processes
             .get(&ck)
             .and_then(|c| c.resolved.get(&ip).map(Cow::from))
         {
@@ -882,7 +883,7 @@ impl<'s> EventConsumer<'s> {
         target.set_uuid_random(self.random);
 
         // get the command line
-        let tk = TaskKey::from(target.tg_uuid);
+        let tk = ProcKey::from(target.tg_uuid);
 
         let data = KillData {
             ancestors: self.get_ancestors_string(&info),
@@ -912,7 +913,7 @@ impl<'s> EventConsumer<'s> {
         target.set_uuid_random(self.random);
 
         // get the command line
-        let tk = TaskKey::from(target.tg_uuid);
+        let tk = ProcKey::from(target.tg_uuid);
 
         let data = PtraceData {
             ancestors: self.get_ancestors_string(&info),
@@ -939,7 +940,7 @@ impl<'s> EventConsumer<'s> {
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
         let mmapped_hashes = self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&filename));
 
-        let ck = info.task_key();
+        let ck = info.process_key();
 
         let exe = self.get_exe(ck);
 
@@ -960,7 +961,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::DnsQueryEvent,
     ) -> Vec<UserEvent<DnsQueryData>> {
         let mut out = vec![];
-        let ck = info.task_key();
+        let ck = info.process_key();
         let exe = self.get_exe(ck);
         let command_line = self.get_command_line(ck);
 
@@ -1277,57 +1278,63 @@ impl<'s> EventConsumer<'s> {
         if (matches!(etype, Type::Exit) && info.task_info().pid == info.task_info().tgid)
             || matches!(etype, Type::ExitGroup)
         {
-            let tk = info.task_key();
+            let tk = info.process_key();
 
             // we are exiting so our parent has one child less
-            self.tasks.entry(info.parent_key()).and_modify(|t| {
-                t.threads.remove(&tk);
+            self.processes.entry(info.parent_key()).and_modify(|t| {
+                t.children.remove(&tk);
             });
 
             // hashset of threads to be removed
             let mut remove_threads = HashSet::new();
 
-            if let Some(t) = self.tasks.get(&tk) {
+            if let Some(t) = self.processes.get(&tk) {
                 // in case on exit_group we need to clean child
                 // threads properly
                 if matches!(etype, Type::ExitGroup) {
                     remove_threads.extend(
-                        t.threads
+                        t.children
                             .iter()
                             // we must remove only threads that did not execve-d
-                            .filter(|&t| self.tasks.get(t).map(|t| !t.execved).unwrap_or_default())
+                            .filter(|&t| {
+                                self.processes
+                                    .get(t)
+                                    .map(|t| !t.execved)
+                                    .unwrap_or_default()
+                            })
                             .clone(),
                     );
                 }
 
-                if t.threads.is_empty() && !t.procfs {
+                if t.children.is_empty() && !t.procfs {
                     // if the task has no child and is not coming from procfs
                     // we can remove it from the table.
-                    self.tasks.remove(&tk);
+                    self.processes.remove(&tk);
                 } else {
                     // we can free up some memory and tag the task as exited
-                    self.tasks.entry(tk).and_modify(|t| t.on_exit());
+                    self.processes.entry(tk).and_modify(|t| t.on_exit());
                 }
             }
 
             if !remove_threads.is_empty() {
                 // as parent we can decrease the number of our children
-                self.tasks
+                self.processes
                     .entry(tk)
-                    .and_modify(|t| t.threads.retain(|k| !remove_threads.contains(k)));
+                    .and_modify(|t| t.children.retain(|k| !remove_threads.contains(k)));
 
                 // for every child, we mark it as exited
                 for c in remove_threads {
-                    self.tasks.entry(c).and_modify(|t| t.on_exit());
+                    self.processes.entry(c).and_modify(|t| t.on_exit());
                 }
             }
 
             // we trigger some very specific cleanup
             if self.exited_tasks % 1000 == 0 {
                 // we remove shadow tasks exited with no child
-                self.tasks.retain(|_, t| !(t.exit && t.threads.is_empty()));
+                self.processes
+                    .retain(|_, t| !(t.exit && t.children.is_empty()));
                 // shrinking tasks HashMap
-                self.tasks.shrink_to_fit();
+                self.processes.shrink_to_fit();
             }
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
@@ -1342,22 +1349,22 @@ impl<'s> EventConsumer<'s> {
         info: StdEventInfo,
         event: &bpf_events::CorrelationEvent,
     ) {
-        let ck = info.task_key();
+        let ck = info.process_key();
         let mut parent_key = info.parent_key();
         let execve_flag = matches!(event.data.origin, Type::Execve | Type::ExecveScript);
 
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
         if execve_flag {
-            if let Some(p) = self.tasks.get(&ck).and_then(|t| t.real_parent_key) {
+            if let Some(p) = self.processes.get(&ck).and_then(|t| t.real_parent_key) {
                 // we keep track of real parent_key in case of zombie task
                 parent_key = p;
             }
-            self.tasks.remove(&ck);
+            self.processes.remove(&ck);
         }
 
         // early return if task key exists
-        if let Some(v) = self.tasks.get_mut(&ck) {
+        if let Some(v) = self.processes.get_mut(&ck) {
             // we fix nodename if not set yet
             // tasks init from procfs are lacking nodename
             if v.nodename.is_none() {
@@ -1413,13 +1420,13 @@ impl<'s> EventConsumer<'s> {
         // we update parent's information
         if matches!(event.data.origin, Type::Clone) {
             // the source is a Clone event so our task has spawned a child thread
-            self.tasks.entry(parent_key).and_modify(|e| {
-                e.threads.insert(info.task_key());
+            self.processes.entry(parent_key).and_modify(|e| {
+                e.children.insert(info.process_key());
             });
         }
 
         // we insert only if not existing
-        self.tasks.entry(ck).or_insert(Task {
+        self.processes.entry(ck).or_insert(Process {
             image,
             command_line: event.data.argv.to_argv(),
             pid: info.task_info().tgid,
@@ -1430,7 +1437,7 @@ impl<'s> EventConsumer<'s> {
             nodename: event.data.nodename(),
             real_parent_key: Some(parent_key),
             kernel_task_info: Some(*info.task_info()),
-            threads: HashSet::new(),
+            children: HashSet::new(),
             execved: execve_flag,
             procfs: false,
             exit: false,
@@ -1449,8 +1456,8 @@ impl<'s> EventConsumer<'s> {
         // we need to find if task is a zombie and replace
         // its parent with the real one if needed
         if let Some(kti) = self
-            .tasks
-            .get_mut(&std_info.task_key())
+            .processes
+            .get_mut(&std_info.process_key())
             .and_then(|t| {
                 if t.zombie
                     || (t.real_parent_key.is_some()
@@ -1465,7 +1472,7 @@ impl<'s> EventConsumer<'s> {
                 }
             })
             // we get real parent
-            .and_then(|tk| self.tasks.get(&tk))
+            .and_then(|tk| self.processes.get(&tk))
             // we get real parent's TaskInfo
             .and_then(|t| t.kernel_task_info)
         {
@@ -1477,7 +1484,7 @@ impl<'s> EventConsumer<'s> {
 
         // we must set the zombie flag of the parent if needed
         if self
-            .tasks
+            .processes
             .get(&std_info.parent_key())
             .map(|t| t.zombie)
             .unwrap_or_default()
@@ -1501,7 +1508,7 @@ impl<'s> EventConsumer<'s> {
 
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
-                let t = self.tasks.get(&std_info.task_key());
+                let t = self.processes.get(&std_info.process_key());
                 container = Some(kunai::info::ContainerInfo {
                     name: t.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
                     ty: t.and_then(|cd| cd.container),
