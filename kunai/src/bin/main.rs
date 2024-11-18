@@ -25,7 +25,7 @@ use kunai::util::uname::Utsname;
 use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, Type,
+    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, TaskInfo, Type,
     MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::Filter;
@@ -89,12 +89,20 @@ struct Task {
     // needs to be vec because of procfs
     cgroups: Vec<String>,
     nodename: Option<String>,
-    parent_key: Option<TaskKey>,
+    // this is the TaskKey from correlation
+    real_parent_key: Option<TaskKey>,
     threads: HashSet<TaskKey>,
+    // ebpf task info for this task
+    kernel_task_info: Option<TaskInfo>,
+    // execve state of the task
+    execved: bool,
     // flag telling if this task comes from procfs
     // parsing at kunai start
     procfs: bool,
+    // exit state of the task
     exit: bool,
+    // zombie state of the task
+    zombie: bool,
 }
 
 impl Task {
@@ -458,6 +466,7 @@ impl<'s> EventConsumer<'s> {
             .extension("kunai")
             .extension("gen")
             .extension("gene")
+            .sort(true)
             // don't go recursive
             .max_depth(0);
 
@@ -555,7 +564,7 @@ impl<'s> EventConsumer<'s> {
         for (tk, pk) in self
             .tasks
             .iter()
-            .map(|(&k, v)| (k, v.parent_key))
+            .map(|(&k, v)| (k, v.real_parent_key))
             .collect::<Vec<(TaskKey, Option<TaskKey>)>>()
         {
             if let Some(parent) = pk {
@@ -625,10 +634,13 @@ impl<'s> EventConsumer<'s> {
             container: None,
             cgroups,
             nodename: None,
-            parent_key,
+            real_parent_key: parent_key,
+            kernel_task_info: None,
             threads: HashSet::new(),
+            execved: true,
             procfs: true,
             exit: false,
+            zombie: false,
         };
 
         self.tasks.insert(tk, task);
@@ -676,7 +688,7 @@ impl<'s> EventConsumer<'s> {
                 skip -= 1;
             }
 
-            tk = match task.parent_key {
+            tk = match task.real_parent_key {
                 Some(v) => v,
                 None => {
                     break;
@@ -700,9 +712,11 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     fn get_parent_image(&self, i: &StdEventInfo) -> String {
-        let ck = i.parent_key();
+        let ck = i.task_key();
         self.tasks
             .get(&ck)
+            .and_then(|t| t.real_parent_key)
+            .and_then(|ptk| self.tasks.get(&ptk))
             .map(|c| c.image.to_string_lossy().to_string())
             .unwrap_or("?".into())
     }
@@ -789,12 +803,12 @@ impl<'s> EventConsumer<'s> {
         info: StdEventInfo,
         event: &bpf_events::ExecveEvent,
     ) -> UserEvent<ExecveData> {
-        let ancestors = self.get_ancestors(info.parent_key(), 0);
+        let ancestors = self.get_ancestors_string(&info);
 
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
 
         let mut data = ExecveData {
-            ancestors: ancestors.join("|"),
+            ancestors,
             parent_exe: self.get_parent_image(&info),
             command_line: event.data.argv.to_command_line(),
             exe: self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
@@ -1260,7 +1274,7 @@ impl<'s> EventConsumer<'s> {
 
         let etype = event.ty();
         // cleanup tasks when process exits
-        if (matches!(etype, Type::Exit) && info.info.process.pid == info.info.process.tgid)
+        if (matches!(etype, Type::Exit) && info.task_info().pid == info.task_info().tgid)
             || matches!(etype, Type::ExitGroup)
         {
             let tk = info.task_key();
@@ -1277,7 +1291,13 @@ impl<'s> EventConsumer<'s> {
                 // in case on exit_group we need to clean child
                 // threads properly
                 if matches!(etype, Type::ExitGroup) {
-                    remove_threads.extend(t.threads.clone());
+                    remove_threads.extend(
+                        t.threads
+                            .iter()
+                            // we must remove only threads that did not execve-d
+                            .filter(|&t| self.tasks.get(t).map(|t| !t.execved).unwrap_or_default())
+                            .clone(),
+                    );
                 }
 
                 if t.threads.is_empty() && !t.procfs {
@@ -1323,10 +1343,16 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::CorrelationEvent,
     ) {
         let ck = info.task_key();
+        let mut parent_key = info.parent_key();
+        let execve_flag = matches!(event.data.origin, Type::Execve | Type::ExecveScript);
 
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
-        if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
+        if execve_flag {
+            if let Some(p) = self.tasks.get(&ck).and_then(|t| t.real_parent_key) {
+                // we keep track of real parent_key in case of zombie task
+                parent_key = p;
+            }
             self.tasks.remove(&ck);
         }
 
@@ -1348,7 +1374,7 @@ impl<'s> EventConsumer<'s> {
             None => vec![cgroup.to_string()],
             Some(_) => {
                 if let Ok(cgroups) =
-                    procfs::process::Process::new(info.info.process.pid).and_then(|p| p.cgroups())
+                    procfs::process::Process::new(info.task_info().pid).and_then(|p| p.cgroups())
                 {
                     // we return cgroup from procfs
                     cgroups
@@ -1360,8 +1386,8 @@ impl<'s> EventConsumer<'s> {
                     // we report an error
                     warn!(
                         "failed to resolve cgroup for pid={} guuid={}",
-                        info.info.process.pid,
-                        info.info.process.tg_uuid.into_uuid().hyphenated()
+                        info.task_info().pid,
+                        info.task_info().tg_uuid.into_uuid().hyphenated()
                     );
                     // still get a chance to do something with cgroup
                     vec![cgroup.to_string()]
@@ -1372,12 +1398,12 @@ impl<'s> EventConsumer<'s> {
         let mut container_type = Container::from_cgroups(&cgroups);
 
         if container_type.is_none() {
-            let ancestors = self.get_ancestors(info.parent_key(), 0);
+            let ancestors = self.get_ancestors(parent_key, 0);
             container_type = Container::from_ancestors(&ancestors);
         }
 
         let image = {
-            if info.info.process.is_kernel_thread() {
+            if info.task_info().is_kernel_thread() {
                 KERNEL_IMAGE.into()
             } else {
                 event.data.exe.to_path_buf()
@@ -1387,7 +1413,7 @@ impl<'s> EventConsumer<'s> {
         // we update parent's information
         if matches!(event.data.origin, Type::Clone) {
             // the source is a Clone event so our task has spawned a child thread
-            self.tasks.entry(info.parent_key()).and_modify(|e| {
+            self.tasks.entry(parent_key).and_modify(|e| {
                 e.threads.insert(info.task_key());
             });
         }
@@ -1396,32 +1422,75 @@ impl<'s> EventConsumer<'s> {
         self.tasks.entry(ck).or_insert(Task {
             image,
             command_line: event.data.argv.to_argv(),
-            pid: info.info.process.tgid,
-            flags: info.info.process.flags,
+            pid: info.task_info().tgid,
+            flags: info.task_info().flags,
             resolved: HashMap::new(),
             container: container_type,
             cgroups,
             nodename: event.data.nodename(),
-            parent_key: Some(info.parent_key()),
+            real_parent_key: Some(parent_key),
+            kernel_task_info: Some(*info.task_info()),
             threads: HashSet::new(),
+            execved: execve_flag,
             procfs: false,
             exit: false,
+            zombie: false,
         });
     }
 
     #[inline(always)]
     fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
-        let opt_mnt_ns = Self::task_mnt_ns(&info.info);
+        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
         self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.path));
+    }
+
+    #[inline(always)]
+    fn track_zombie_task(&mut self, std_info: &mut StdEventInfo) {
+        // we need to find if task is a zombie and replace
+        // its parent with the real one if needed
+        if let Some(kti) = self
+            .tasks
+            .get_mut(&std_info.task_key())
+            .and_then(|t| {
+                if t.zombie
+                    || (t.real_parent_key.is_some()
+                        && t.real_parent_key != Some(std_info.parent_key()))
+                {
+                    // task is a zombie
+                    t.zombie = true;
+                    // we must continue with the real parent task key
+                    t.real_parent_key
+                } else {
+                    None
+                }
+            })
+            // we get real parent
+            .and_then(|tk| self.tasks.get(&tk))
+            // we get real parent's TaskInfo
+            .and_then(|t| t.kernel_task_info)
+        {
+            // if we arrive here, this means the task is a zombie
+            // and we need to replace its parent by the real one
+            std_info.bpf.parent = kti;
+            std_info.bpf.process.zombie = true
+        }
+
+        // we must set the zombie flag of the parent if needed
+        if self
+            .tasks
+            .get(&std_info.parent_key())
+            .map(|t| t.zombie)
+            .unwrap_or_default()
+        {
+            std_info.bpf.parent.zombie = true
+        }
     }
 
     #[inline(always)]
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let opt_mnt_ns = Self::task_mnt_ns(&i);
 
-        let std_info = StdEventInfo::from_bpf(i, self.random);
-
-        let cd = self.tasks.get(&std_info.task_key());
+        let mut std_info = StdEventInfo::from_bpf(i, self.random);
 
         let host = kunai::info::HostInfo {
             name: self.system_info.hostname.clone(),
@@ -1432,12 +1501,15 @@ impl<'s> EventConsumer<'s> {
 
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
+                let t = self.tasks.get(&std_info.task_key());
                 container = Some(kunai::info::ContainerInfo {
-                    name: cd.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
-                    ty: cd.and_then(|cd| cd.container),
+                    name: t.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
+                    ty: t.and_then(|cd| cd.container),
                 });
             }
         }
+
+        self.track_zombie_task(&mut std_info);
 
         std_info.with_additional_info(AdditionalInfo { host, container })
     }
@@ -1684,10 +1756,10 @@ impl<'s> EventConsumer<'s> {
                             &bpf_events::CorrelationEvent::from(e),
                         );
 
-                        if self.filter.is_enabled(std_info.info.etype) {
+                        if self.filter.is_enabled(std_info.bpf.etype) {
                             // we have to rebuild std_info as it has it is uses correlation
                             // information
-                            let std_info = self.build_std_event_info(std_info.info);
+                            let std_info = self.build_std_event_info(std_info.bpf);
                             let mut e = self.execve_event(std_info, e);
 
                             self.scan_and_print(&mut e);
@@ -1710,7 +1782,7 @@ impl<'s> EventConsumer<'s> {
                     if self.filter.is_enabled(Type::Clone) {
                         // we have to rebuild std_info as it has it is uses correlation
                         // information
-                        let std_info = self.build_std_event_info(std_info.info);
+                        let std_info = self.build_std_event_info(std_info.bpf);
                         let mut e = self.clone_event(std_info, e);
                         self.scan_and_print(&mut e);
                     }

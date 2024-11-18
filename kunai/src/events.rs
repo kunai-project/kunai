@@ -68,10 +68,10 @@ impl From<&StdEventInfo> for EventSection {
     fn from(value: &StdEventInfo) -> Self {
         Self {
             source: "kunai".into(),
-            id: value.info.etype.id(),
-            name: value.info.etype.to_string(),
-            uuid: value.info.uuid.into_uuid().hyphenated().to_string(),
-            batch: value.info.batch,
+            id: value.bpf.etype.id(),
+            name: value.bpf.etype.to_string(),
+            uuid: value.bpf.uuid.into_uuid().hyphenated().to_string(),
+            batch: value.bpf.batch,
         }
     }
 }
@@ -98,6 +98,7 @@ pub struct TaskSection {
     pub namespaces: Option<NamespaceInfo>,
     #[serde(with = "u32_hex")]
     pub flags: u32,
+    pub zombie: bool,
 }
 
 impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
@@ -111,6 +112,7 @@ impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
             gid: value.gid,
             namespaces: value.namespaces.map(|ns| ns.into()),
             flags: value.flags,
+            zombie: value.zombie,
         }
     }
 }
@@ -196,13 +198,13 @@ impl From<StdEventInfo> for EventInfo {
             },
             event: EventSection {
                 source: "kunai".into(),
-                id: value.info.etype.id(),
-                name: value.info.etype.to_string(),
-                uuid: value.info.uuid.into_uuid().hyphenated().to_string(),
-                batch: value.info.batch,
+                id: value.bpf.etype.id(),
+                name: value.bpf.etype.to_string(),
+                uuid: value.bpf.uuid.into_uuid().hyphenated().to_string(),
+                batch: value.bpf.batch,
             },
-            task: value.info.process.into(),
-            parent_task: value.info.parent.into(),
+            task: value.bpf.process.into(),
+            parent_task: value.bpf.parent.into(),
             utc_time: value.utc_timestamp.into(),
         }
     }

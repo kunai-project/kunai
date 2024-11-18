@@ -1070,9 +1070,9 @@ checksum = "f81ec6369c545a7d40e4589b5597581fa1c441fe1cce96dd1de43159910a36a2"
 
 [[package]]
 name = "fs-walk"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "445ee222cddb7095a1c08f94b6fe4926e2c93b389c4f71b65ab38bfa19227f48"
+checksum = "b916d76dbd9446be6a7266359cf633cad350b61a96ac7ff936d13c24f88cf4bc"
 
 [[package]]
 name = "fs4"
