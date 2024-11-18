@@ -89,17 +89,20 @@ struct Task {
     // needs to be vec because of procfs
     cgroups: Vec<String>,
     nodename: Option<String>,
-    // this is the TaskKey retrieved from eBPF
-    parent_key: Option<TaskKey>,
     // this is the TaskKey from correlation
     real_parent_key: Option<TaskKey>,
     threads: HashSet<TaskKey>,
     // ebpf task info for this task
     kernel_task_info: Option<TaskInfo>,
+    // execve state of the task
+    execved: bool,
     // flag telling if this task comes from procfs
     // parsing at kunai start
     procfs: bool,
+    // exit state of the task
     exit: bool,
+    // zombie state of the task
+    zombie: bool,
 }
 
 impl Task {
@@ -107,11 +110,6 @@ impl Task {
     fn is_kthread(&self) -> bool {
         // check if flag contains PF_KTHREAD
         self.flags & 0x00200000 == 0x00200000
-    }
-
-    #[inline(always)]
-    fn is_zombie(&self) -> bool {
-        self.parent_key.is_some() && self.parent_key != self.real_parent_key
     }
 
     #[inline(always)]
@@ -468,6 +466,7 @@ impl<'s> EventConsumer<'s> {
             .extension("kunai")
             .extension("gen")
             .extension("gene")
+            .sort(true)
             // don't go recursive
             .max_depth(0);
 
@@ -635,12 +634,13 @@ impl<'s> EventConsumer<'s> {
             container: None,
             cgroups,
             nodename: None,
-            parent_key,
             real_parent_key: parent_key,
             kernel_task_info: None,
             threads: HashSet::new(),
+            execved: true,
             procfs: true,
             exit: false,
+            zombie: false,
         };
 
         self.tasks.insert(tk, task);
@@ -1291,7 +1291,13 @@ impl<'s> EventConsumer<'s> {
                 // in case on exit_group we need to clean child
                 // threads properly
                 if matches!(etype, Type::ExitGroup) {
-                    remove_threads.extend(t.threads.clone());
+                    remove_threads.extend(
+                        t.threads
+                            .iter()
+                            // we must remove only threads that did not execve-d
+                            .filter(|&t| self.tasks.get(t).map(|t| !t.execved).unwrap_or_default())
+                            .clone(),
+                    );
                 }
 
                 if t.threads.is_empty() && !t.procfs {
@@ -1338,11 +1344,13 @@ impl<'s> EventConsumer<'s> {
     ) {
         let ck = info.task_key();
         let mut parent_key = info.parent_key();
+        let execve_flag = matches!(event.data.origin, Type::Execve | Type::ExecveScript);
 
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
-        if matches!(event.data.origin, Type::Execve | Type::ExecveScript) {
+        if execve_flag {
             if let Some(p) = self.tasks.get(&ck).and_then(|t| t.real_parent_key) {
+                // we keep track of real parent_key in case of zombie task
                 parent_key = p;
             }
             self.tasks.remove(&ck);
@@ -1420,12 +1428,13 @@ impl<'s> EventConsumer<'s> {
             container: container_type,
             cgroups,
             nodename: event.data.nodename(),
-            parent_key: Some(info.parent_key()),
             real_parent_key: Some(parent_key),
             kernel_task_info: Some(*info.task_info()),
             threads: HashSet::new(),
+            execved: execve_flag,
             procfs: false,
             exit: false,
+            zombie: false,
         });
     }
 
@@ -1436,18 +1445,20 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
-    fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
-        let opt_mnt_ns = Self::task_mnt_ns(&i);
-
-        let mut std_info = StdEventInfo::from_bpf(i, self.random);
-
+    fn track_zombie_task(&mut self, std_info: &mut StdEventInfo) {
         // we need to find if task is a zombie and replace
         // its parent with the real one if needed
         if let Some(kti) = self
             .tasks
-            .get(&std_info.task_key())
+            .get_mut(&std_info.task_key())
             .and_then(|t| {
-                if t.real_parent_key.is_some() && t.real_parent_key != Some(std_info.parent_key()) {
+                if t.zombie
+                    || (t.real_parent_key.is_some()
+                        && t.real_parent_key != Some(std_info.parent_key()))
+                {
+                    // task is a zombie
+                    t.zombie = true;
+                    // we must continue with the real parent task key
                     t.real_parent_key
                 } else {
                     None
@@ -1468,11 +1479,18 @@ impl<'s> EventConsumer<'s> {
         if self
             .tasks
             .get(&std_info.parent_key())
-            .map(|t| t.is_zombie())
+            .map(|t| t.zombie)
             .unwrap_or_default()
         {
             std_info.bpf.parent.zombie = true
         }
+    }
+
+    #[inline(always)]
+    fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
+        let opt_mnt_ns = Self::task_mnt_ns(&i);
+
+        let mut std_info = StdEventInfo::from_bpf(i, self.random);
 
         let host = kunai::info::HostInfo {
             name: self.system_info.hostname.clone(),
@@ -1490,6 +1508,8 @@ impl<'s> EventConsumer<'s> {
                 });
             }
         }
+
+        self.track_zombie_task(&mut std_info);
 
         std_info.with_additional_info(AdditionalInfo { host, container })
     }
