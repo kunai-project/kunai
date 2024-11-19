@@ -95,8 +95,6 @@ struct Process {
     children: HashSet<ProcKey>,
     // ebpf task info for this task
     kernel_task_info: Option<TaskInfo>,
-    // execve state of the task
-    execved: bool,
     // flag telling if this task comes from procfs
     // parsing at kunai start
     procfs: bool,
@@ -638,7 +636,6 @@ impl<'s> EventConsumer<'s> {
             real_parent_key: parent_key,
             kernel_task_info: None,
             children: HashSet::new(),
-            execved: true,
             procfs: true,
             exit: false,
             zombie: false,
@@ -1278,62 +1275,27 @@ impl<'s> EventConsumer<'s> {
         if (matches!(etype, Type::Exit) && info.task_info().pid == info.task_info().tgid)
             || matches!(etype, Type::ExitGroup)
         {
-            let tk = info.process_key();
+            let pk = info.process_key();
 
-            // we are exiting so our parent has one child less
-            self.processes.entry(info.parent_key()).and_modify(|t| {
-                t.children.remove(&tk);
-            });
-
-            // hashset of threads to be removed
-            let mut remove_threads = HashSet::new();
-
-            if let Some(t) = self.processes.get(&tk) {
-                // in case on exit_group we need to clean child
-                // threads properly
-                if matches!(etype, Type::ExitGroup) {
-                    remove_threads.extend(
-                        t.children
-                            .iter()
-                            // we must remove only threads that did not execve-d
-                            .filter(|&t| {
-                                self.processes
-                                    .get(t)
-                                    .map(|t| !t.execved)
-                                    .unwrap_or_default()
-                            })
-                            .clone(),
-                    );
-                }
-
-                if t.children.is_empty() && !t.procfs {
-                    // if the task has no child and is not coming from procfs
+            if let Some(t) = self.processes.get(&pk) {
+                if !self.proc_has_running_descendent(&pk) && !t.procfs {
+                    // if the task has no descendent and is not coming from procfs
                     // we can remove it from the table.
-                    self.processes.remove(&tk);
+                    self.processes.remove(&pk);
                 } else {
-                    // we can free up some memory and tag the task as exited
-                    self.processes.entry(tk).and_modify(|t| t.on_exit());
-                }
-            }
-
-            if !remove_threads.is_empty() {
-                // as parent we can decrease the number of our children
-                self.processes
-                    .entry(tk)
-                    .and_modify(|t| t.children.retain(|k| !remove_threads.contains(k)));
-
-                // for every child, we mark it as exited
-                for c in remove_threads {
-                    self.processes.entry(c).and_modify(|t| t.on_exit());
+                    // the process has some running descendent, thus it needs to be
+                    // kept in the table to construct a sound ancestors list for descendent(s).
+                    // However we can free up some memory and tag the task as exited
+                    self.processes.entry(pk).and_modify(|t| t.on_exit());
                 }
             }
 
             // we trigger some very specific cleanup
             if self.exited_tasks % 1000 == 0 {
-                // we remove shadow tasks exited with no child
-                self.processes
-                    .retain(|_, t| !(t.exit && t.children.is_empty()));
-                // shrinking tasks HashMap
+                let shadow_proc = self.find_shadow_procs();
+                // we remove shadow processes
+                self.processes.retain(|pk, _| !shadow_proc.contains(pk));
+                // shrinking processes HashMap
                 self.processes.shrink_to_fit();
             }
 
@@ -1343,28 +1305,86 @@ impl<'s> EventConsumer<'s> {
         UserEvent::new(data, info)
     }
 
+    // shadow processes are processes still in the hashmap but which have exited and
+    // have all descendents exited. They are not useful anymore because they are not needed
+    // to reconstruct ancestors.
+    #[inline(always)]
+    fn find_shadow_procs(&self) -> HashSet<ProcKey> {
+        let mut no_running_desc = HashSet::with_capacity(self.processes.len());
+
+        for pk in self
+            .processes
+            .iter()
+            // we don't process collected from procfs
+            .filter(|(_, p)| !p.procfs)
+            // we don't want running processes
+            .filter(|(_, p)| p.exit)
+            .map(|(k, _)| *k)
+        {
+            // if our parent has no running descendent we know we do too
+            if let Some(rpk) = self
+                .processes
+                .get(&pk)
+                .and_then(|p| p.real_parent_key)
+                .as_ref()
+            {
+                if no_running_desc.contains(rpk) {
+                    no_running_desc.insert(pk);
+                    continue;
+                }
+            }
+
+            if !self.proc_has_running_descendent(&pk) {
+                no_running_desc.insert(pk);
+            }
+        }
+
+        no_running_desc
+    }
+
+    #[inline(always)]
+    fn proc_has_running_descendent(&self, pk: &ProcKey) -> bool {
+        if let Some(p) = self.processes.get(pk) {
+            for ck in p.children.iter() {
+                if let Some(child) = self.processes.get(ck) {
+                    // if we have one child that didn't exit
+                    if !child.exit {
+                        return true;
+                    }
+
+                    // if one descendent of our childen is running
+                    if self.proc_has_running_descendent(ck) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     #[inline(always)]
     fn handle_correlation_event(
         &mut self,
         info: StdEventInfo,
         event: &bpf_events::CorrelationEvent,
     ) {
-        let ck = info.process_key();
+        let pk = info.process_key();
         let mut parent_key = info.parent_key();
         let execve_flag = matches!(event.data.origin, Type::Execve | Type::ExecveScript);
 
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
         if execve_flag {
-            if let Some(p) = self.processes.get(&ck).and_then(|t| t.real_parent_key) {
+            if let Some(p) = self.processes.get(&pk).and_then(|p| p.real_parent_key) {
                 // we keep track of real parent_key in case of zombie task
                 parent_key = p;
             }
-            self.processes.remove(&ck);
+            // we start from scratch with this process
+            self.processes.remove(&pk);
         }
 
         // early return if task key exists
-        if let Some(v) = self.processes.get_mut(&ck) {
+        if let Some(v) = self.processes.get_mut(&pk) {
             // we fix nodename if not set yet
             // tasks init from procfs are lacking nodename
             if v.nodename.is_none() {
@@ -1418,15 +1438,13 @@ impl<'s> EventConsumer<'s> {
         };
 
         // we update parent's information
-        if matches!(event.data.origin, Type::Clone) {
-            // the source is a Clone event so our task has spawned a child thread
-            self.processes.entry(parent_key).and_modify(|e| {
-                e.children.insert(info.process_key());
-            });
-        }
+        // we track children processes, not tasks
+        self.processes.entry(parent_key).and_modify(|e| {
+            e.children.insert(info.process_key());
+        });
 
         // we insert only if not existing
-        self.processes.entry(ck).or_insert(Process {
+        self.processes.entry(pk).or_insert(Process {
             image,
             command_line: event.data.argv.to_argv(),
             pid: info.task_info().tgid,
@@ -1438,7 +1456,6 @@ impl<'s> EventConsumer<'s> {
             real_parent_key: Some(parent_key),
             kernel_task_info: Some(*info.task_info()),
             children: HashSet::new(),
-            execved: execve_flag,
             procfs: false,
             exit: false,
             zombie: false,
@@ -1914,8 +1931,14 @@ impl<'s> EventConsumer<'s> {
 
             Type::Exit | Type::ExitGroup => match event!(enc_event, bpf_events::ExitEvent) {
                 Ok(e) => {
+                    let ty = std_info.bpf.etype;
                     let mut e = self.exit_event(std_info, e);
-                    self.scan_and_print(&mut e);
+                    // exit and exit_group will always reach consumer as they are used
+                    // to clean up the processes HashMap. So we need to check if we want
+                    // to display those only now.
+                    if self.filter.is_enabled(ty) {
+                        self.scan_and_print(&mut e);
+                    }
                 }
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
@@ -2261,7 +2284,15 @@ impl EventProducer {
                         // filtering out unwanted events but let Excve/Clone go as those are used
                         // for correlation on consumer side.
                         if ep.filter.is_disabled(etype)
-                            && !matches!(etype, Type::Execve | Type::ExecveScript | Type::Clone)
+                            && !matches!(
+                                etype,
+                                Type::Execve
+                                    | Type::ExecveScript
+                                    | Type::Clone
+                                    // exit and exit_group are used to cleanup hashmap
+                                    | Type::Exit
+                                    | Type::ExitGroup
+                            )
                         {
                             continue;
                         }
