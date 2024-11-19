@@ -2,7 +2,7 @@ use crate::buffer::Buffer;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
 use crate::macros::{bpf_target_code, not_bpf_target_code};
-use crate::uuid::{TaskUuid, Uuid};
+use crate::uuid::{ProcUuid, Uuid};
 use kunai_macros::{BpfError, StrEnum};
 
 not_bpf_target_code! {
@@ -173,13 +173,13 @@ pub struct TaskInfo {
     pub comm: [u8; COMM_SIZE],
     pub uid: u32,
     pub gid: u32,
-    // task group id
+    // task group id in kernel or pid in userland
     // when program is single threaded tgid == pid
     pub tgid: i32,
-    // task pid -> pid of the thread
+    // task pid -> pid of the thread == thread id
     pub pid: i32,
     // task group uuid -> used to group tasks
-    pub tg_uuid: TaskUuid,
+    pub tg_uuid: ProcUuid,
     pub namespaces: Option<Namespaces>,
     pub start_time: u64,
 }
