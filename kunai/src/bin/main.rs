@@ -938,13 +938,11 @@ impl<'s> EventConsumer<'s> {
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
         let mmapped_hashes = self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&filename));
 
-        let ck = info.process_key();
-
-        let exe = self.get_exe(ck);
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let data = kunai::events::MmapExecData {
             ancestors: self.get_ancestors_string(&info),
-            command_line: self.get_command_line(ck),
+            command_line,
             exe: exe.into(),
             mapped: mmapped_hashes,
         };
@@ -959,9 +957,7 @@ impl<'s> EventConsumer<'s> {
         event: &bpf_events::DnsQueryEvent,
     ) -> Vec<UserEvent<DnsQueryData>> {
         let mut out = vec![];
-        let ck = info.process_key();
-        let exe = self.get_exe(ck);
-        let command_line = self.get_command_line(ck);
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         let src: SockAddr = event.data.src.into();
         let dst: SockAddr = event.data.dst.into();
