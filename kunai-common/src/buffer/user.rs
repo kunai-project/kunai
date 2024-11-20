@@ -4,11 +4,6 @@ use super::Buffer;
 
 impl<const N: usize> Buffer<N> {
     #[inline]
-    pub fn to_command_line(&self) -> String {
-        self.to_argv().join(" ")
-    }
-
-    #[inline]
     pub fn to_argv(&self) -> Vec<String> {
         self.as_slice()
             .split(|&b| b == b'\0')
