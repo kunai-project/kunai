@@ -2414,6 +2414,10 @@ struct ReplayOpt {
     #[arg(short, long, value_name = "FILE")]
     ioc_file: Option<Vec<String>>,
 
+    /// Minimal severity required to show detection
+    #[arg(long, short = 's')]
+    min_severity: Option<u8>,
+
     log_files: Vec<String>,
 }
 
@@ -2436,6 +2440,11 @@ impl TryFrom<ReplayOpt> for Config {
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
             conf.scanner.iocs = iocs;
+        }
+
+        // supersedes configuration
+        if let Some(min_severity) = opt.min_severity {
+            conf.scanner.min_severity = min_severity;
         }
 
         Ok(conf)
