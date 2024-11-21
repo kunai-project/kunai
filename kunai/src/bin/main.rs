@@ -367,7 +367,7 @@ impl<'s> EventConsumer<'s> {
         let mut c = yara_x::Compiler::new();
 
         let mut files_loaded = 0;
-        for p in self.config.yara.iter() {
+        for p in self.config.scanner.yara.iter() {
             debug!("looking for yara rules in: {}", p);
             let w = wo.clone().walk(p);
             for r in w {
@@ -452,7 +452,7 @@ impl<'s> EventConsumer<'s> {
 
     fn init_event_scanner(&mut self) -> anyhow::Result<()> {
         // loading rules in the engine
-        if self.config.rules.is_empty() {
+        if self.config.scanner.rules.is_empty() {
             return Ok(());
         }
 
@@ -469,7 +469,7 @@ impl<'s> EventConsumer<'s> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.rules.clone().iter().map(PathBuf::from) {
+        for p in self.config.scanner.rules.clone().iter().map(PathBuf::from) {
             if !p.exists() {
                 error!(
                     "kunai rule loader: no such file or directory {}",
@@ -494,7 +494,7 @@ impl<'s> EventConsumer<'s> {
 
     fn init_iocs(&mut self) -> anyhow::Result<()> {
         // loading iocs
-        if self.config.iocs.is_empty() {
+        if self.config.scanner.iocs.is_empty() {
             return Ok(());
         }
 
@@ -507,7 +507,7 @@ impl<'s> EventConsumer<'s> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.iocs.clone().iter().map(PathBuf::from) {
+        for p in self.config.scanner.iocs.clone().iter().map(PathBuf::from) {
             if !p.exists() {
                 error!(
                     "ioc file loader: no such file or directory {}",
@@ -1690,7 +1690,10 @@ impl<'s> EventConsumer<'s> {
             // - we can force printing positive scans even if there is no filtering rule for it
             // - an attempt to print the event if there is an error was made but it generates
             // noisy events. A better way to handle scan errors is to create a filtering rule
-            if !got_printed && self.config.always_show_positive_scans && event.data.positives > 0 {
+            if !got_printed
+                && self.config.scanner.show_positive_file_scan
+                && event.data.positives > 0
+            {
                 match serde_json::to_string(&event) {
                     Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
                     Err(e) => error!("failed to serialize event to json: {e}"),
@@ -1702,39 +1705,46 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
+    fn serialize_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> bool {
+        match serde_json::to_string(event) {
+            Ok(ser) => {
+                writeln!(self.output, "{ser}").expect("failed to write json event");
+                return true;
+            }
+            Err(e) => error!("failed to serialize event to json: {e}"),
+        }
+        false
+    }
+
+    #[inline(always)]
     fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> bool {
         let mut printed = false;
-
-        macro_rules! print_serialized {
-            ($event:expr) => {
-                match serde_json::to_string($event) {
-                    Ok(ser) => {
-                        writeln!(self.output, "{ser}").expect("failed to write json event");
-                        printed = true;
-                    }
-                    Err(e) => error!("failed to serialize event to json: {e}"),
-                }
-            };
-        }
 
         // default: we have neither rules nor iocs
         // to scan for so we print event
         if self.iocs.is_empty() && self.engine.is_empty() {
-            print_serialized!(event);
-            return printed;
+            return self.serialize_print(event);
         }
 
         // scan for iocs and filter/matching rules
         if let Some(sr) = self.scan(event) {
             if sr.is_detection() {
+                let severity = sr.severity;
                 event.set_detection(sr);
-                print_serialized!(event);
+
+                // we print event only if needed
+                printed = if severity >= self.config.scanner.min_severity {
+                    self.serialize_print(event)
+                } else {
+                    false
+                };
+
                 // get_detection will always be false for filters
                 if let Some(sr) = event.get_detection() {
                     self.handle_actions(event, &sr.actions, true);
                 }
             } else if sr.is_only_filter() {
-                print_serialized!(event);
+                printed = self.serialize_print(event);
                 self.handle_actions(event, &sr.actions, false);
             }
         }
@@ -2404,6 +2414,10 @@ struct ReplayOpt {
     #[arg(short, long, value_name = "FILE")]
     ioc_file: Option<Vec<String>>,
 
+    /// Minimal severity required to show detection
+    #[arg(long, short = 's')]
+    min_severity: Option<u8>,
+
     log_files: Vec<String>,
 }
 
@@ -2420,12 +2434,17 @@ impl TryFrom<ReplayOpt> for Config {
 
         // supersedes configuration
         if let Some(rules) = opt.rule_file {
-            conf.rules = rules;
+            conf.scanner.rules = rules;
         }
 
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
-            conf.iocs = iocs;
+            conf.scanner.iocs = iocs;
+        }
+
+        // supersedes configuration
+        if let Some(min_severity) = opt.min_severity {
+            conf.scanner.min_severity = min_severity;
         }
 
         Ok(conf)
@@ -2478,6 +2497,10 @@ struct RunOpt {
     /// Yara rules dir/file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
     yara_rules: Option<Vec<String>>,
+
+    /// Minimal severity required to show detection
+    #[arg(long)]
+    min_severity: Option<u8>,
 }
 
 impl TryFrom<RunOpt> for Config {
@@ -2496,17 +2519,17 @@ impl TryFrom<RunOpt> for Config {
 
         // supersedes configuration
         if let Some(rules) = opt.rule_file {
-            conf.rules = rules;
+            conf.scanner.rules = rules;
         }
 
         // supersedes configuration
         if let Some(iocs) = opt.ioc_file {
-            conf.iocs = iocs;
+            conf.scanner.iocs = iocs;
         }
 
         // supersedes configuration
         if let Some(yara_rules) = opt.yara_rules {
-            conf.yara = yara_rules;
+            conf.scanner.yara = yara_rules;
         }
 
         // supersedes configuration if true
@@ -2515,8 +2538,13 @@ impl TryFrom<RunOpt> for Config {
         }
 
         // we want to increase max_buffered_events
-        if opt.max_buffered_events.is_some() {
-            conf.max_buffered_events = opt.max_buffered_events.unwrap();
+        if let Some(max_buffered_events) = opt.max_buffered_events {
+            conf.max_buffered_events = max_buffered_events;
+        }
+
+        // supersedes configuration
+        if let Some(min_severity) = opt.min_severity {
+            conf.scanner.min_severity = min_severity
         }
 
         // we configure min len for send_data events
