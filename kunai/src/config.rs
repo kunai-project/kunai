@@ -46,6 +46,15 @@ pub struct FileSettings {
     pub max_size: ByteSize,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Scanner {
+    pub rules: Vec<String>,
+    pub iocs: Vec<String>,
+    pub yara: Vec<String>,
+    pub min_severity: u8,
+    pub show_positive_file_scan: bool,
+}
+
 /// Kunai configuration structure to be used in userland
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -55,11 +64,8 @@ pub struct Config {
     pub max_buffered_events: u16,
     pub workers: Option<usize>,
     pub send_data_min_len: Option<u64>,
-    pub rules: Vec<String>,
-    pub iocs: Vec<String>,
-    pub yara: Vec<String>,
-    pub always_show_positive_scans: bool,
     pub harden: bool,
+    pub scanner: Scanner,
     pub events: BTreeMap<bpf_events::Type, Event>,
 }
 
@@ -85,10 +91,13 @@ impl Default for Config {
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
             workers: None,
             send_data_min_len: None,
-            rules: vec![],
-            iocs: vec![],
-            yara: vec![],
-            always_show_positive_scans: true,
+            scanner: Scanner {
+                rules: vec![],
+                iocs: vec![],
+                yara: vec![],
+                min_severity: 0,
+                show_positive_file_scan: true,
+            },
             harden: false,
             events,
         }
