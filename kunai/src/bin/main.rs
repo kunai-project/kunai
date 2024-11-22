@@ -1619,6 +1619,7 @@ impl<'s> EventConsumer<'s> {
                 match serde_json::to_string($event) {
                     Ok(ser) => {
                         writeln!(self.output, "{ser}").expect("failed to write json event");
+                        self.output.flush().unwrap();
                         printed = true;
                     }
                     Err(e) => error!("failed to serialize event to json: {e}"),
