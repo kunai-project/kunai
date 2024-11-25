@@ -4,7 +4,7 @@ use kunai_common::{
     config::{BpfConfig, Filter, Loader},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs};
 use thiserror::Error;
 
 pub const DEFAULT_SEND_DATA_MIN_LEN: u64 = 256;
@@ -41,9 +41,11 @@ impl Event {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FileSettings {
-    pub rotate_size: ByteSize,
-    pub max_size: ByteSize,
+pub struct Output {
+    pub path: String,
+    pub rotate_size: Option<ByteSize>,
+    pub max_size: Option<ByteSize>,
+    pub buffered: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -59,12 +61,11 @@ pub struct Scanner {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     host_uuid: Option<uuid::Uuid>,
-    pub output: String,
-    pub output_settings: Option<FileSettings>,
     pub max_buffered_events: u16,
     pub workers: Option<usize>,
     pub send_data_min_len: Option<u64>,
     pub harden: bool,
+    pub output: Output,
     pub scanner: Scanner,
     pub events: BTreeMap<bpf_events::Type, Event>,
 }
@@ -86,8 +87,12 @@ impl Default for Config {
 
         Self {
             host_uuid: None,
-            output: "/dev/stdout".into(),
-            output_settings: None,
+            output: Output {
+                path: "/dev/stdout".into(),
+                max_size: None,
+                rotate_size: None,
+                buffered: false,
+            },
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
             workers: None,
             send_data_min_len: None,
@@ -137,18 +142,18 @@ impl Config {
         self
     }
 
-    pub fn output<P: AsRef<Path>>(mut self, p: P) -> Self {
-        self.output = p.as_ref().to_string_lossy().to_string();
-        self
-    }
-
-    pub fn output_settings(mut self, s: FileSettings) -> Self {
-        self.output_settings = Some(s);
+    pub fn output(mut self, o: Output) -> Self {
+        self.output = o;
         self
     }
 
     pub fn stdout_output(mut self) -> Self {
-        self.output = "stdout".into();
+        self.output = Output {
+            path: "stdout".into(),
+            max_size: None,
+            rotate_size: None,
+            buffered: false,
+        };
         self
     }
 
