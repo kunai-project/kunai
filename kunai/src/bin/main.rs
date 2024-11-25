@@ -68,7 +68,7 @@ use tokio::{task, time};
 
 use kunai::cache::*;
 
-use kunai::config::{Config, FileSettings};
+use kunai::config::{self, Config};
 use kunai::util::namespaces::{unshare, Namespace};
 use kunai::util::*;
 
@@ -261,7 +261,7 @@ struct EventConsumer<'s> {
 
 impl<'s> EventConsumer<'s> {
     fn prepare_output(config: &Config) -> anyhow::Result<Output> {
-        let output = match &config.output.as_str() {
+        let output = match &config.output.path.as_str() {
             &"stdout" => String::from("/dev/stdout"),
             &"stderr" => String::from("/dev/stderr"),
             v => v.to_string(),
@@ -282,19 +282,20 @@ impl<'s> EventConsumer<'s> {
                     }
                 }
 
-                match config.output_settings.as_ref() {
-                    Some(s) => firo::OpenOptions::new()
-                        .mode(0o600)
-                        .max_size(s.max_size)
-                        .trigger(s.rotate_size.into())
-                        .compression(firo::Compression::Gzip)
-                        .create_append(v)?
-                        .into(),
-                    None => firo::OpenOptions::new()
-                        .mode(0o600)
-                        .create_append(v)?
-                        .into(),
+                let mut opts = firo::OpenOptions::new();
+
+                opts.mode(0o600);
+
+                if let Some(max_size) = config.output.max_size {
+                    opts.max_size(max_size);
                 }
+
+                if let Some(rotate_size) = config.output.rotate_size {
+                    opts.trigger(rotate_size.into());
+                    opts.compression(firo::Compression::Gzip);
+                }
+
+                opts.create_append(v)?.into()
             }
         };
         Ok(out)
@@ -1709,6 +1710,12 @@ impl<'s> EventConsumer<'s> {
         match serde_json::to_string(event) {
             Ok(ser) => {
                 writeln!(self.output, "{ser}").expect("failed to write json event");
+                // if output is unbuffered we flush it
+                // unbuffered output allow to have logs written in near
+                // real-time into output file
+                if !self.config.output.buffered {
+                    self.output.flush().expect("failed to flush output");
+                }
                 return true;
             }
             Err(e) => error!("failed to serialize event to json: {e}"),
@@ -3088,10 +3095,11 @@ WantedBy=sysinit.target"#,
         let conf = Config::default()
             .harden(co.harden)
             .generate_host_uuid()
-            .output(log_path)
-            .output_settings(FileSettings {
-                rotate_size: huby::ByteSize::from_mb(10),
-                max_size: huby::ByteSize::from_gb(1),
+            .output(config::Output {
+                path: log_path.to_string_lossy().to_string(),
+                rotate_size: Some(huby::ByteSize::from_mb(10)),
+                max_size: Some(huby::ByteSize::from_gb(1)),
+                buffered: false,
             });
         println!(
             "Writing configuration file: {}",
@@ -3131,7 +3139,7 @@ WantedBy=sysinit.target"#,
             )
             .map_err(|e| anyhow!("failed to parse config file: {e}"))?;
 
-            PathBuf::from(config.output)
+            PathBuf::from(config.output.path)
         } else {
             // cannot panic as it is Some
             o.log_file.unwrap()

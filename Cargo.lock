@@ -1022,9 +1022,9 @@ dependencies = [
 
 [[package]]
 name = "firo"
-version = "0.1.4"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3543c7854eef24e0186ff049d0a562c5b9be91dfa52bce651f378c12b4a6631f"
+checksum = "0a337924a305b9019e74860f043dedcaca49e39b56c49a06610bfcbae686f1b4"
 dependencies = [
  "flate2",
  "huby",
@@ -1096,7 +1096,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e2b590b44c3294eac37266841b35032f2b0a7676104a0bb8a0141bf6ce1bf31"
 dependencies = [
- "gene_derive 0.2.1",
+ "gene_derive",
  "lazy_static",
  "pest",
  "pest_derive",
@@ -1104,17 +1104,6 @@ dependencies = [
  "serde",
  "serde_yaml",
  "thiserror",
-]
-
-[[package]]
-name = "gene_derive"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74fc284336058952bb572b00d7fa0e31fab6cd0b06b5bc7307ae0927f50d9b10"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.77",
 ]
 
 [[package]]
@@ -1450,7 +1439,7 @@ dependencies = [
  "firo",
  "fs-walk",
  "gene",
- "gene_derive 0.3.0",
+ "gene_derive",
  "hex",
  "huby",
  "ip_network",
