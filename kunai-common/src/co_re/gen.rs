@@ -366,6 +366,8 @@ pub struct file {
     pub f_inode: *mut inode,
     pub f_path: path,
     pub private_data: *mut ::core::ffi::c_void,
+    pub f_flags: ::core::ffi::c_uint,
+    pub f_mode: ::core::ffi::c_uint,
 }
 extern "C" {
     pub fn shim_file_f_path(file: *mut file) -> *mut path;
@@ -393,6 +395,24 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_file_private_data_exists(file: *mut file) -> bool;
+}
+extern "C" {
+    pub fn shim_file_f_flags(file: *mut file) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_file_f_flags_user(file: *mut file) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_file_f_flags_exists(file: *mut file) -> bool;
+}
+extern "C" {
+    pub fn shim_file_f_mode(file: *mut file) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_file_f_mode_user(file: *mut file) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_file_f_mode_exists(file: *mut file) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

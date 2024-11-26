@@ -242,11 +242,15 @@ struct file
 	struct inode *f_inode;
 	struct path f_path;
 	void *private_data;
+	unsigned int f_flags;
+	unsigned int f_mode;
 } __attribute__((preserve_access_index));
 
 SHIM_REF(file, f_path);
 SHIM(file, f_inode);
 SHIM(file, private_data);
+SHIM(file, f_flags);
+SHIM(file, f_mode);
 
 struct fd
 {
