@@ -56,6 +56,8 @@ pub type file = CoRe<gen::file>;
 impl file {
     rust_shim_kernel_impl!(pub, file, f_path, path);
     rust_shim_kernel_impl!(pub, file, f_inode, inode);
+    rust_shim_kernel_impl!(pub, file, f_flags, u32);
+    rust_shim_kernel_impl!(pub, file, f_mode, u32);
 
     #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {
