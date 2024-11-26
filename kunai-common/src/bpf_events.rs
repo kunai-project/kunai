@@ -115,6 +115,8 @@ pub enum Type {
     FileUnlink,
     #[str("write_close")]
     WriteClose,
+    #[str("file_create")]
+    FileCreate,
 
     // specific userland events
     // those should never be used in eBPF

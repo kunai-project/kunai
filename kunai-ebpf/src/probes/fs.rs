@@ -447,3 +447,45 @@ unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
     // and re-write the file
     file_unset_flag(&file, CLOSE_AFTER_WRITE)
 }
+
+const FMODE_CREATED: u32 = 0x100000;
+
+// this probe aims at catching file creation event
+#[kprobe(function = "security_file_open")]
+pub fn fs_security_file_open(ctx: ProbeContext) -> u32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
+    match unsafe { try_security_file_open(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
+        Err(s) => {
+            error!(&ctx, s);
+            errors::BPF_PROG_FAILURE
+        }
+    }
+}
+
+unsafe fn try_security_file_open(ctx: &ProbeContext) -> ProbeResult<()> {
+    // if event is disabled we return
+    if_disabled_return!(Type::FileCreate, ());
+
+    let file = co_re::file::from_ptr(kprobe_arg!(ctx, 0)?);
+
+    // if not FMODE_CREATED we return
+    if !file.f_mode().unwrap_or_default() & FMODE_CREATED == FMODE_CREATED {
+        return Ok(());
+    }
+
+    alloc::init()?;
+    let e = alloc::alloc_zero::<FileEvent>()?;
+
+    e.init_from_current_task(Type::FileCreate)?;
+
+    e.data.path.core_resolve_file(&file, MAX_PATH_DEPTH)?;
+
+    // we send event
+    pipe_event(ctx, e);
+
+    Ok(())
+}
