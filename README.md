@@ -15,21 +15,19 @@
 
 # Leitmotiv
 
-The goal behind this project is to bring relevant events to achieve 
-various monitoring tasks ranging from security monitoring to Threat Hunting on 
-Linux based systems. If you are familiar with Sysmon on Windows, you can think of Kunai as being a Sysmon equivalent for Linux.
+Kunai is a powerful tool designed to bring actionable insights for tasks such as **security monitoring** and **threat hunting** on **Linux** systems. Think of it as the Linux counterpart to Sysmon on Windows, tailored for comprehensive and precise event monitoring.
 
-## What makes Kunai special ?
+## Why Kunai Stands Out
 
-* events arrive sorted in chronological order
-* benefits from on-host correlation and events enrichment
-* works well with Linux namespaces and container technologies (you can trace all the activity happening inside your containers)
+- **Chronologically Ordered Events:** Events are processed and delivered in the exact order they occur.
+- **On-Host Correlation:** Built-in capabilities for event enrichment and correlation to provide deeper context.
+- **Container-Aware:** Fully compatible with Linux namespaces and container technologies, enabling complete tracing of container activities.
 
-# How it works
+## How It Works
 
-All the kernel components of this project are running as eBPF programs (also called probes). Kunai embeds numbers of probes to monitor relevant information for security monitoring. When the job is done on eBPF side, information is passed on to a userland program which is responsible for various things, such as re-ordering, enriching and correlating events.
+Kunai leverages eBPF (Extended Berkeley Packet Filter) technology, with kernel-level probes that capture critical events. These probes send data to a userland program, responsible for tasks like reordering, enriching, and correlating the collected events.
 
-On the implementation side, Kunai is written for its majority in Rust, leveraging the **awesome** [Aya library](https://github.com/aya-rs/aya) so everything you'll need to run is a standalone binary embedding both all the eBPF probes and the userland program.
+On the implementation side, Kunai is predominantly written in Rust, using the robust [Aya library](https://github.com/aya-rs/aya). This design ensures a self-contained standalone binary, embedding both the eBPF probes and the userland processing logic for ease of deployment.
 
 # FAQ
 
