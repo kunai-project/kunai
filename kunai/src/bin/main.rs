@@ -454,16 +454,17 @@ impl<'s> EventConsumer<'s> {
         Ok(())
     }
 
-    fn init_event_scanner(&mut self) -> anyhow::Result<()> {
+    fn compile_kunai_rules(&mut self) -> anyhow::Result<Compiler> {
+        let mut compiler = Compiler::new();
+
         // loading rules in the engine
         if self.config.scanner.rules.is_empty() {
-            return Ok(());
+            return Ok(compiler);
         }
 
-        let wo = WalkOptions::new()
+        let rules_wo = WalkOptions::new()
             // we list only files
             .files()
-            // will list only files
             // with following extensions
             .extension("kun")
             .extension("kunai")
@@ -473,7 +474,15 @@ impl<'s> EventConsumer<'s> {
             // don't go recursive
             .max_depth(0);
 
-        let mut compiler = Compiler::new();
+        let tpl_wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // with following extensions
+            .extension("yaml")
+            .extension("yml")
+            .sort(true)
+            // don't go recursive
+            .max_depth(0);
 
         for p in self.config.scanner.rules.clone().iter().map(PathBuf::from) {
             if !p.exists() {
@@ -485,17 +494,27 @@ impl<'s> EventConsumer<'s> {
                 // we load file regardless of its extension
                 self.load_kunai_rule_file(&mut compiler, p)?;
             } else if p.is_dir() {
-                // we walk the directory
-                let w = wo.clone().walk(p);
-                for r in w {
+                // loading rule templates located in directory
+                for t in tpl_wo.clone().walk(&p) {
+                    let p = t?;
+                    info!("loading template: {}", p.to_string_lossy());
+                    let reader = File::open(p)?;
+                    compiler.load_templates_from_reader(reader)?;
+                }
+
+                // load rule files
+                for r in rules_wo.clone().walk(&p) {
                     self.load_kunai_rule_file(&mut compiler, r?)?;
                 }
             }
         }
 
-        self.engine = Engine::try_from(compiler)?;
-        info!("number of loaded rules: {}", self.engine.rules_count());
+        Ok(compiler)
+    }
 
+    fn init_event_scanner(&mut self) -> anyhow::Result<()> {
+        self.engine = Engine::try_from(self.compile_kunai_rules()?)?;
+        info!("number of loaded rules: {}", self.engine.rules_count());
         Ok(())
     }
 
