@@ -10,7 +10,7 @@ use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
 use fs_walk::WalkOptions;
 use gene::rules::MAX_SEVERITY;
-use gene::Engine;
+use gene::{Compiler, Engine};
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
@@ -391,7 +391,11 @@ impl<'s> EventConsumer<'s> {
         Ok(())
     }
 
-    fn load_kunai_rule_file<P: AsRef<Path>>(&mut self, rule_file: P) -> anyhow::Result<()> {
+    fn load_kunai_rule_file<P: AsRef<Path>>(
+        &mut self,
+        compiler: &mut Compiler,
+        rule_file: P,
+    ) -> anyhow::Result<()> {
         let rule_file = rule_file.as_ref();
 
         info!(
@@ -439,13 +443,12 @@ impl<'s> EventConsumer<'s> {
             }
 
             // we insert rule into the engine
-            self.engine
-                .insert_rule(gene::Rule::deserialize(value).map_err(|e| {
-                    anyhow!(
-                        "file={} rule={rule_name} parse error: {e}",
-                        rule_file.to_string_lossy()
-                    )
-                })?)?;
+            compiler.load(gene::Rule::deserialize(value).map_err(|e| {
+                anyhow!(
+                    "file={} rule={rule_name} parse error: {e}",
+                    rule_file.to_string_lossy()
+                )
+            })?)?;
         }
 
         Ok(())
@@ -470,6 +473,8 @@ impl<'s> EventConsumer<'s> {
             // don't go recursive
             .max_depth(0);
 
+        let mut compiler = Compiler::new();
+
         for p in self.config.scanner.rules.clone().iter().map(PathBuf::from) {
             if !p.exists() {
                 error!(
@@ -478,16 +483,17 @@ impl<'s> EventConsumer<'s> {
                 );
             } else if p.is_file() {
                 // we load file regardless of its extension
-                self.load_kunai_rule_file(p)?;
+                self.load_kunai_rule_file(&mut compiler, p)?;
             } else if p.is_dir() {
                 // we walk the directory
                 let w = wo.clone().walk(p);
                 for r in w {
-                    self.load_kunai_rule_file(r?)?;
+                    self.load_kunai_rule_file(&mut compiler, r?)?;
                 }
             }
         }
 
+        self.engine = Engine::try_from(compiler)?;
         info!("number of loaded rules: {}", self.engine.rules_count());
 
         Ok(())
