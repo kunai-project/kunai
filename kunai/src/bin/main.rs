@@ -11,6 +11,7 @@ use env_logger::Builder;
 use fs_walk::WalkOptions;
 use gene::rules::MAX_SEVERITY;
 use gene::{Compiler, Engine};
+use huby::ByteSize;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
@@ -1575,29 +1576,32 @@ impl<'s> EventConsumer<'s> {
             };
         }
 
-        // we collect a vector of ioc matching
-        let matching_iocs = event
-            .iocs()
-            .iter()
-            .filter(|ioc| self.iocs.contains_key(&ioc.to_string()))
-            .map(|ioc| ioc.to_string())
-            .collect::<HashSet<String>>();
+        // no need to scan for IoC if not necessary
+        if !self.iocs.is_empty() {
+            // we collect a vector of ioc matching
+            let matching_iocs = event
+                .iocs()
+                .iter()
+                .filter(|ioc| self.iocs.contains_key(&ioc.to_string()))
+                .map(|ioc| ioc.to_string())
+                .collect::<HashSet<String>>();
 
-        let ioc_severity: usize = matching_iocs
-            .iter()
-            .map(|ioc| self.iocs.get(ioc).map(|e| *e as usize).unwrap_or_default())
-            .sum();
+            let ioc_severity: usize = matching_iocs
+                .iter()
+                .map(|ioc| self.iocs.get(ioc).map(|e| *e as usize).unwrap_or_default())
+                .sum();
 
-        if !matching_iocs.is_empty() {
-            // we create a new ScanResult if necessary
-            if scan_result.is_none() {
-                scan_result = Some(ScanResult::default());
-            }
+            if !matching_iocs.is_empty() {
+                // we create a new ScanResult if necessary
+                if scan_result.is_none() {
+                    scan_result = Some(ScanResult::default());
+                }
 
-            // we add ioc matching to the list of matching rules
-            if let Some(sr) = scan_result.as_mut() {
-                sr.iocs = matching_iocs;
-                sr.severity = ioc_severity.clamp(0, MAX_SEVERITY as usize) as u8;
+                // we add ioc matching to the list of matching rules
+                if let Some(sr) = scan_result.as_mut() {
+                    sr.iocs = matching_iocs;
+                    sr.severity = ioc_severity.clamp(0, MAX_SEVERITY as usize) as u8;
+                }
             }
         }
 
@@ -2441,6 +2445,10 @@ struct ReplayOpt {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
+    /// Benchmark scanning engine
+    #[arg(long)]
+    bench: bool,
+
     /// Detection/filtering rule file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
     rule_file: Option<Vec<String>>,
@@ -2693,10 +2701,20 @@ enum Command {
     Logs(LogsOpt),
 }
 
+fn time_it<F: FnMut()>(mut f: F) -> Duration {
+    let start_time = std::time::Instant::now();
+    f();
+    let end_time = std::time::Instant::now();
+    end_time - start_time
+}
+
 impl Command {
     fn replay(o: ReplayOpt) -> anyhow::Result<()> {
+        let bench = o.bench;
         let log_files = o.log_files.clone();
         let conf: Config = o.try_into()?;
+        let mut kunai_scan_time = Duration::new(0, 0);
+        let mut data_size = ByteSize::from_bytes(0);
 
         let mut p = EventConsumer::with_config(conf.stdout_output())?;
         for f in log_files {
@@ -2709,6 +2727,11 @@ impl Command {
             let mut de = serde_json::Deserializer::from_reader(reader);
 
             while let Ok(v) = serde_json::Value::deserialize(&mut de) {
+                // we need to know the size of the data we scan to compute throughput
+                if bench {
+                    data_size += ByteSize::from_bytes(serde_json::to_string(&v)?.len() as u64);
+                }
+
                 // we attempt at getting event name from json
                 if let Some(name) = v
                     .get("info")
@@ -2719,7 +2742,13 @@ impl Command {
                     macro_rules! scan_event {
                         ($scanner:expr, $into:ty) => {{
                             let mut e: UserEvent<$into> = serde_json::from_value(v)?;
-                            $scanner.scan_and_print(&mut e);
+                            if bench {
+                                kunai_scan_time += time_it(|| {
+                                    let _ = $scanner.scan(&mut e);
+                                });
+                            } else {
+                                $scanner.scan_and_print(&mut e);
+                            }
                         }};
                     }
 
@@ -2765,6 +2794,14 @@ impl Command {
                     }
                 }
             }
+        }
+
+        if bench {
+            let throughput = ByteSize::from_bytes(
+                (data_size.in_bytes() as f64 / kunai_scan_time.as_secs_f64()) as u64,
+            );
+            println!("scan duration: {kunai_scan_time:?}");
+            println!("scan throughput: {throughput}/s");
         }
 
         Ok(())
