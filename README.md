@@ -35,11 +35,18 @@ On the implementation side, Kunai is predominantly written in Rust, using the ro
 * **What kind of events can I get ?** : Please take a read to [events documentation](https://why.kunai.rocks/docs/events/)
 * **Which version should I use ?**: If it is just to test the tool, use the latest build as it is always the best in terms of features and bug fix. However keep in mind that events in **non stable** releases **are subject to change**.
 
-# How to build the project ?
+# How to Build the Project?
 
-Before going further, I have to remind you that there is a distribution agnostic (built with **musl**) pre-compiled version of kunai available [in release page](https://github.com/0xrawsec/kunai/releases/latest). So if you just want to give a try to kunai, you probably don't need to build the project yourself.
+Before proceeding, please note that a distribution-agnostic, pre-compiled version of Kunai is available on the [release page](https://github.com/kunai-project/kunai/releases/latest). If you simply want to try Kunai, you likely don’t need to build the project yourself.
 
-## Requirements
+## With a Docker image
+
+You can use a Docker image that includes everything needed to build the project easily: [Kunai build docker image](https://github.com/kunai-project/kunai-build-docker/).  
+This one-size-fits-all solution should work on any Linux distribution.
+
+## Doing everything by hand
+
+### Requirements
 
 Before being able to build everything, you need to install a couple of tools.
 
@@ -56,7 +63,7 @@ sudo apt install -y clang libbpf-dev
 cargo install bpf-linker
 ```
 
-## Building Kunai
+### Building Kunai
 
 Once you have the **requirements** installed, you are good to go. You can now build the project with **xtask**, a cargo command (specific to this project) to make your life easier.
 
