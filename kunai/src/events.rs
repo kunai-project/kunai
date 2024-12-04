@@ -16,8 +16,7 @@ use uuid::Uuid;
 use crate::{
     cache::{FileMeta, Hashes},
     containers::Container,
-    info::{ContainerInfo, StdEventInfo},
-    util::account::{Group, User},
+    info::{ContainerInfo, StdEventInfo, TaskAdditionalInfo},
 };
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
@@ -105,10 +104,9 @@ pub struct TaskSection {
 }
 
 impl TaskSection {
-    fn from_task_info_with_user(
+    pub fn from_task_info_with_addition(
         ti: kunai_common::bpf_events::TaskInfo,
-        user: Option<User>,
-        group: Option<Group>,
+        add: TaskAdditionalInfo,
     ) -> Self {
         Self {
             name: ti.comm_string(),
@@ -116,30 +114,12 @@ impl TaskSection {
             tgid: ti.tgid,
             guuid: ti.tg_uuid.into_uuid().hyphenated().to_string(),
             uid: ti.uid,
-            user: user.map(|u| u.name).unwrap_or("?".into()),
+            user: add.user.map(|u| u.name).unwrap_or("?".into()),
             gid: ti.gid,
-            group: group.map(|g| g.name).unwrap_or("?".into()),
+            group: add.group.map(|g| g.name).unwrap_or("?".into()),
             namespaces: ti.namespaces.map(|ns| ns.into()),
             flags: ti.flags,
             zombie: ti.zombie,
-        }
-    }
-}
-
-impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
-    fn from(value: kunai_common::bpf_events::TaskInfo) -> Self {
-        Self {
-            name: value.comm_string(),
-            pid: value.pid,
-            tgid: value.tgid,
-            guuid: value.tg_uuid.into_uuid().hyphenated().to_string(),
-            uid: value.uid,
-            user: "?".into(),
-            gid: value.gid,
-            group: "?".into(),
-            namespaces: value.namespaces.map(|ns| ns.into()),
-            flags: value.flags,
-            zombie: value.zombie,
         }
     }
 }
@@ -217,17 +197,11 @@ pub struct EventInfo {
 
 impl From<StdEventInfo> for EventInfo {
     fn from(value: StdEventInfo) -> Self {
-        let task = TaskSection::from_task_info_with_user(
-            value.bpf.process,
-            value.additional.task.user,
-            value.additional.task.group,
-        );
+        let task =
+            TaskSection::from_task_info_with_addition(value.bpf.process, value.additional.task);
 
-        let parent_task = TaskSection::from_task_info_with_user(
-            value.bpf.parent,
-            value.additional.parent.user,
-            value.additional.parent.group,
-        );
+        let parent_task =
+            TaskSection::from_task_info_with_addition(value.bpf.parent, value.additional.parent);
 
         Self {
             host: HostSection {

@@ -76,6 +76,12 @@ pub struct TaskAdditionalInfo {
     pub group: Option<Group>,
 }
 
+impl TaskAdditionalInfo {
+    pub fn new(user: Option<User>, group: Option<Group>) -> Self {
+        Self { user, group }
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct AdditionalInfo {
     pub host: HostInfo,
