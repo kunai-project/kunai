@@ -7,7 +7,13 @@ use kunai_common::{
 };
 use thiserror::Error;
 
-use crate::{containers::Container, util::get_clk_tck};
+use crate::{
+    containers::Container,
+    util::{
+        account::{Group, User},
+        get_clk_tck,
+    },
+};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct ProcKey {
@@ -65,9 +71,17 @@ pub struct ContainerInfo {
 }
 
 #[derive(Default, Debug, Clone)]
+pub struct TaskAdditionalInfo {
+    pub user: Option<User>,
+    pub group: Option<Group>,
+}
+
+#[derive(Default, Debug, Clone)]
 pub struct AdditionalInfo {
     pub host: HostInfo,
     pub container: Option<ContainerInfo>,
+    pub task: TaskAdditionalInfo,
+    pub parent: TaskAdditionalInfo,
 }
 
 #[derive(Default, Debug, Clone)]

@@ -19,7 +19,7 @@ use kunai::events::{
     InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
     PtraceData, ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, UnlinkData, UserEvent,
 };
-use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo};
+use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
 
@@ -811,9 +811,22 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     /// method acting as a central place to get the mnt namespace of a
-    /// task and printing out an error if not found
+    /// parent task and printing out an error if not found
     fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Namespace> {
         match ei.process.namespaces {
+            Some(ns) => Some(Namespace::mnt(ns.mnt)),
+            None => {
+                error!("parent task namespace must be known");
+                None
+            }
+        }
+    }
+
+    #[inline(always)]
+    /// method acting as a central place to get the mnt namespace of a
+    /// task and printing out an error if not found
+    fn parent_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Namespace> {
+        match ei.parent.namespaces {
             Some(ns) => Some(Namespace::mnt(ns.mnt)),
             None => {
                 error!("task namespace must be known");
@@ -1537,6 +1550,7 @@ impl<'s> EventConsumer<'s> {
     #[inline(always)]
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let opt_mnt_ns = Self::task_mnt_ns(&i);
+        let opt_parent_ns = Self::parent_mnt_ns(&i);
 
         let mut std_info = StdEventInfo::from_bpf(i, self.random);
 
@@ -1546,6 +1560,8 @@ impl<'s> EventConsumer<'s> {
         };
 
         let mut container = None;
+        let mut task = TaskAdditionalInfo::default();
+        let mut parent = TaskAdditionalInfo::default();
 
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
@@ -1555,11 +1571,65 @@ impl<'s> EventConsumer<'s> {
                     ty: t.and_then(|cd| cd.container),
                 });
             }
+
+            // getting user and group information for task
+            task.user = self
+                .cache
+                .get_user_by_uid(&mnt_ns, &i.process.uid)
+                .inspect_err(|e| {
+                    if !e.is_unknown_ns() {
+                        error!("failed to get task user: {e}")
+                    }
+                })
+                .unwrap_or_default()
+                .cloned();
+
+            // getting group information for task
+            task.group = self
+                .cache
+                .get_group_by_gid(&mnt_ns, &i.process.gid)
+                .inspect_err(|e| {
+                    if !e.is_unknown_ns() {
+                        error!("failed to get task group: {e}")
+                    }
+                })
+                .unwrap_or_default()
+                .cloned();
+        }
+
+        // getting user and group information for parent task
+        if let Some(parent_ns) = opt_parent_ns {
+            parent.user = self
+                .cache
+                .get_user_by_uid(&parent_ns, &i.parent.uid)
+                .inspect_err(|e| {
+                    if !e.is_unknown_ns() {
+                        error!("failed to get task user: {e}")
+                    }
+                })
+                .unwrap_or_default()
+                .cloned();
+
+            parent.group = self
+                .cache
+                .get_group_by_gid(&parent_ns, &i.parent.gid)
+                .inspect_err(|e| {
+                    if !e.is_unknown_ns() {
+                        error!("failed to get parent task group: {e}")
+                    }
+                })
+                .unwrap_or_default()
+                .cloned();
         }
 
         self.track_zombie_task(&mut std_info);
 
-        std_info.with_additional_info(AdditionalInfo { host, container })
+        std_info.with_additional_info(AdditionalInfo {
+            host,
+            container,
+            task,
+            parent,
+        })
     }
 
     #[inline(always)]
@@ -1789,6 +1859,23 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
+    fn cache_namespaces(&mut self, i: &bpf_events::EventInfo) {
+        if let Some(t_mnt_ns) = Self::task_mnt_ns(i) {
+            let pid = i.process.pid;
+            if let Err(e) = self.cache.cache_ns(pid, t_mnt_ns) {
+                debug!("failed to cache namespace pid={pid} ns={t_mnt_ns}: {e}");
+            }
+        }
+
+        if let Some(p_mnt_ns) = Self::parent_mnt_ns(i) {
+            let pid = i.parent.pid;
+            if let Err(e) = self.cache.cache_ns(pid, p_mnt_ns) {
+                debug!("failed to cache namespace pid={pid} ns={p_mnt_ns}: {e}");
+            }
+        }
+    }
+
+    #[inline(always)]
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
         let i = unsafe { enc_event.info() }.unwrap();
 
@@ -1799,12 +1886,7 @@ impl<'s> EventConsumer<'s> {
 
         let etype = i.etype;
 
-        if let Some(mnt_ns) = Self::task_mnt_ns(i) {
-            let pid = i.process.pid;
-            if let Err(e) = self.cache.cache_ns(pid, mnt_ns) {
-                debug!("failed to cache namespace pid={pid} ns={mnt_ns}: {e}");
-            }
-        }
+        self.cache_namespaces(i);
 
         let std_info = self.build_std_event_info(*i);
 

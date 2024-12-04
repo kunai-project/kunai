@@ -18,7 +18,10 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    util::namespaces::{self, Kind, Namespace, Switcher},
+    util::{
+        account::{Group, Groups, User, Users},
+        namespaces::{self, Kind, Namespace, Switcher},
+    },
     yara::Scanner,
 };
 
@@ -40,6 +43,12 @@ pub enum Error {
     FileNotFound,
     #[error("yara scan error: {0}")]
     ScanError(#[from] yara_x::errors::ScanError),
+}
+
+impl Error {
+    pub fn is_unknown_ns(&self) -> bool {
+        matches!(self, Error::UnknownNs(_))
+    }
 }
 
 #[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
@@ -266,9 +275,16 @@ struct CachedNs {
     switcher: namespaces::Switcher,
 }
 
+#[derive(Debug)]
+struct UsersAndGroups {
+    users: Users,
+    groups: Groups,
+}
+
 pub struct Cache {
     namespaces: LruHashMap<Namespace, CachedNs>,
     hashes: LruHashMap<Key, Hashes>,
+    users_groups: LruHashMap<Namespace, UsersAndGroups>,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -276,11 +292,14 @@ pub struct Cache {
     signatures: LruHashMap<Key, Vec<String>>,
 }
 
+const NS_CACHE_SIZE: usize = 256;
+
 impl Cache {
     // Constructs a new Hcache
     pub fn with_max_entries(cap: usize) -> Self {
         Cache {
-            namespaces: LruHashMap::with_max_entries(128),
+            namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            users_groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
@@ -298,6 +317,98 @@ impl Cache {
             debug_assert!(self.namespaces.contains_key(&ns));
         }
         Ok(())
+    }
+
+    /// Get a [User] structure corresponding to user id `uid`
+    #[inline(always)]
+    pub fn get_user_by_uid(&mut self, ns: &Namespace, uid: &u32) -> Result<Option<&User>, Error> {
+        if !ns.is_kind(Kind::Mnt) {
+            return Err(Error::WrongNsKind {
+                exp: Kind::Mnt,
+                got: ns.kind,
+            });
+        }
+
+        let Some(entry) = self.namespaces.get(ns) else {
+            return Err(Error::UnknownNs(*ns));
+        };
+
+        // we have already parsed users and groups
+        if self.users_groups.contains_key(ns) {
+            // we have an entry for uid so we return it
+            if self
+                .users_groups
+                .get(ns)
+                .map(|ung| ung.users.contains_uid(uid))
+                .unwrap_or_default()
+            {
+                return Ok(self
+                    .users_groups
+                    .get(ns)
+                    .and_then(|users| users.users.get_by_uid(uid)));
+            }
+        }
+
+        // we haven't yet parsed users and groups or we don't find an entry
+        let users = entry.switcher.do_in_namespace(|| {
+            Ok(UsersAndGroups {
+                users: Users::from_sys().map_err(namespaces::Error::other)?,
+                groups: Groups::from_sys().map_err(namespaces::Error::other)?,
+            })
+        })?;
+
+        self.users_groups.insert(*ns, users);
+
+        Ok(self
+            .users_groups
+            .get(ns)
+            .and_then(|ung| ung.users.get_by_uid(uid)))
+    }
+
+    /// Get a [Group] structure corresponding to group id `gid`
+    #[inline(always)]
+    pub fn get_group_by_gid(&mut self, ns: &Namespace, gid: &u32) -> Result<Option<&Group>, Error> {
+        if !ns.is_kind(Kind::Mnt) {
+            return Err(Error::WrongNsKind {
+                exp: Kind::Mnt,
+                got: ns.kind,
+            });
+        }
+
+        let Some(entry) = self.namespaces.get(ns) else {
+            return Err(Error::UnknownNs(*ns));
+        };
+
+        // we have already parsed users and groups
+        if self.users_groups.contains_key(ns) {
+            // we have an entry for uid so we return it
+            if self
+                .users_groups
+                .get(ns)
+                .map(|ung| ung.groups.contains_gid(gid))
+                .unwrap_or_default()
+            {
+                return Ok(self
+                    .users_groups
+                    .get(ns)
+                    .and_then(|users| users.groups.get_by_gid(gid)));
+            }
+        }
+
+        // we haven't yet parsed users and groups or we don't find an entry
+        let users = entry.switcher.do_in_namespace(|| {
+            Ok(UsersAndGroups {
+                users: Users::from_sys().map_err(namespaces::Error::other)?,
+                groups: Groups::from_sys().map_err(namespaces::Error::other)?,
+            })
+        })?;
+
+        self.users_groups.insert(*ns, users);
+
+        Ok(self
+            .users_groups
+            .get(ns)
+            .and_then(|ung| ung.groups.get_by_gid(gid)))
     }
 
     #[inline(always)]
