@@ -813,10 +813,21 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
-        match ti.namespaces {
-            Some(ns) => Some(Mnt::from_inum(ns.mnt)),
+        ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt))
+    }
+
+    #[inline(always)]
+    /// method acting as a central place to get the mnt namespace of a
+    /// parent task and printing out an error if not found
+    fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
+        match Self::mnt_ns_from_task(&ei.process) {
+            Some(o) => Some(o),
             None => {
-                error!("task namespace must be known");
+                debug!(
+                    "no mnt namespace for event: type={} event_uuid={}",
+                    ei.etype,
+                    ei.uuid.into_uuid()
+                );
                 None
             }
         }
@@ -824,16 +835,19 @@ impl<'s> EventConsumer<'s> {
 
     #[inline(always)]
     /// method acting as a central place to get the mnt namespace of a
-    /// parent task and printing out an error if not found
-    fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
-        Self::mnt_ns_from_task(&ei.process)
-    }
-
-    #[inline(always)]
-    /// method acting as a central place to get the mnt namespace of a
     /// task and printing out an error if not found
     fn parent_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
-        Self::mnt_ns_from_task(&ei.parent)
+        match Self::mnt_ns_from_task(&ei.parent) {
+            Some(o) => Some(o),
+            None => {
+                debug!(
+                    "no mnt namespace for event: type={} event_uuid={}",
+                    ei.etype,
+                    ei.uuid.into_uuid()
+                );
+                None
+            }
+        }
     }
 
     #[inline(always)]
