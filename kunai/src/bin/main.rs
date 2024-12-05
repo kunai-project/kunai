@@ -856,9 +856,8 @@ impl<'s> EventConsumer<'s> {
         };
 
         if event.data.executable != event.data.interpreter {
-            data.interpreter = Some(
-                self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.interpreter)),
-            )
+            data.interpreter =
+                Some(self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.interpreter)))
         }
 
         UserEvent::new(data, info)
@@ -925,7 +924,7 @@ impl<'s> EventConsumer<'s> {
         let tk = ProcKey::from(target.tg_uuid);
 
         let tai =
-            Self::mnt_ns_from_task(&target).map(|ns| self.build_task_additional_info(&ns, &target));
+            Self::mnt_ns_from_task(&target).map(|ns| self.build_task_additional_info(ns, &target));
 
         let data = KillData {
             ancestors: self.get_ancestors_string(&info),
@@ -957,7 +956,7 @@ impl<'s> EventConsumer<'s> {
         // get the command line
         let tk = ProcKey::from(target.tg_uuid);
         let tai =
-            Self::mnt_ns_from_task(&target).map(|ns| self.build_task_additional_info(&ns, &target));
+            Self::mnt_ns_from_task(&target).map(|ns| self.build_task_additional_info(ns, &target));
 
         let data = PtraceData {
             ancestors: self.get_ancestors_string(&info),
@@ -1556,7 +1555,7 @@ impl<'s> EventConsumer<'s> {
     #[inline(always)]
     fn build_task_additional_info(
         &mut self,
-        mnt_ns: &Mnt,
+        mnt_ns: Mnt,
         ti: &bpf_events::TaskInfo,
     ) -> TaskAdditionalInfo {
         // getting user and group information for task
@@ -1611,12 +1610,12 @@ impl<'s> EventConsumer<'s> {
                 });
             }
             // getting task additional info
-            task = Some(self.build_task_additional_info(&mnt_ns, &i.process));
+            task = Some(self.build_task_additional_info(mnt_ns, &i.process));
         }
 
         // getting user and group information for parent task
         if let Some(parent_ns) = opt_parent_ns {
-            parent = Some(self.build_task_additional_info(&parent_ns, &i.parent));
+            parent = Some(self.build_task_additional_info(parent_ns, &i.parent));
         }
 
         self.track_zombie_task(&mut std_info);

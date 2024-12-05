@@ -311,23 +311,23 @@ impl Cache {
 
     /// Get a [User] structure corresponding to user id `uid`
     #[inline(always)]
-    pub fn get_user_in_ns(&mut self, ns: &Mnt, uid: &u32) -> Result<Option<&User>, Error> {
-        let Some(mnt_ns) = self.mnt_namespaces.get(ns) else {
-            return Err(Error::UnknownMntNs(*ns));
+    pub fn get_user_in_ns(&mut self, ns: Mnt, uid: &u32) -> Result<Option<&User>, Error> {
+        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
+            return Err(Error::UnknownMntNs(ns));
         };
 
         // we have already parsed users and groups
-        if self.users_groups.contains_key(ns) {
+        if self.users_groups.contains_key(&ns) {
             // we have an entry for uid so we return it
             if self
                 .users_groups
-                .get(ns)
+                .get(&ns)
                 .map(|ung| ung.users.contains_uid(uid))
                 .unwrap_or_default()
             {
                 return Ok(self
                     .users_groups
-                    .get(ns)
+                    .get(&ns)
                     .and_then(|users| users.users.get_by_uid(uid)));
             }
         }
@@ -340,33 +340,33 @@ impl Cache {
             })
         })?;
 
-        self.users_groups.insert(*ns, users);
+        self.users_groups.insert(ns, users);
 
         Ok(self
             .users_groups
-            .get(ns)
+            .get(&ns)
             .and_then(|ung| ung.users.get_by_uid(uid)))
     }
 
     /// Get a [Group] structure corresponding to group id `gid`
     #[inline(always)]
-    pub fn get_group_in_ns(&mut self, ns: &Mnt, gid: &u32) -> Result<Option<&Group>, Error> {
-        let Some(mnt_ns) = self.mnt_namespaces.get(ns) else {
-            return Err(Error::UnknownMntNs(*ns));
+    pub fn get_group_in_ns(&mut self, ns: Mnt, gid: &u32) -> Result<Option<&Group>, Error> {
+        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
+            return Err(Error::UnknownMntNs(ns));
         };
 
         // we have already parsed users and groups
-        if self.users_groups.contains_key(ns) {
+        if self.users_groups.contains_key(&ns) {
             // we have an entry for uid so we return it
             if self
                 .users_groups
-                .get(ns)
+                .get(&ns)
                 .map(|ung| ung.groups.contains_gid(gid))
                 .unwrap_or_default()
             {
                 return Ok(self
                     .users_groups
-                    .get(ns)
+                    .get(&ns)
                     .and_then(|users| users.groups.get_by_gid(gid)));
             }
         }
@@ -379,11 +379,11 @@ impl Cache {
             })
         })?;
 
-        self.users_groups.insert(*ns, users);
+        self.users_groups.insert(ns, users);
 
         Ok(self
             .users_groups
-            .get(ns)
+            .get(&ns)
             .and_then(|ung| ung.groups.get_by_gid(gid)))
     }
 
