@@ -18,18 +18,19 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    util::namespaces::{self, Kind, Namespace, Switcher},
+    util::{
+        account::{Group, Groups, User, Users},
+        namespace::{self, Mnt, Switcher},
+    },
     yara::Scanner,
 };
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unknown namespace expected={exp} got={got}")]
-    WrongNsKind { exp: Kind, got: Kind },
     #[error("unknown namespace {0}")]
-    UnknownNs(Namespace),
+    UnknownMntNs(Mnt),
     #[error("{0}")]
-    Namespace(#[from] namespaces::Error),
+    Namespace(#[from] namespace::Error),
     #[error("{0}")]
     IoError(#[from] io::Error),
     #[error("file changed since kernel event: {0}")]
@@ -40,6 +41,12 @@ pub enum Error {
     FileNotFound,
     #[error("yara scan error: {0}")]
     ScanError(#[from] yara_x::errors::ScanError),
+}
+
+impl Error {
+    pub fn is_unknown_ns(&self) -> bool {
+        matches!(self, Error::UnknownMntNs(_))
+    }
 }
 
 #[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
@@ -192,7 +199,7 @@ impl Path {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct Key {
-    mnt_namespace: u32,
+    mnt_namespace: Mnt,
     path: PathBuf,
     size: u64,
     modified: SystemTime,
@@ -203,7 +210,7 @@ struct Key {
 impl Default for Key {
     fn default() -> Self {
         Key {
-            mnt_namespace: 0,
+            mnt_namespace: Mnt::default(),
             path: PathBuf::default(),
             size: 0,
             modified: SystemTime::UNIX_EPOCH,
@@ -215,7 +222,7 @@ impl Default for Key {
 
 impl Key {
     #[inline(always)]
-    fn from_path_with_ns(ns: &Namespace, path: &Path) -> Result<Self, Error> {
+    fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
         let pb = path.to_path_buf();
 
         // checking if the file still exists
@@ -226,7 +233,7 @@ impl Key {
         let meta = pb.metadata()?;
 
         let k = Key {
-            mnt_namespace: ns.inum,
+            mnt_namespace: ns,
             path: pb.clone(),
             size: meta.size(),
             modified: SystemTime::from(&Time::new(meta.mtime(), meta.mtime_nsec())),
@@ -262,13 +269,11 @@ impl Key {
 unsafe impl Send for Key {}
 unsafe impl Sync for Key {}
 
-struct CachedNs {
-    switcher: namespaces::Switcher,
-}
-
 pub struct Cache {
-    namespaces: LruHashMap<Namespace, CachedNs>,
+    mnt_namespaces: LruHashMap<Mnt, namespace::Switcher<Mnt>>,
     hashes: LruHashMap<Key, Hashes>,
+    users: LruHashMap<Key, Users>,
+    groups: LruHashMap<Key, Groups>,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -276,55 +281,93 @@ pub struct Cache {
     signatures: LruHashMap<Key, Vec<String>>,
 }
 
+const NS_CACHE_SIZE: usize = 256;
+
 impl Cache {
     // Constructs a new Hcache
     pub fn with_max_entries(cap: usize) -> Self {
         Cache {
-            namespaces: LruHashMap::with_max_entries(128),
+            mnt_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
     }
 
     #[inline(always)]
-    pub fn cache_ns(&mut self, pid: i32, ns: Namespace) -> Result<(), Error> {
-        if !self.namespaces.contains_key(&ns) {
-            self.namespaces.insert(
-                ns,
-                CachedNs {
-                    switcher: Switcher::new(ns.kind, pid as u32).map_err(Error::Namespace)?,
-                },
-            );
-            debug_assert!(self.namespaces.contains_key(&ns));
+    pub fn cache_mnt_ns(&mut self, pid: i32, ns: Mnt) -> Result<(), Error> {
+        if !self.mnt_namespaces.contains_key(&ns) {
+            self.mnt_namespaces
+                .insert(ns, Switcher::new(pid as u32).map_err(Error::Namespace)?);
+            debug_assert!(self.mnt_namespaces.contains_key(&ns));
         }
         Ok(())
     }
 
+    /// Get a [User] structure corresponding to user id `uid`
     #[inline(always)]
-    pub fn get_sig_or_cache(
+    pub fn get_user_group_in_ns(
         &mut self,
-        ns: Namespace,
+        ns: Mnt,
+        uid: &u32,
+        gid: &u32,
+    ) -> Result<(Option<&User>, Option<&Group>), Error> {
+        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
+            return Err(Error::UnknownMntNs(ns));
+        };
+
+        // we haven't yet parsed users and groups or we don't find an entry
+        let user_group = mnt_ns.do_in_namespace(|| {
+            // getting user
+            let ukey = Key::from_path_in_ns(ns, &Users::sys_path().into())
+                .map_err(namespace::Error::other)?;
+
+            if !self.users.contains_key(&ukey) {
+                self.users.insert(
+                    ukey.clone(),
+                    Users::from_sys().map_err(namespace::Error::other)?,
+                );
+            }
+
+            let user = self.users.get(&ukey).and_then(|u| u.get_by_uid(uid));
+
+            // getting group
+            let gkey = Key::from_path_in_ns(ns, &Groups::sys_path().into())
+                .map_err(namespace::Error::other)?;
+
+            if !self.groups.contains_key(&gkey) {
+                self.groups.insert(
+                    gkey.clone(),
+                    Groups::from_sys().map_err(namespace::Error::other)?,
+                );
+            }
+
+            let group = self.groups.get(&gkey).and_then(|g| g.get_by_gid(gid));
+
+            Ok((user, group))
+        })?;
+
+        Ok(user_group)
+    }
+
+    #[inline(always)]
+    pub fn get_sig_in_ns(
+        &mut self,
+        ns: Mnt,
         path: &Path,
         scanner: &mut Scanner<'_>,
     ) -> Result<Vec<String>, Error> {
-        // check that the namespace is a mount namespace
-        if !ns.is_kind(Kind::Mnt) {
-            return Err(Error::WrongNsKind {
-                exp: Kind::Mnt,
-                got: ns.kind,
-            });
-        }
-
-        let Some(entry) = self.namespaces.get(&ns) else {
-            return Err(Error::UnknownNs(ns));
+        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
+            return Err(Error::UnknownMntNs(ns));
         };
 
-        let res = entry.switcher.do_in_namespace(|| {
+        let res = mnt_ns.do_in_namespace(|| {
             // we get a PathBuf as path ownership is passed down
             let pb = path.to_path_buf();
             // we create key to check if we already have cached
             // signatures for that file
-            let key = Key::from_path_with_ns(&ns, path).map_err(namespaces::Error::other)?;
+            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 
             let sigs = match self.signatures.get(&key) {
                 // we have caches signatures
@@ -334,7 +377,7 @@ impl Cache {
                     let mut sigs = vec![];
                     // lock should never fail as the scanner is used only in one thread
                     let mut yx_scanner = scanner.lock().expect("failed to lock yara scanner");
-                    let sr = yx_scanner.scan_file(pb).map_err(namespaces::Error::other)?;
+                    let sr = yx_scanner.scan_file(pb).map_err(namespace::Error::other)?;
                     // we extend the list of signatures
                     sigs.extend(sr.matching_rules().map(|m| m.identifier().to_string()));
                     // we update our cache
@@ -347,7 +390,7 @@ impl Cache {
         });
 
         // we must be sure that we restore our namespace
-        if matches!(res.as_ref(), Err(namespaces::Error::Exit(_, _))) {
+        if matches!(res.as_ref(), Err(namespace::Error::Exit(_, _, _))) {
             res.as_ref().expect("failed to restore namespace");
         }
 
@@ -355,23 +398,15 @@ impl Cache {
     }
 
     #[inline(always)]
-    pub fn get_or_cache_in_ns(&mut self, ns: Namespace, path: &Path) -> Result<Hashes, Error> {
-        // check that the namespace is a mount namespace
-        if !ns.is_kind(Kind::Mnt) {
-            return Err(Error::WrongNsKind {
-                exp: Kind::Mnt,
-                got: ns.kind,
-            });
-        }
-
-        let Some(entry) = self.namespaces.get(&ns) else {
-            return Err(Error::UnknownNs(ns));
+    pub fn get_hashes_in_ns(&mut self, ns: Mnt, path: &Path) -> Result<Hashes, Error> {
+        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
+            return Err(Error::UnknownMntNs(ns));
         };
 
-        let res = entry.switcher.do_in_namespace(|| {
+        let res = mnt_ns.do_in_namespace(|| {
             let pb = path.to_path_buf();
 
-            let key = Key::from_path_with_ns(&ns, path).map_err(namespaces::Error::other)?;
+            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 
             if !self.hashes.contains_key(&key) {
                 let h = Hashes::from_path_ref(pb);
@@ -383,7 +418,7 @@ impl Cache {
         });
 
         // we must be sure that we restore our namespace
-        if matches!(res.as_ref(), Err(namespaces::Error::Exit(_, _))) {
+        if matches!(res.as_ref(), Err(namespace::Error::Exit(_, _, _))) {
             res.as_ref().expect("failed to restore namespace");
         }
 

@@ -17,9 +17,10 @@ use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
     EventInfo, ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo,
     InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
-    PtraceData, ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, UnlinkData, UserEvent,
+    PtraceData, ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, TaskSection,
+    UnlinkData, UserEvent,
 };
-use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo};
+use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
 
@@ -35,6 +36,7 @@ use kunai_common::{inspect_err, kernel};
 use kunai_macros::StrEnum;
 use log::LevelFilter;
 use lru_st::collections::LruHashSet;
+use namespace::{Mnt, Namespace};
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
@@ -70,7 +72,7 @@ use tokio::{task, time};
 use kunai::cache::*;
 
 use kunai::config::{self, Config};
-use kunai::util::namespaces::{unshare, Namespace};
+use kunai::util::namespace::unshare;
 use kunai::util::*;
 
 use communityid::{Flow, Protocol};
@@ -130,7 +132,7 @@ impl Process {
 struct SystemInfo {
     host_uuid: uuid::Uuid,
     hostname: String,
-    mount_ns: Namespace,
+    mount_ns: Mnt,
 }
 
 impl SystemInfo {
@@ -139,7 +141,7 @@ impl SystemInfo {
         Ok(SystemInfo {
             host_uuid: uuid::Uuid::from_u128(0),
             hostname: fs::read_to_string("/etc/hostname")?.trim_end().to_string(),
-            mount_ns: Namespace::from_pid(namespaces::Kind::Mnt, pid)?,
+            mount_ns: Mnt::from_pid(pid)?,
         })
     }
 
@@ -788,9 +790,9 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
-    fn get_hashes_with_ns(&mut self, ns: Option<Namespace>, p: &cache::Path) -> Hashes {
+    fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Hashes {
         if let Some(ns) = ns {
-            match self.cache.get_or_cache_in_ns(ns, p) {
+            match self.cache.get_hashes_in_ns(ns, p) {
                 Ok(h) => h,
                 Err(e) => {
                     let meta = FileMeta {
@@ -810,13 +812,39 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
+    fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
+        ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt))
+    }
+
+    #[inline(always)]
+    /// method acting as a central place to get the mnt namespace of a
+    /// parent task and printing out an error if not found
+    fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
+        match Self::mnt_ns_from_task(&ei.process) {
+            Some(o) => Some(o),
+            None => {
+                debug!(
+                    "no mnt namespace for event: type={} event_uuid={}",
+                    ei.etype,
+                    ei.uuid.into_uuid()
+                );
+                None
+            }
+        }
+    }
+
+    #[inline(always)]
     /// method acting as a central place to get the mnt namespace of a
     /// task and printing out an error if not found
-    fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Namespace> {
-        match ei.process.namespaces {
-            Some(ns) => Some(Namespace::mnt(ns.mnt)),
+    fn parent_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
+        match Self::mnt_ns_from_task(&ei.parent) {
+            Some(o) => Some(o),
             None => {
-                error!("task namespace must be known");
+                debug!(
+                    "no mnt namespace for event: type={} event_uuid={}",
+                    ei.etype,
+                    ei.uuid.into_uuid()
+                );
                 None
             }
         }
@@ -837,14 +865,13 @@ impl<'s> EventConsumer<'s> {
             ancestors,
             parent_exe: self.get_parent_image(&info),
             command_line: cli,
-            exe: self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
+            exe: self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
             interpreter: None,
         };
 
         if event.data.executable != event.data.interpreter {
-            data.interpreter = Some(
-                self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.interpreter)),
-            )
+            data.interpreter =
+                Some(self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.interpreter)))
         }
 
         UserEvent::new(data, info)
@@ -910,6 +937,9 @@ impl<'s> EventConsumer<'s> {
         // get the command line
         let tk = ProcKey::from(target.tg_uuid);
 
+        let tai =
+            Self::mnt_ns_from_task(&target).map(|ns| self.build_task_additional_info(ns, &target));
+
         let data = KillData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
@@ -918,7 +948,7 @@ impl<'s> EventConsumer<'s> {
             target: TargetTask {
                 command_line: self.get_command_line(tk),
                 exe: self.get_exe(tk).into(),
-                task: target.into(),
+                task: TaskSection::from_task_info_with_addition(target, tai.unwrap_or_default()),
             },
         };
 
@@ -939,6 +969,8 @@ impl<'s> EventConsumer<'s> {
 
         // get the command line
         let tk = ProcKey::from(target.tg_uuid);
+        let tai =
+            Self::mnt_ns_from_task(&target).map(|ns| self.build_task_additional_info(ns, &target));
 
         let data = PtraceData {
             ancestors: self.get_ancestors_string(&info),
@@ -948,7 +980,7 @@ impl<'s> EventConsumer<'s> {
             target: TargetTask {
                 command_line: self.get_command_line(tk),
                 exe: self.get_exe(tk).into(),
-                task: target.into(),
+                task: TaskSection::from_task_info_with_addition(target, tai.unwrap_or_default()),
             },
         };
 
@@ -963,7 +995,7 @@ impl<'s> EventConsumer<'s> {
     ) -> UserEvent<kunai::events::MmapExecData> {
         let filename = event.data.filename;
         let opt_mnt_ns = Self::task_mnt_ns(&event.info);
-        let mmapped_hashes = self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&filename));
+        let mmapped_hashes = self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
 
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1489,7 +1521,7 @@ impl<'s> EventConsumer<'s> {
     #[inline(always)]
     fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
         let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-        self.get_hashes_with_ns(opt_mnt_ns, &cache::Path::from(&event.data.path));
+        self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.path));
     }
 
     #[inline(always)]
@@ -1535,8 +1567,29 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
+    fn build_task_additional_info(
+        &mut self,
+        mnt_ns: Mnt,
+        ti: &bpf_events::TaskInfo,
+    ) -> TaskAdditionalInfo {
+        // getting user and group information for task
+        let (user, group) = self
+            .cache
+            .get_user_group_in_ns(mnt_ns, &ti.uid, &ti.gid)
+            .inspect_err(|e| {
+                if !e.is_unknown_ns() {
+                    error!("failed to get task user: {e}")
+                }
+            })
+            .unwrap_or_default();
+
+        TaskAdditionalInfo::new(user.cloned(), group.cloned())
+    }
+
+    #[inline(always)]
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let opt_mnt_ns = Self::task_mnt_ns(&i);
+        let opt_parent_ns = Self::parent_mnt_ns(&i);
 
         let mut std_info = StdEventInfo::from_bpf(i, self.random);
 
@@ -1546,6 +1599,8 @@ impl<'s> EventConsumer<'s> {
         };
 
         let mut container = None;
+        let mut task = None;
+        let mut parent = None;
 
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
@@ -1555,11 +1610,23 @@ impl<'s> EventConsumer<'s> {
                     ty: t.and_then(|cd| cd.container),
                 });
             }
+            // getting task additional info
+            task = Some(self.build_task_additional_info(mnt_ns, &i.process));
+        }
+
+        // getting user and group information for parent task
+        if let Some(parent_ns) = opt_parent_ns {
+            parent = Some(self.build_task_additional_info(parent_ns, &i.parent));
         }
 
         self.track_zombie_task(&mut std_info);
 
-        std_info.with_additional_info(AdditionalInfo { host, container })
+        std_info.with_additional_info(AdditionalInfo {
+            host,
+            container,
+            task: task.unwrap_or_default(),
+            parent: parent.unwrap_or_default(),
+        })
     }
 
     #[inline(always)]
@@ -1656,14 +1723,14 @@ impl<'s> EventConsumer<'s> {
     fn file_scan_event<T: Serialize + KunaiEvent>(
         &mut self,
         event: &T,
-        ns: Namespace,
+        ns: Mnt,
         p: &Path,
     ) -> UserEvent<FileScanData> {
         // if the scanner is None, signatures will be an empty Vec
         let (sigs, err) = match self.file_scanner.as_mut() {
             Some(s) => match self
                 .cache
-                .get_sig_or_cache(ns, &cache::Path::from(p.to_path_buf()), s)
+                .get_sig_in_ns(ns, &cache::Path::from(p.to_path_buf()), s)
             {
                 Ok(sigs) => (sigs, None),
                 Err(e) => (vec![], Some(format!("{e}"))),
@@ -1673,7 +1740,7 @@ impl<'s> EventConsumer<'s> {
 
         let pos = sigs.len();
         let mut data = FileScanData::from_hashes(
-            self.get_hashes_with_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
+            self.get_hashes_in_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
         );
         data.source_event = event.info().event.uuid.clone();
         data.signatures = sigs;
@@ -1692,7 +1759,7 @@ impl<'s> EventConsumer<'s> {
         }
 
         let ns = match event.info().task.namespaces.as_ref() {
-            Some(ns) => Namespace::mnt(ns.mnt),
+            Some(ns) => Mnt::from_inum(ns.mnt),
             None => return Err(anyhow!("namespace not found")),
         };
 
@@ -1789,6 +1856,23 @@ impl<'s> EventConsumer<'s> {
     }
 
     #[inline(always)]
+    fn cache_namespaces(&mut self, i: &bpf_events::EventInfo) {
+        if let Some(t_mnt_ns) = Self::task_mnt_ns(i) {
+            let pid = i.process.pid;
+            if let Err(e) = self.cache.cache_mnt_ns(pid, t_mnt_ns) {
+                debug!("failed to cache namespace pid={pid} ns={t_mnt_ns}: {e}");
+            }
+        }
+
+        if let Some(p_mnt_ns) = Self::parent_mnt_ns(i) {
+            let pid = i.parent.pid;
+            if let Err(e) = self.cache.cache_mnt_ns(pid, p_mnt_ns) {
+                debug!("failed to cache namespace pid={pid} ns={p_mnt_ns}: {e}");
+            }
+        }
+    }
+
+    #[inline(always)]
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
         let i = unsafe { enc_event.info() }.unwrap();
 
@@ -1799,12 +1883,7 @@ impl<'s> EventConsumer<'s> {
 
         let etype = i.etype;
 
-        if let Some(mnt_ns) = Self::task_mnt_ns(i) {
-            let pid = i.process.pid;
-            if let Err(e) = self.cache.cache_ns(pid, mnt_ns) {
-                debug!("failed to cache namespace pid={pid} ns={mnt_ns}: {e}");
-            }
-        }
+        self.cache_namespaces(i);
 
         let std_info = self.build_std_event_info(*i);
 

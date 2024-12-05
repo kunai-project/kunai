@@ -7,8 +7,9 @@ use std::{fs, io, net::IpAddr};
 
 pub mod bpf;
 pub mod elf;
-pub mod namespaces;
+pub mod namespace;
 pub mod uname;
+pub mod account;
 
 #[inline]
 pub fn is_public_ip(ip: IpAddr) -> bool {

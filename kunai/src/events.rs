@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::{
     cache::{FileMeta, Hashes},
     containers::Container,
-    info::{ContainerInfo, StdEventInfo},
+    info::{ContainerInfo, StdEventInfo, TaskAdditionalInfo},
 };
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
@@ -94,25 +94,32 @@ pub struct TaskSection {
     pub tgid: i32,
     pub guuid: String,
     pub uid: u32,
+    pub user: String,
     pub gid: u32,
+    pub group: String,
     pub namespaces: Option<NamespaceInfo>,
     #[serde(with = "u32_hex")]
     pub flags: u32,
     pub zombie: bool,
 }
 
-impl From<kunai_common::bpf_events::TaskInfo> for TaskSection {
-    fn from(value: kunai_common::bpf_events::TaskInfo) -> Self {
+impl TaskSection {
+    pub fn from_task_info_with_addition(
+        ti: kunai_common::bpf_events::TaskInfo,
+        add: TaskAdditionalInfo,
+    ) -> Self {
         Self {
-            name: value.comm_string(),
-            pid: value.pid,
-            tgid: value.tgid,
-            guuid: value.tg_uuid.into_uuid().hyphenated().to_string(),
-            uid: value.uid,
-            gid: value.gid,
-            namespaces: value.namespaces.map(|ns| ns.into()),
-            flags: value.flags,
-            zombie: value.zombie,
+            name: ti.comm_string(),
+            pid: ti.pid,
+            tgid: ti.tgid,
+            guuid: ti.tg_uuid.into_uuid().hyphenated().to_string(),
+            uid: ti.uid,
+            user: add.user.map(|u| u.name).unwrap_or("?".into()),
+            gid: ti.gid,
+            group: add.group.map(|g| g.name).unwrap_or("?".into()),
+            namespaces: ti.namespaces.map(|ns| ns.into()),
+            flags: ti.flags,
+            zombie: ti.zombie,
         }
     }
 }
@@ -190,6 +197,12 @@ pub struct EventInfo {
 
 impl From<StdEventInfo> for EventInfo {
     fn from(value: StdEventInfo) -> Self {
+        let task =
+            TaskSection::from_task_info_with_addition(value.bpf.process, value.additional.task);
+
+        let parent_task =
+            TaskSection::from_task_info_with_addition(value.bpf.parent, value.additional.parent);
+
         Self {
             host: HostSection {
                 name: value.additional.host.name,
@@ -203,8 +216,8 @@ impl From<StdEventInfo> for EventInfo {
                 uuid: value.bpf.uuid.into_uuid().hyphenated().to_string(),
                 batch: value.bpf.batch,
             },
-            task: value.bpf.process.into(),
-            parent_task: value.bpf.parent.into(),
+            task,
+            parent_task,
             utc_time: value.utc_timestamp.into(),
         }
     }
