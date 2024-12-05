@@ -1559,30 +1559,17 @@ impl<'s> EventConsumer<'s> {
         ti: &bpf_events::TaskInfo,
     ) -> TaskAdditionalInfo {
         // getting user and group information for task
-        let user = self
+        let (user, group) = self
             .cache
-            .get_user_in_ns(mnt_ns, &ti.uid)
+            .get_user_group_in_ns(mnt_ns, &ti.uid, &ti.gid)
             .inspect_err(|e| {
                 if !e.is_unknown_ns() {
                     error!("failed to get task user: {e}")
                 }
             })
-            .unwrap_or_default()
-            .cloned();
+            .unwrap_or_default();
 
-        // getting group information for task
-        let group = self
-            .cache
-            .get_group_in_ns(mnt_ns, &ti.gid)
-            .inspect_err(|e| {
-                if !e.is_unknown_ns() {
-                    error!("failed to get task group: {e}")
-                }
-            })
-            .unwrap_or_default()
-            .cloned();
-
-        TaskAdditionalInfo::new(user, group)
+        TaskAdditionalInfo::new(user.cloned(), group.cloned())
     }
 
     #[inline(always)]

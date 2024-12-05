@@ -199,7 +199,7 @@ impl Path {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct Key {
-    mnt_namespace: u32,
+    mnt_namespace: Mnt,
     path: PathBuf,
     size: u64,
     modified: SystemTime,
@@ -210,7 +210,7 @@ struct Key {
 impl Default for Key {
     fn default() -> Self {
         Key {
-            mnt_namespace: 0,
+            mnt_namespace: Mnt::default(),
             path: PathBuf::default(),
             size: 0,
             modified: SystemTime::UNIX_EPOCH,
@@ -222,7 +222,7 @@ impl Default for Key {
 
 impl Key {
     #[inline(always)]
-    fn from_path_in_ns(ns: &Mnt, path: &Path) -> Result<Self, Error> {
+    fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
         let pb = path.to_path_buf();
 
         // checking if the file still exists
@@ -233,7 +233,7 @@ impl Key {
         let meta = pb.metadata()?;
 
         let k = Key {
-            mnt_namespace: ns.inum,
+            mnt_namespace: ns,
             path: pb.clone(),
             size: meta.size(),
             modified: SystemTime::from(&Time::new(meta.mtime(), meta.mtime_nsec())),
@@ -269,16 +269,11 @@ impl Key {
 unsafe impl Send for Key {}
 unsafe impl Sync for Key {}
 
-#[derive(Debug)]
-struct UsersAndGroups {
-    users: Users,
-    groups: Groups,
-}
-
 pub struct Cache {
     mnt_namespaces: LruHashMap<Mnt, namespace::Switcher<Mnt>>,
     hashes: LruHashMap<Key, Hashes>,
-    users_groups: LruHashMap<Mnt, UsersAndGroups>,
+    users: LruHashMap<Key, Users>,
+    groups: LruHashMap<Key, Groups>,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -293,7 +288,8 @@ impl Cache {
     pub fn with_max_entries(cap: usize) -> Self {
         Cache {
             mnt_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
-            users_groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
@@ -311,80 +307,48 @@ impl Cache {
 
     /// Get a [User] structure corresponding to user id `uid`
     #[inline(always)]
-    pub fn get_user_in_ns(&mut self, ns: Mnt, uid: &u32) -> Result<Option<&User>, Error> {
+    pub fn get_user_group_in_ns(
+        &mut self,
+        ns: Mnt,
+        uid: &u32,
+        gid: &u32,
+    ) -> Result<(Option<&User>, Option<&Group>), Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
 
-        // we have already parsed users and groups
-        if self.users_groups.contains_key(&ns) {
-            // we have an entry for uid so we return it
-            if self
-                .users_groups
-                .get(&ns)
-                .map(|ung| ung.users.contains_uid(uid))
-                .unwrap_or_default()
-            {
-                return Ok(self
-                    .users_groups
-                    .get(&ns)
-                    .and_then(|users| users.users.get_by_uid(uid)));
-            }
-        }
-
         // we haven't yet parsed users and groups or we don't find an entry
-        let users = mnt_ns.do_in_namespace(|| {
-            Ok(UsersAndGroups {
-                users: Users::from_sys().map_err(namespace::Error::other)?,
-                groups: Groups::from_sys().map_err(namespace::Error::other)?,
-            })
+        let user_group = mnt_ns.do_in_namespace(|| {
+            // getting user
+            let ukey = Key::from_path_in_ns(ns, &Users::sys_path().into())
+                .map_err(namespace::Error::other)?;
+
+            if !self.users.contains_key(&ukey) {
+                self.users.insert(
+                    ukey.clone(),
+                    Users::from_sys().map_err(namespace::Error::other)?,
+                );
+            }
+
+            let user = self.users.get(&ukey).and_then(|u| u.get_by_uid(uid));
+
+            // getting group
+            let gkey = Key::from_path_in_ns(ns, &Groups::sys_path().into())
+                .map_err(namespace::Error::other)?;
+
+            if !self.groups.contains_key(&gkey) {
+                self.groups.insert(
+                    gkey.clone(),
+                    Groups::from_sys().map_err(namespace::Error::other)?,
+                );
+            }
+
+            let group = self.groups.get(&gkey).and_then(|g| g.get_by_gid(gid));
+
+            Ok((user, group))
         })?;
 
-        self.users_groups.insert(ns, users);
-
-        Ok(self
-            .users_groups
-            .get(&ns)
-            .and_then(|ung| ung.users.get_by_uid(uid)))
-    }
-
-    /// Get a [Group] structure corresponding to group id `gid`
-    #[inline(always)]
-    pub fn get_group_in_ns(&mut self, ns: Mnt, gid: &u32) -> Result<Option<&Group>, Error> {
-        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
-            return Err(Error::UnknownMntNs(ns));
-        };
-
-        // we have already parsed users and groups
-        if self.users_groups.contains_key(&ns) {
-            // we have an entry for uid so we return it
-            if self
-                .users_groups
-                .get(&ns)
-                .map(|ung| ung.groups.contains_gid(gid))
-                .unwrap_or_default()
-            {
-                return Ok(self
-                    .users_groups
-                    .get(&ns)
-                    .and_then(|users| users.groups.get_by_gid(gid)));
-            }
-        }
-
-        // we haven't yet parsed users and groups or we don't find an entry
-        let users = mnt_ns.do_in_namespace(|| {
-            Ok(UsersAndGroups {
-                users: Users::from_sys().map_err(namespace::Error::other)?,
-                groups: Groups::from_sys().map_err(namespace::Error::other)?,
-            })
-        })?;
-
-        self.users_groups.insert(ns, users);
-
-        Ok(self
-            .users_groups
-            .get(&ns)
-            .and_then(|ung| ung.groups.get_by_gid(gid)))
+        Ok(user_group)
     }
 
     #[inline(always)]
@@ -403,7 +367,7 @@ impl Cache {
             let pb = path.to_path_buf();
             // we create key to check if we already have cached
             // signatures for that file
-            let key = Key::from_path_in_ns(&ns, path).map_err(namespace::Error::other)?;
+            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 
             let sigs = match self.signatures.get(&key) {
                 // we have caches signatures
@@ -442,7 +406,7 @@ impl Cache {
         let res = mnt_ns.do_in_namespace(|| {
             let pb = path.to_path_buf();
 
-            let key = Key::from_path_in_ns(&ns, path).map_err(namespace::Error::other)?;
+            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 
             if !self.hashes.contains_key(&key) {
                 let h = Hashes::from_path_ref(pb);

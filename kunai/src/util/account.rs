@@ -98,6 +98,10 @@ impl Users {
         Self::default()
     }
 
+    pub const fn sys_path() -> &'static str {
+        "/etc/passwd"
+    }
+
     #[inline]
     pub fn extend_from_vec<S: AsRef<str>>(&mut self, v: Vec<S>) -> Result<&mut Self, Error> {
         let mut lines = Vec::new();
@@ -140,7 +144,7 @@ impl Users {
 
     pub fn from_sys() -> Result<Self, Error> {
         let mut out = Self::new();
-        out.extend_from_file("/etc/passwd")?;
+        out.extend_from_file(Self::sys_path())?;
         Ok(out)
     }
 
@@ -184,6 +188,10 @@ impl Groups {
         Self::default()
     }
 
+    pub const fn sys_path() -> &'static str {
+        "/etc/group"
+    }
+
     #[inline]
     pub fn extend_from_vec<S: AsRef<str>>(&mut self, v: Vec<S>) -> Result<&mut Self, Error> {
         let mut lines = Vec::new();
@@ -215,7 +223,7 @@ impl Groups {
 
     pub fn from_sys() -> Result<Self, Error> {
         let mut out = Self::default();
-        out.extend_from_file("/etc/group")?;
+        out.extend_from_file(Self::sys_path())?;
         Ok(out)
     }
 
