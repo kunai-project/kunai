@@ -140,8 +140,11 @@ impl SystemInfo {
         let pid = process::id();
         Ok(SystemInfo {
             host_uuid: uuid::Uuid::from_u128(0),
-            hostname: fs::read_to_string("/etc/hostname")?.trim_end().to_string(),
-            mount_ns: Mnt::from_pid(pid)?,
+            hostname: fs::read_to_string("/etc/hostname")
+                .map(|s| s.trim_end().to_string())
+                .unwrap_or("?".into()),
+            mount_ns: Mnt::from_pid(pid)
+                .map_err(|e| anyhow!("cannot find mnt namespace of kunai: {e}"))?,
         })
     }
 
