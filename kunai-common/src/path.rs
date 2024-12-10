@@ -16,6 +16,7 @@ not_bpf_target_code! {
 
 bpf_target_code! {
     mod bpf;
+    pub use bpf::*;
 }
 
 // for path resolution
@@ -33,8 +34,6 @@ pub const MAX_NAME: usize = u8::MAX as usize;
 #[repr(C)]
 #[derive(BpfError, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    #[error("should not happen")]
-    ShouldNotHappen,
     #[error("filename is too long")]
     FileNameTooLong,
     #[error("filepath is too long")]
@@ -81,6 +80,8 @@ pub enum Error {
     DNameNameMissing,
     #[error("d_name.len field missing")]
     DNameLenMissing,
+    #[error("d_name.hash_len field missing")]
+    DNameHashLenMissing,
     #[error("failed to get path ino")]
     PathInoFailure,
     #[error("failed to get path sb ino")]
@@ -133,6 +134,7 @@ pub struct Path {
     len: u32,
     depth: u16,
     real: bool, // flag if path is a realpath
+    pub hash: u64,
     pub metadata: Option<Metadata>,
     pub mode: Mode,
     pub error: Option<Error>,
@@ -140,31 +142,23 @@ pub struct Path {
 
 impl PartialEq for Path {
     fn eq(&self, other: &Self) -> bool {
-        let meta_eq = {
-            if self.metadata.is_none() && other.metadata.is_none() {
-                return true;
+        let meta_eq = match (self.metadata, other.metadata) {
+            (Some(sm), Some(om)) => {
+                sm.ino == om.ino
+                    && sm.sb_ino == om.sb_ino
+                    && sm.size == om.size
+                    && sm.mtime == om.mtime
+                    && sm.ctime == om.ctime
             }
-
-            if let Some(sm) = self.metadata {
-                if let Some(om) = other.metadata {
-                    // we don't consider atime (access time)
-                    // as being relevant for path Eq checking
-                    return sm.ino == om.ino
-                        && sm.sb_ino == om.sb_ino
-                        && sm.size == om.size
-                        && sm.mtime == om.mtime
-                        && sm.ctime == om.ctime;
-                }
-            }
-
-            false
+            (None, None) => true,
+            _ => false,
         };
 
-        self.buffer == other.buffer
+        meta_eq
             && self.len == other.len
             && self.depth == other.depth
             && self.real == other.real
-            && meta_eq
+            && self.buffer == other.buffer
     }
 }
 
@@ -175,6 +169,7 @@ impl Default for Path {
             null: 0,
             len: 0,
             depth: 0,
+            hash: 0,
             real: false,
             metadata: None,
             mode: Mode::Append,

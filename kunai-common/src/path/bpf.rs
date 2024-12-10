@@ -1,10 +1,45 @@
 use crate::co_re::{self, core_read_kernel};
-use crate::utils::{bound_value_for_verifier, cap_size};
+use aya_ebpf::check_bounds_signed;
 use aya_ebpf::helpers::gen;
 
-use super::{Error, Metadata, Mode, Path, MAX_NAME};
+use super::{Error, Metadata, Mode, Path, MAX_NAME, MAX_PATH_LEN};
 
 type Result<T> = core::result::Result<T, Error>;
+
+fn xor_shift_star(a: u64, b: u64) -> u64 {
+    let mut x = a ^ b;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    return x * 0x2545F4914F6CDD1D;
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+pub struct MapKey {
+    hash: u64,
+    // depth is a u32 to force structure alignment
+    // without this kernel 5.4 fails at using this
+    // struct
+    depth: u32,
+    len: u32,
+    ino: u64,
+    sb_ino: u64,
+}
+
+impl From<&Path> for MapKey {
+    #[inline(always)]
+    fn from(p: &Path) -> Self {
+        let meta = p.metadata.unwrap_or_default();
+        MapKey {
+            hash: p.hash,
+            depth: p.depth as u32,
+            len: p.len,
+            ino: meta.ino,
+            sb_ino: meta.sb_ino,
+        }
+    }
+}
 
 impl Path {
     #[inline(always)]
@@ -27,6 +62,11 @@ impl Path {
     }
 
     #[inline(always)]
+    pub fn map_key(&self) -> MapKey {
+        MapKey::from(self)
+    }
+
+    #[inline(always)]
     pub unsafe fn core_resolve_file(&mut self, f: &co_re::file, max_depth: u16) -> Result<()> {
         if !f.is_null() {
             return self.core_resolve(&f.f_path().ok_or(Error::FPathMissing)?, max_depth);
@@ -36,6 +76,17 @@ impl Path {
 
     #[inline(always)]
     pub unsafe fn core_resolve(&mut self, p: &co_re::path, max_depth: u16) -> Result<()> {
+        match self.inner_resolve(p, max_depth) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.error = Some(e);
+                Err(e)
+            }
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn inner_resolve(&mut self, p: &co_re::path, max_depth: u16) -> Result<()> {
         // if path is null we return Ok
         // this is mostly to massage our friend verifier
         if p.is_null() {
@@ -95,12 +146,15 @@ impl Path {
     }
 
     fn prepend_path_sep(&mut self) -> Result<()> {
-        let mut i = (self.buffer.len() - self.len() - 1) as isize;
+        let i = (self.buffer.len() - self.len() - 1) as i64;
 
         // we need to bound check index to massage the verifier
-        i = bound_value_for_verifier(i, 0, (self.buffer.len() - 1) as isize);
-        self.buffer[i as usize] = b'/';
-        self.len += 1;
+        if check_bounds_signed(i, 0, (MAX_PATH_LEN - 1) as i64) {
+            self.buffer[i as usize] = b'/';
+            self.len += 1;
+        } else {
+            return Err(Error::FilePathTooLong);
+        }
         Ok(())
     }
 
@@ -111,67 +165,39 @@ impl Path {
 
     #[inline(always)]
     pub unsafe fn prepend_dentry(&mut self, entry: &co_re::dentry) -> Result<()> {
+        let hash = core_read_kernel!(entry, d_name, hash_len).ok_or(Error::DNameHashLenMissing)?;
+        self.hash = xor_shift_star(self.hash, hash);
         let name = core_read_kernel!(entry, d_name, name).ok_or(Error::DNameNameMissing)?;
         let len = core_read_kernel!(entry, d_name, len).ok_or(Error::DNameLenMissing)?;
         self.prepend_qstr_name(name, len)
     }
 
     unsafe fn prepend_qstr_name(&mut self, name: *const u8, qstr_len: u32) -> Result<()> {
+        let qstr_len = qstr_len as i64;
         // needed so that the verifier knows self.len is bounded
-        let left = self.space_left() as u32;
-        // a way to restrict the length to read for the verifier
-        let size = (qstr_len as u8) as u32;
+        let left = self.space_left() as i64;
 
-        // we need this check otherwise verifier fails with invalid numeric error
-        if qstr_len > MAX_NAME as u32 {
-            self.error = Some(Error::FileNameTooLong);
-            return Err(Error::FileNameTooLong);
-        }
+        let i = left - qstr_len;
 
-        if left < qstr_len {
+        // check map bound access
+        if !check_bounds_signed(i, 0, (MAX_PATH_LEN - 1) as i64) {
             return Err(Error::FilePathTooLong);
         }
 
-        let i = left - size;
+        let dst = self.buffer[i as usize..].as_mut_ptr();
 
-        if i > self.buffer.len() as u32 {
-            return Err(Error::ShouldNotHappen);
+        // check amount of data read
+        if !check_bounds_signed(qstr_len, 0, MAX_NAME as i64) {
+            return Err(Error::FileNameTooLong);
         }
 
-        let dst = &mut self.buffer[i as usize..];
-
-        if gen::bpf_probe_read(
-            dst.as_mut_ptr() as *mut _,
-            // some probes were taking size out of stack discarding
-            // any previous checks so we force new value checking
-            cap_size(qstr_len, MAX_NAME as u32),
-            name as *const _,
-        ) >= 0
-        {
-            self.len += size;
+        if gen::bpf_probe_read(dst as *mut _, qstr_len as u32, name as *const _) >= 0 {
+            self.len += qstr_len as u32;
             self.depth += 1;
         } else {
-            self.error = Some(Error::RFPathSegment);
             return Err(Error::RFPathSegment);
         }
 
-        Ok(())
-    }
-
-    pub unsafe fn bpf_probe_read_str(&mut self, addr: u64) -> Result<()> {
-        self.mode = Mode::Append;
-
-        let len = gen::bpf_probe_read_str(
-            self.buffer.as_ptr() as *mut _,
-            core::mem::size_of_val(&self.buffer) as u32,
-            addr as *const _,
-        );
-        if len <= 0 {
-            return Err(Error::BpfProbeReadFailure);
-        }
-        // len is the size read including NULL byte
-        // len cannot be 0 so it is Ok to substract 1
-        self.len = (len - 1) as u32;
         Ok(())
     }
 
@@ -179,10 +205,5 @@ impl Path {
     /// function aiming at being used in bpf_printk
     pub unsafe fn as_str_ptr(&self) -> *const u8 {
         self.as_slice().as_ptr()
-    }
-
-    pub unsafe fn to_aya_debug_str(&self) -> &str {
-        return core::str::from_utf8_unchecked(&self.buffer[..]);
-        //return core::str::from_utf8_unchecked(self.as_slice());
     }
 }

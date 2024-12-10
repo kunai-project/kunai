@@ -1,6 +1,7 @@
 pub type __u64 = ::core::ffi::c_ulonglong;
 pub type u64_ = __u64;
 pub type __u32 = ::core::ffi::c_uint;
+pub type u32_ = __u32;
 pub type __u16 = ::core::ffi::c_ushort;
 pub type u16_ = __u16;
 pub type __u8 = ::core::ffi::c_uchar;
@@ -42,10 +43,22 @@ extern "C" {
     pub fn shim_cred_gid(pcred: *mut cred) -> gid_t;
 }
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct qstr {
-    pub hash_len: __u64,
+    pub __bindgen_anon_1: qstr__bindgen_ty_1,
     pub name: *const ::core::ffi::c_uchar,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union qstr__bindgen_ty_1 {
+    pub hash_len: __u64,
+    pub __bindgen_anon_1: qstr__bindgen_ty_1__bindgen_ty_1,
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct qstr__bindgen_ty_1__bindgen_ty_1 {
+    pub hash: u32_,
+    pub len: u32_,
 }
 extern "C" {
     pub fn shim_qstr_name(qstr: *mut qstr) -> *const ::core::ffi::c_uchar;
@@ -64,6 +77,24 @@ extern "C" {
 }
 extern "C" {
     pub fn shim_qstr_hash_len_exists(qstr: *mut qstr) -> bool;
+}
+extern "C" {
+    pub fn shim_qstr_hash(qstr: *mut qstr) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_qstr_hash_user(qstr: *mut qstr) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_qstr_hash_exists(qstr: *mut qstr) -> bool;
+}
+extern "C" {
+    pub fn shim_qstr_len(qstr: *mut qstr) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_qstr_len_user(qstr: *mut qstr) -> ::core::ffi::c_uint;
+}
+extern "C" {
+    pub fn shim_qstr_len_exists(qstr: *mut qstr) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -141,7 +172,7 @@ extern "C" {
     pub fn shim_super_block_s_root_exists(super_block: *mut super_block) -> bool;
 }
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct dentry {
     pub d_flags: ::core::ffi::c_uint,
     pub d_parent: *mut dentry,
