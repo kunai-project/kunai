@@ -2606,6 +2606,10 @@ struct RunOpt {
     #[arg(long)]
     max_buffered_events: Option<u16>,
 
+    /// Set a maximum number of events per seconds for I/O events
+    #[arg(long)]
+    max_eps_io: Option<u64>,
+
     /// Minimum amount of data sent to trigger a send_data event,
     /// set it to 0 to get all send_data events.
     #[arg(long)]
@@ -2665,6 +2669,11 @@ impl TryFrom<RunOpt> for Config {
         // we want to increase max_buffered_events
         if let Some(max_buffered_events) = opt.max_buffered_events {
             conf.max_buffered_events = max_buffered_events;
+        }
+
+        // we want to increase max_buffered_events
+        if let Some(max_eps_io) = opt.max_eps_io {
+            conf.max_eps_io = Some(max_eps_io);
         }
 
         // supersedes configuration

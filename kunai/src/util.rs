@@ -5,11 +5,11 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{fs, io, net::IpAddr};
 
+pub mod account;
 pub mod bpf;
 pub mod elf;
 pub mod namespace;
 pub mod uname;
-pub mod account;
 
 #[inline]
 pub fn is_public_ip(ip: IpAddr) -> bool {

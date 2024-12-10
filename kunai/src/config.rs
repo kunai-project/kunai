@@ -62,6 +62,7 @@ pub struct Scanner {
 pub struct Config {
     host_uuid: Option<uuid::Uuid>,
     pub max_buffered_events: u16,
+    pub max_eps_io: Option<u64>,
     pub workers: Option<usize>,
     pub send_data_min_len: Option<u64>,
     pub harden: bool,
@@ -94,6 +95,7 @@ impl Default for Config {
                 buffered: false,
             },
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
+            max_eps_io: Some(10000),
             workers: None,
             send_data_min_len: None,
             scanner: Scanner {
@@ -211,6 +213,7 @@ impl TryFrom<&Config> for BpfConfig {
         Ok(Self {
             loader: Loader::from_own_pid(),
             filter: value.try_into()?,
+            max_eps_io: value.max_eps_io,
             send_data_min_len: value.send_data_min_len.unwrap_or(DEFAULT_SEND_DATA_MIN_LEN),
         })
     }

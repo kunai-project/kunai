@@ -115,13 +115,24 @@ _SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_gid(struct cred *pcred), pcred, gid.
 
 struct qstr
 {
-	__u64 hash_len;
+	union
+	{
+		__u64 hash_len;
+		struct
+		{
+			u32 hash;
+			u32 len;
+		};
+	};
+
 	const unsigned char *name;
 }
 __attribute__((preserve_access_index));
 
 SHIM(qstr, name);
 SHIM(qstr, hash_len);
+SHIM(qstr, hash);
+SHIM(qstr, len);
 
 struct vfsmount
 {
