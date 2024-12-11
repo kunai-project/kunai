@@ -16,7 +16,6 @@ not_bpf_target_code! {
 
 bpf_target_code! {
     mod bpf;
-    pub use bpf::*;
 }
 
 // for path resolution
@@ -126,6 +125,34 @@ pub struct Metadata {
     pub ctime: Time,
 }
 
+#[allow(dead_code)]
+#[repr(C)]
+#[derive(Default, Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct MapKey {
+    hash: u64,
+    // depth is a u32 to force structure alignment
+    // without this kernel 5.4 fails at using this
+    // struct
+    depth: u32,
+    len: u32,
+    ino: u64,
+    sb_ino: u64,
+}
+
+impl From<&Path> for MapKey {
+    #[inline(always)]
+    fn from(p: &Path) -> Self {
+        let meta = p.metadata.unwrap_or_default();
+        MapKey {
+            hash: p.hash,
+            depth: p.depth as u32,
+            len: p.len,
+            ino: meta.ino,
+            sb_ino: meta.sb_ino,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Eq)]
 pub struct Path {
@@ -180,6 +207,11 @@ impl Default for Path {
 
 // common implementation
 impl Path {
+    #[inline(always)]
+    pub fn map_key(&self) -> MapKey {
+        MapKey::from(self)
+    }
+
     pub fn copy_from_str<T: AsRef<str>>(
         &mut self,
         s: T,

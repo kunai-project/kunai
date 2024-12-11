@@ -14,33 +14,6 @@ fn xor_shift_star(a: u64, b: u64) -> u64 {
     return x * 0x2545F4914F6CDD1D;
 }
 
-#[allow(dead_code)]
-#[repr(C)]
-pub struct MapKey {
-    hash: u64,
-    // depth is a u32 to force structure alignment
-    // without this kernel 5.4 fails at using this
-    // struct
-    depth: u32,
-    len: u32,
-    ino: u64,
-    sb_ino: u64,
-}
-
-impl From<&Path> for MapKey {
-    #[inline(always)]
-    fn from(p: &Path) -> Self {
-        let meta = p.metadata.unwrap_or_default();
-        MapKey {
-            hash: p.hash,
-            depth: p.depth as u32,
-            len: p.len,
-            ino: meta.ino,
-            sb_ino: meta.sb_ino,
-        }
-    }
-}
-
 impl Path {
     #[inline(always)]
     unsafe fn init_from_inode(&mut self, i: &co_re::inode) -> Result<()> {
@@ -59,11 +32,6 @@ impl Path {
         });
 
         Ok(())
-    }
-
-    #[inline(always)]
-    pub fn map_key(&self) -> MapKey {
-        MapKey::from(self)
     }
 
     #[inline(always)]
