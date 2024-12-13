@@ -2606,7 +2606,7 @@ struct RunOpt {
     #[arg(long)]
     max_buffered_events: Option<u16>,
 
-    /// Set a maximum number of events per seconds for I/O events
+    /// Set a maximum number of events per seconds and per CPU for I/O events
     #[arg(long)]
     max_eps_io: Option<u64>,
 

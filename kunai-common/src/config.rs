@@ -67,6 +67,7 @@ impl Filter {
 pub struct BpfConfig {
     pub loader: Loader,
     pub filter: Filter,
-    pub max_eps_io: Option<u64>,
+    pub glob_max_eps_io: Option<u64>,
+    pub task_max_eps_io: Option<u64>,
     pub send_data_min_len: u64,
 }

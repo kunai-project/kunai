@@ -4,7 +4,7 @@ use super::*;
 
 use aya_ebpf::cty::c_int;
 use aya_ebpf::helpers::bpf_ktime_get_ns;
-use aya_ebpf::maps::LruHashMap;
+use aya_ebpf::maps::{LruHashMap, LruPerCpuHashMap};
 use aya_ebpf::programs::{ProbeContext, RetProbeContext};
 use aya_ebpf::EbpfContext;
 use kunai_common::inspect_err;
@@ -83,14 +83,14 @@ unsafe fn file_key(file: &co_re::file) -> ProbeResult<FileKey> {
 
 // (task_id, sampling_ts): counter
 #[map]
-static mut THROTTLE: LruHashMap<(u64, u64), u64> = LruHashMap::with_max_entries(0x1ffff, 0);
+static mut THROTTLE: LruPerCpuHashMap<(u64, u64), u64> =
+    LruPerCpuHashMap::with_max_entries(8192, 0);
 
-const SAMPLING_NS: u64 = 100_000_000;
-const SAMPLES_IN_1S: u64 = 10;
+const SAMPLING_NS: u64 = 1_000_000_000;
+const SAMPLES_IN_1S: u64 = 1;
 
 #[inline(always)]
 unsafe fn events_per_sampling(task_id: u64) -> u64 {
-    // sampling period of 10ms
     let sampling_ts = bpf_ktime_get_ns().div(SAMPLING_NS);
 
     let key = (task_id, sampling_ts);
@@ -124,14 +124,19 @@ unsafe fn is_global_io_limit_reach(limit: u64) -> (bool, bool) {
 
 #[inline(always)]
 unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
+    let cfg = get_cfg!()?;
+
     // we convert event/s to event/sampling
-    let Some(limit) = get_cfg!().map(|c| c.max_eps_io.map(|m| m.div(SAMPLES_IN_1S)))? else {
+    let (Some(glob_limit), Some(task_limit)) = (
+        cfg.glob_max_eps_io.map(|m| m.div(SAMPLES_IN_1S)),
+        cfg.task_max_eps_io.map(|m| m.div(SAMPLES_IN_1S)),
+    ) else {
         // if there is no limit we do not throttle
         return Ok(false);
     };
 
     // we allow a process to take alone half of this otherwise we report it
-    if let (true, limit) = is_task_io_limit_reach(limit.div(2)) {
+    if let (true, limit) = is_task_io_limit_reach(task_limit) {
         if limit {
             error_msg!(ctx, "current task i/o limit reached");
         }
@@ -139,7 +144,7 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
     }
 
     // if there are too many I/O globally a random task can see its I/O ignored
-    if let (true, limit) = is_global_io_limit_reach(limit) {
+    if let (true, limit) = is_global_io_limit_reach(glob_limit) {
         if limit {
             error_msg!(ctx, "global i/o limit reached");
         }

@@ -4,7 +4,11 @@ use kunai_common::{
     config::{BpfConfig, Filter, Loader},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs};
+use std::{
+    collections::BTreeMap,
+    fs,
+    ops::{Div, Mul},
+};
 use thiserror::Error;
 
 pub const DEFAULT_SEND_DATA_MIN_LEN: u64 = 256;
@@ -95,7 +99,8 @@ impl Default for Config {
                 buffered: false,
             },
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
-            max_eps_io: Some(10000),
+            // this x2 rule generally works for small values of max_buffered_events
+            max_eps_io: Some(DEFAULT_MAX_BUFFERED_EVENTS as u64 * 2),
             workers: None,
             send_data_min_len: None,
             scanner: Scanner {
@@ -213,7 +218,8 @@ impl TryFrom<&Config> for BpfConfig {
         Ok(Self {
             loader: Loader::from_own_pid(),
             filter: value.try_into()?,
-            max_eps_io: value.max_eps_io,
+            glob_max_eps_io: value.max_eps_io,
+            task_max_eps_io: value.max_eps_io.map(|m| m.mul(2).div(3)),
             send_data_min_len: value.send_data_min_len.unwrap_or(DEFAULT_SEND_DATA_MIN_LEN),
         })
     }
