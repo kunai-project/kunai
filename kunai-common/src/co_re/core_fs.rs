@@ -93,17 +93,8 @@ pub type qstr = CoRe<gen::qstr>;
 impl qstr {
     rust_shim_kernel_impl!(pub, qstr, name, *const u8);
     rust_shim_kernel_impl!(pub, qstr, hash_len, u64);
-
-    #[inline(always)]
-    pub unsafe fn hash(&self) -> Option<u32> {
-        Some(self.hash_len()? as u32)
-    }
-
-    #[inline(always)]
-    pub unsafe fn len(&self) -> Option<u32> {
-        //(shim_qstr_hash_len(self.as_ptr_mut()) >> 32) as u32
-        Some((self.hash_len()? >> 32) as u32)
-    }
+    rust_shim_kernel_impl!(pub, qstr, hash, u32);
+    rust_shim_kernel_impl!(pub, qstr, len, u32);
 }
 
 #[allow(non_camel_case_types)]

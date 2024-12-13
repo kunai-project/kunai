@@ -1,8 +1,12 @@
+use core::ops::Div;
+
 use super::*;
 
 use aya_ebpf::cty::c_int;
-use aya_ebpf::maps::LruHashMap;
+use aya_ebpf::helpers::bpf_ktime_get_ns;
+use aya_ebpf::maps::{LruHashMap, LruPerCpuHashMap};
 use aya_ebpf::programs::{ProbeContext, RetProbeContext};
+use aya_ebpf::EbpfContext;
 use kunai_common::inspect_err;
 use kunai_common::kprobe::ProbeFn;
 
@@ -77,6 +81,79 @@ unsafe fn file_key(file: &co_re::file) -> ProbeResult<FileKey> {
     Ok(FileKey(task_id, ino))
 }
 
+// (task_id, sampling_ts): counter
+#[map]
+static mut THROTTLE: LruPerCpuHashMap<(u64, u64), u64> =
+    LruPerCpuHashMap::with_max_entries(8192, 0);
+
+const SAMPLING_NS: u64 = 1_000_000_000;
+const SAMPLES_IN_1S: u64 = 1;
+
+#[inline(always)]
+unsafe fn events_per_sampling(task_id: u64) -> u64 {
+    let sampling_ts = bpf_ktime_get_ns().div(SAMPLING_NS);
+
+    let key = (task_id, sampling_ts);
+
+    if let Some(c) = THROTTLE.get_ptr_mut(&key) {
+        *c += 1;
+        *c
+    } else {
+        ignore_result!(THROTTLE.insert(&key, &1, 0));
+        1
+    }
+}
+
+#[inline(always)]
+unsafe fn is_task_io_limit_reach(limit: u64) -> (bool, bool) {
+    let eps = events_per_sampling(bpf_task_tracking_id());
+    if eps >= limit {
+        return (true, eps == limit);
+    }
+    (false, false)
+}
+
+#[inline(always)]
+unsafe fn is_global_io_limit_reach(limit: u64) -> (bool, bool) {
+    let eps = events_per_sampling(0);
+    if eps >= limit {
+        return (true, eps == limit);
+    }
+    (false, false)
+}
+
+#[inline(always)]
+unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
+    let cfg = get_cfg!()?;
+
+    // we convert event/s to event/sampling
+    let (Some(glob_limit), Some(task_limit)) = (
+        cfg.glob_max_eps_io.map(|m| m.div(SAMPLES_IN_1S)),
+        cfg.task_max_eps_io.map(|m| m.div(SAMPLES_IN_1S)),
+    ) else {
+        // if there is no limit we do not throttle
+        return Ok(false);
+    };
+
+    // we allow a process to take alone half of this otherwise we report it
+    if let (true, limit) = is_task_io_limit_reach(task_limit) {
+        if limit {
+            error_msg!(ctx, "current task i/o limit reached");
+        }
+        return Ok(true);
+    }
+
+    // if there are too many I/O globally a random task can see its I/O ignored
+    if let (true, limit) = is_global_io_limit_reach(glob_limit) {
+        if limit {
+            error_msg!(ctx, "global i/o limit reached");
+        }
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 #[kprobe(function = "vfs_read")]
 pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -133,6 +210,10 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
         event.init_from_current_task(Type::ReadConfig)?;
         pipe_event(ctx, event);
     } else if config.is_event_enabled(Type::Read) && !event.data.path.starts_with("/proc/") {
+        // we rate limit this event
+        if limit_eps_with_context(ctx)? {
+            return Ok(());
+        }
         // we filter out procfs because it generates too much events
         // maybe let the choice through a configuration option
         event.init_from_current_task(Type::Read)?;
@@ -207,6 +288,10 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
         event.init_from_current_task(Type::WriteConfig)?;
         pipe_event(ctx, event);
     } else if config.is_event_enabled(Type::Write) {
+        // we rate limit this event
+        if limit_eps_with_context(ctx)? {
+            return Ok(());
+        }
         event.init_from_current_task(Type::Write)?;
         pipe_event(ctx, event);
     }
@@ -246,6 +331,11 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // we handle only file renaming for the moment
     if !core_read_kernel!(old_dentry, is_file)? {
+        return Ok(());
+    }
+
+    // we rate limit this event
+    if limit_eps_with_context(ctx)? {
         return Ok(());
     }
 
@@ -344,6 +434,11 @@ unsafe fn try_vfs_unlink(ctx: &RetProbeContext) -> ProbeResult<()> {
     // if event is disabled we return
     if_disabled_return!(Type::FileUnlink, ());
 
+    // we rate limit this event
+    if limit_eps_with_context(ctx)? {
+        return Ok(());
+    }
+
     let rc: c_int = ctx.ret().unwrap_or(-1);
 
     alloc::init()?;
@@ -410,6 +505,11 @@ pub fn fs_enter_fput_sync(ctx: ProbeContext) -> u32 {
     }
 }
 
+#[map]
+static mut WRITE_CLOSE_CACHE: LruHashMap<(u64, u64, path::MapKey), bool> =
+    LruHashMap::with_max_entries(4096, 0);
+
+#[inline(always)]
 unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
     // if event is disabled we return early
     if get_cfg!().map(|c| c.is_event_disabled(Type::WriteClose))? {
@@ -438,6 +538,27 @@ unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
         event.data.path.core_resolve_file(&file, MAX_PATH_DEPTH),
         |e: &path::Error| warn!(ctx, "failed to resolve filename", (*e).into())
     ));
+
+    // we create a unique key for path
+    let k = (
+        bpf_ktime_get_ns().div(100_000_000),
+        bpf_task_tracking_id(),
+        event.data.path.map_key(),
+    );
+
+    // we already generated an event for this path less than 100ms ago
+    // so we ignore it
+    if WRITE_CLOSE_CACHE.get(&k).is_some() {
+        return Ok(());
+    }
+
+    ignore_result!(WRITE_CLOSE_CACHE.insert(&k, &true, 0));
+
+    // make this check only here as we want to filter out
+    // already known paths first
+    if limit_eps_with_context(ctx)? {
+        return Ok(());
+    }
 
     // we send event
     pipe_event(ctx, event);
@@ -474,6 +595,11 @@ unsafe fn try_security_file_open(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // if not FMODE_CREATED we return
     if !file.f_mode().unwrap_or_default() & FMODE_CREATED == FMODE_CREATED {
+        return Ok(());
+    }
+
+    // we rate limit this event
+    if limit_eps_with_context(ctx)? {
         return Ok(());
     }
 
