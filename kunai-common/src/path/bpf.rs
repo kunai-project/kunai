@@ -93,7 +93,7 @@ impl Path {
                 break;
             }
 
-            // read the qstr
+            // prepend path separator
             if !self.is_empty() {
                 self.prepend_path_sep()?;
             }
