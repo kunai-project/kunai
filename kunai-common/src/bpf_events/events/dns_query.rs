@@ -38,7 +38,7 @@ impl DnsQueryData {
             // there are two bytes at front encoding the size of the packet
             return &self.data.as_slice()[2..];
         }
-        return self.data.as_slice();
+        self.data.as_slice()
     }
 }
 

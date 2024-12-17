@@ -265,7 +265,7 @@ struct EventConsumer<'s> {
     scan_events_enabled: bool,
 }
 
-impl<'s> EventConsumer<'s> {
+impl EventConsumer<'_> {
     fn prepare_output(config: &Config) -> anyhow::Result<Output> {
         let output = match &config.output.path.as_str() {
             &"stdout" => String::from("/dev/stdout"),

@@ -12,7 +12,6 @@ use super::MAX_ARGV_SIZE;
 /// EventProcessor. As a consequence it should hold any
 /// information the EventProcessor would need to maintain
 /// a fresh cache.
-
 pub type CorrelationEvent = Event<CorrelationData>;
 
 #[repr(C)]

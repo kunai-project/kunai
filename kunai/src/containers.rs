@@ -35,7 +35,7 @@ impl<'de> Deserialize<'de> for Container {
         struct ContainerVisitor;
         const VARIANTS: &[&str] = &Container::variants_str();
 
-        impl<'de> serde::de::Visitor<'de> for ContainerVisitor {
+        impl serde::de::Visitor<'_> for ContainerVisitor {
             type Value = Container;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

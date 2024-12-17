@@ -10,7 +10,6 @@ use std::{
 /// yara-x uses a lot of lifetimes, which makes it hard to integrate
 /// in existing code. So this module mainly redefines easier types
 /// to work with.
-
 /// Wraps a yara_x::Rules, but preventing it from moving around in memory.
 struct PinnedRules {
     rules: yara_x::Rules,
@@ -46,7 +45,7 @@ impl SourceCode {
     }
 }
 
-impl<'a> Scanner<'a> {
+impl Scanner<'_> {
     pub fn with_rules(rules: yara_x::Rules) -> Self {
         let pinned_rules = Box::pin(PinnedRules {
             rules,
@@ -63,7 +62,7 @@ impl<'a> Scanner<'a> {
     }
 }
 
-unsafe impl<'s> Send for Scanner<'s> {}
+unsafe impl Send for Scanner<'_> {}
 
 impl<'s> Deref for Scanner<'s> {
     type Target = Mutex<yara_x::Scanner<'s>>;
@@ -72,7 +71,7 @@ impl<'s> Deref for Scanner<'s> {
     }
 }
 
-impl<'s> DerefMut for Scanner<'s> {
+impl DerefMut for Scanner<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.scanner
     }

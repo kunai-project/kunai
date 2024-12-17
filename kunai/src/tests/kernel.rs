@@ -95,7 +95,7 @@ fn setrlimit(rlimit: &rlimit) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn custom_panic_handler(info: &panic::PanicInfo) {
+fn custom_panic_handler(info: &panic::PanicHookInfo) {
     // Your custom panic handling code goes here
     println!("\x1b[1;31m{info}\x1b[0m");
     // we power-off the system
