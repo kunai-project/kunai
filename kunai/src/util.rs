@@ -16,8 +16,8 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
     let ip_network: IpNetwork = ip.into();
 
     match ip_network {
-        IpNetwork::V4(v4) => !v4.is_private(),
-        IpNetwork::V6(v6) => !v6.is_unique_local(),
+        IpNetwork::V4(v4) => v4.is_global(),
+        IpNetwork::V6(v6) => v6.is_global(),
     }
 }
 
