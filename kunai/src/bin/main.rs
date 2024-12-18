@@ -2479,7 +2479,7 @@ impl EventProducer {
                         // info_unchecked can be used here as we are sure info is valid
                         let etype = unsafe { dec.info_unchecked() }.etype;
 
-                        // filtering out unwanted events but let Excve/Clone go as those are used
+                        // filtering out unwanted events but let Execve/Clone go as those are used
                         // for correlation on consumer side.
                         if ep.filter.is_disabled(etype)
                             && !matches!(
