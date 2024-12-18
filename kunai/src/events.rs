@@ -154,7 +154,7 @@ impl<'de> Deserialize<'de> for UtcDateTime {
     {
         struct UtcDateTimeVisitor;
 
-        impl<'de> Visitor<'de> for UtcDateTimeVisitor {
+        impl Visitor<'_> for UtcDateTimeVisitor {
             type Value = UtcDateTime;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
