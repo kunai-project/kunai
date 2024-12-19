@@ -97,7 +97,7 @@ unsafe fn try_schedule(ctx: &ProbeContext) -> ProbeResult<()> {
 
     // we do not really care if that is failing
     ignore_result!(inspect_err!(MARKED.insert(&task_uuid, &true, 0), |_| {
-        warn_msg!(ctx, "failed to track task")
+        warn!(ctx, "failed to track task")
     }));
 
     // we send event to userland

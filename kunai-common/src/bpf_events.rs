@@ -134,8 +134,8 @@ pub enum Type {
     Correlation,
     #[str("cache_hash")]
     CacheHash,
-    #[str("error")]
-    Error,
+    #[str("log")]
+    Log,
     #[str("syscore_resume")]
     SyscoreResume,
 

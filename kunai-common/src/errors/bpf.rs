@@ -1,7 +1,7 @@
 use aya_ebpf::{macros::map, maps::LruPerCpuHashMap, EbpfContext};
 
 use crate::{
-    bpf_events::{error, ErrorEvent},
+    bpf_events::{log, LogEvent},
     string::String,
 };
 
@@ -9,11 +9,10 @@ use crate::{
 use super::*;
 
 #[map]
-pub static mut ERRORS: LruPerCpuHashMap<u32, ErrorEvent> =
-    LruPerCpuHashMap::with_max_entries(16, 0);
+pub static mut LOGS: LruPerCpuHashMap<u32, LogEvent> = LruPerCpuHashMap::with_max_entries(16, 0);
 
-const SIZE: usize = ErrorEvent::size_of();
-pub static EMPTY_ERROR: [u8; SIZE] = [0; SIZE];
+const SIZE: usize = LogEvent::size_of();
+pub static EMPTY_LOG: [u8; SIZE] = [0; SIZE];
 
 #[macro_export]
 macro_rules! probe_name {
@@ -90,27 +89,27 @@ pub struct Args {
     pub location: String<32>,
     pub message: Option<String<64>>,
     pub err: Option<ProbeError>,
-    pub level: error::Level,
+    pub level: log::Level,
 }
 
 #[inline(always)]
-pub unsafe fn error_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
-    let _ = ERRORS.insert(&0, &(*(EMPTY_ERROR.as_ptr() as *const ErrorEvent)), 0);
-    if let Some(e) = ERRORS.get_ptr_mut(&0) {
+pub unsafe fn log_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
+    let _ = LOGS.insert(&0, &(*(EMPTY_LOG.as_ptr() as *const LogEvent)), 0);
+    if let Some(e) = LOGS.get_ptr_mut(&0) {
         let e = &mut *e;
         e.init_with_level(args.level);
-        e.info.etype = bpf_events::Type::Error;
+        e.info.etype = bpf_events::Type::Log;
         e.data.location.copy_from(&args.location);
         e.data.line = args.line;
         e.data.error = args.err;
         e.data.message = args.message;
 
-        bpf_events::pipe_error(ctx, e);
+        bpf_events::pipe_log(ctx, e);
     }
 }
 
 #[macro_export]
-macro_rules! _error {
+macro_rules! log {
     ($ctx:expr, $msg:literal, $err:expr, $level:expr) => {{
         unsafe {
             const _PROBE_NAME: $crate::string::String<32> = $crate::probe_name!();
@@ -130,53 +129,44 @@ macro_rules! _error {
                 level: $level,
             };
 
-            $crate::errors::error_with_args($ctx, &args);
+            $crate::errors::log_with_args($ctx, &args);
         };
     }};
 }
 
 #[macro_export]
 macro_rules! error {
-    ($ctx:expr, $err:expr) => {{
-        $crate::error!($ctx, "", $err)
-    }};
+    // literal must be evaluated first
+    ($ctx:expr, $msg:literal) => {
+        $crate::log!($ctx, $msg, None, $crate::bpf_events::log::Level::Error)
+    };
 
-    ($ctx:expr, $msg:literal, $err:expr) => {{
-        $crate::_error!(
+    ($ctx:expr, $err:expr) => {
+        $crate::log!($ctx, "", Some($err), $crate::bpf_events::log::Level::Error)
+    };
+
+    ($ctx:expr, $msg:literal, $err:expr) => {
+        $crate::log!(
             $ctx,
             $msg,
             Some($err),
-            $crate::bpf_events::error::Level::Error
+            $crate::bpf_events::log::Level::Error
         );
-    }};
-}
-
-#[macro_export]
-macro_rules! error_msg {
-    ($ctx:expr, $msg:literal) => {
-        $crate::_error!($ctx, $msg, None, $crate::bpf_events::error::Level::Error)
     };
 }
 
 #[macro_export]
 macro_rules! warn {
+    // literal must be evaluated first
+    ($ctx:expr, $msg:literal) => {
+        $crate::log!($ctx, $msg, None, $crate::bpf_events::log::Level::Warn)
+    };
+
     ($ctx:expr, $err:expr) => {
-        $crate::warn!($ctx, "", $err);
+        $crate::log!($ctx, "", Some($err), $crate::bpf_events::log::Level::Warn);
     };
 
     ($ctx:expr, $msg:literal, $err:expr) => {
-        $crate::_error!(
-            $ctx,
-            $msg,
-            Some($err),
-            $crate::bpf_events::error::Level::Warn
-        );
-    };
-}
-
-#[macro_export]
-macro_rules! warn_msg {
-    ($ctx:expr, $msg:literal) => {
-        $crate::_error!($ctx, $msg, None, $crate::bpf_events::error::Level::Warn)
+        $crate::log!($ctx, $msg, Some($err), $crate::bpf_events::log::Level::Warn);
     };
 }

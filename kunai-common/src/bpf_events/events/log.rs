@@ -5,16 +5,18 @@ use crate::{
     string::String,
 };
 
-pub type ErrorEvent = Event<ErrorData>;
+pub type LogEvent = Event<LogData>;
 
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub enum Level {
+    Info,
     Warn,
     Error,
 }
 
 #[repr(C)]
-pub struct ErrorData {
+pub struct LogData {
     pub location: String<32>,
     pub line: u32,
     pub level: Level,
@@ -28,7 +30,7 @@ bpf_target_code! {
 
     const DEFAULT_COMM: String<16> = string::from_static("?");
 
-    impl ErrorEvent {
+    impl LogEvent {
         #[inline(always)]
         pub fn init_with_level(&mut self, level: Level){
             let pid_tgid = bpf_get_current_pid_tgid();
@@ -41,7 +43,7 @@ bpf_target_code! {
 }
 
 not_bpf_target_code! {
-    impl core::fmt::Display for ErrorEvent {
+    impl core::fmt::Display for LogEvent {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(
                 f,

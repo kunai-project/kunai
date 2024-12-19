@@ -122,7 +122,7 @@ unsafe fn handle_socket_attach_prog(
     }
 
     //handle loading of regular bpf program
-    warn_msg!(exit_ctx, "bpf program attached to socket not yet supported");
+    warn!(exit_ctx, "bpf program attached to socket not yet supported");
 
     Ok(())
 }
