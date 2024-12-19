@@ -156,15 +156,15 @@ impl Users {
     }
 
     #[inline(always)]
-    pub fn get_by_uid(&self, uid: &u32) -> Option<&User> {
+    pub fn get_by_uid(&self, uid: u32) -> Option<&User> {
         self.users_by_id
-            .get(uid)
+            .get(&uid)
             .and_then(|&idx| self.users.get(idx))
     }
 
     #[inline(always)]
-    pub fn contains_uid(&self, uid: &u32) -> bool {
-        self.users_by_id.contains_key(uid)
+    pub fn contains_uid(&self, uid: u32) -> bool {
+        self.users_by_id.contains_key(&uid)
     }
 
     #[inline(always)]
@@ -235,9 +235,9 @@ impl Groups {
     }
 
     #[inline(always)]
-    pub fn get_by_gid(&self, gid: &u32) -> Option<&Group> {
+    pub fn get_by_gid(&self, gid: u32) -> Option<&Group> {
         self.groups_by_id
-            .get(gid)
+            .get(&gid)
             .and_then(|&idx| self.groups.get(idx))
     }
 
