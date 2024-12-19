@@ -37,8 +37,6 @@ pub enum Error {
     FileModSinceKernelEvent(&'static str),
     #[error("metadata is needed for ebpf path")]
     MetadataRequired,
-    #[error("file not found")]
-    FileNotFound,
     #[error("yara scan error: {0}")]
     ScanError(#[from] yara_x::errors::ScanError),
 }
@@ -227,7 +225,8 @@ impl Key {
 
         // checking if the file still exists
         if !pb.exists() {
-            return Err(Error::FileNotFound);
+            // return a io::Error instead of custom error
+            return Err(io::Error::new(io::ErrorKind::NotFound, "file not found").into());
         }
 
         let meta = pb.metadata()?;
@@ -310,8 +309,8 @@ impl Cache {
     pub fn get_user_group_in_ns(
         &mut self,
         ns: Mnt,
-        uid: &u32,
-        gid: &u32,
+        uid: u32,
+        gid: u32,
     ) -> Result<(Option<&User>, Option<&Group>), Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
@@ -319,9 +318,21 @@ impl Cache {
 
         // we haven't yet parsed users and groups or we don't find an entry
         let user_group = mnt_ns.do_in_namespace(|| {
+            let user_path = PathBuf::from(Users::sys_path());
+
+            // we must explicitely return a not found error if the file is missing
+            // it avoids multiple layers of io error wrapping and complex analysis of
+            // namespace::Error:Other variant to detect missing file
+            if !user_path.exists() {
+                return Err(namespace::Error::other(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "user file not found",
+                )));
+            }
+
             // getting user
-            let ukey = Key::from_path_in_ns(ns, &Users::sys_path().into())
-                .map_err(namespace::Error::other)?;
+            let ukey =
+                Key::from_path_in_ns(ns, &user_path.into()).map_err(namespace::Error::other)?;
 
             if !self.users.contains_key(&ukey) {
                 self.users.insert(
@@ -332,9 +343,18 @@ impl Cache {
 
             let user = self.users.get(&ukey).and_then(|u| u.get_by_uid(uid));
 
+            let group_path = PathBuf::from(Groups::sys_path());
+
+            if !group_path.exists() {
+                return Err(namespace::Error::other(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "group file not found",
+                )));
+            }
+
             // getting group
-            let gkey = Key::from_path_in_ns(ns, &Groups::sys_path().into())
-                .map_err(namespace::Error::other)?;
+            let gkey =
+                Key::from_path_in_ns(ns, &group_path.into()).map_err(namespace::Error::other)?;
 
             if !self.groups.contains_key(&gkey) {
                 self.groups.insert(

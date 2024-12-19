@@ -1575,13 +1575,32 @@ impl EventConsumer<'_> {
         mnt_ns: Mnt,
         ti: &bpf_events::TaskInfo,
     ) -> TaskAdditionalInfo {
+        let res = match self.cache.get_user_group_in_ns(mnt_ns, ti.uid, ti.gid) {
+            Ok(o) => Ok(o),
+            Err(e) => match e {
+                Error::Namespace(ns) => {
+                    if ns.is_other_and_io_kind(io::ErrorKind::NotFound) {
+                        self.cache
+                            .get_user_group_in_ns(self.system_info.mount_ns, ti.uid, ti.gid)
+                    } else {
+                        Err(ns.into())
+                    }
+                }
+                _ => Err(e),
+            },
+        };
+
         // getting user and group information for task
-        let (user, group) = self
-            .cache
-            .get_user_group_in_ns(mnt_ns, &ti.uid, &ti.gid)
+        let (user, group) = res
             .inspect_err(|e| {
                 if !e.is_unknown_ns() {
-                    error!("failed to get task user: {e}")
+                    let mut ti = *ti;
+                    // fixes the random part to have a searchable uuid for error investigation
+                    ti.set_uuid_random(self.random);
+                    error!(
+                        "failed to get task guuid={} user/group: {e}",
+                        ti.tg_uuid.into_uuid()
+                    )
                 }
             })
             .unwrap_or_default();

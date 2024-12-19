@@ -1,5 +1,5 @@
 use std::hash::Hash;
-use std::io::Error as IoError;
+use std::io::{self, Error as IoError};
 use std::num::ParseIntError;
 
 use std::os::unix::io::RawFd;
@@ -168,6 +168,19 @@ impl Error {
         E: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
         Self::Other(err.into())
+    }
+
+    #[inline(always)]
+    /// Unwraps [Error::Other] and checks if it is an [io::Error] of
+    /// [io::ErrorKind] `kind`
+    pub fn is_other_and_io_kind(&self, kind: io::ErrorKind) -> bool {
+        match self {
+            Error::Other(ns) => match ns.downcast_ref::<io::Error>() {
+                Some(io) => io.kind() == kind,
+                _ => false,
+            },
+            _ => false,
+        }
     }
 }
 
