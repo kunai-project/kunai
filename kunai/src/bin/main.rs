@@ -2105,6 +2105,7 @@ impl EventConsumer<'_> {
             },
 
             Type::Log => {
+                // only panic in debug
                 #[cfg(debug_assertions)]
                 panic!("log events should be processed earlier")
             }
