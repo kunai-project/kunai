@@ -138,7 +138,7 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
     // we allow a process to take alone half of this otherwise we report it
     if let (true, limit) = is_task_io_limit_reach(task_limit) {
         if limit {
-            error_msg!(ctx, "current task i/o limit reached");
+            error!(ctx, "current task i/o limit reached");
         }
         return Ok(true);
     }
@@ -146,7 +146,7 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
     // if there are too many I/O globally a random task can see its I/O ignored
     if let (true, limit) = is_global_io_limit_reach(glob_limit) {
         if limit {
-            error_msg!(ctx, "global i/o limit reached");
+            error!(ctx, "global i/o limit reached");
         }
         return Ok(true);
     }
@@ -221,7 +221,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    ignore_result!(inspect_err!(file_set_flag(&file, READ), |_| warn_msg!(
+    ignore_result!(inspect_err!(file_set_flag(&file, READ), |_| warn!(
         ctx,
         "failed to track file read"
     )));
@@ -297,7 +297,7 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
     }
 
     // we mark file as being tracked
-    ignore_result!(inspect_err!(file_set_flag(&file, WRITE), |_| warn_msg!(
+    ignore_result!(inspect_err!(file_set_flag(&file, WRITE), |_| warn!(
         ctx,
         "failed to track file write"
     )));

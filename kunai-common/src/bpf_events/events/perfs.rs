@@ -4,7 +4,7 @@ pub const KUNAI_EVENTS_MAP: &str = "KUNAI_EVENTS";
 pub const KUNAI_STATS_MAP: &str = "KUNAI_STATS";
 
 bpf_target_code! {
-    use crate::bpf_events::{Event,Type, ErrorEvent};
+    use crate::bpf_events::{Event,Type, LogEvent};
     use aya_ebpf::{macros::map, maps::{HashMap,PerfEventByteArray}, EbpfContext};
 
     #[map(name = "KUNAI_EVENTS")]
@@ -15,7 +15,7 @@ bpf_target_code! {
 
 
     #[inline(always)]
-    pub unsafe fn pipe_error<C: EbpfContext>(ctx: &C, e: &ErrorEvent) {
+    pub unsafe fn pipe_log<C: EbpfContext>(ctx: &C, e: &LogEvent) {
         EVENTS.output(ctx, e.encode(), 0);
     }
 

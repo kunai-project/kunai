@@ -30,8 +30,8 @@ mod mount;
 pub use mount::*;
 mod prctl;
 pub use prctl::*;
-pub mod error;
-pub use error::{ErrorData, ErrorEvent};
+pub mod log;
+pub use log::{LogData, LogEvent};
 mod syscore_resume;
 pub use syscore_resume::*;
 mod kill;
@@ -85,7 +85,7 @@ const fn max_bpf_event_size() -> usize {
             | Type::FileCreate => FileEvent::size_of(),
             Type::FileRename => FileRenameEvent::size_of(),
             Type::FileUnlink => UnlinkEvent::size_of(),
-            Type::Error => ErrorEvent::size_of(),
+            Type::Log => LogEvent::size_of(),
             Type::SyscoreResume => SysCoreResumeEvent::size_of(),
             // these are event types only used in user land
             Type::Unknown

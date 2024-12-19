@@ -97,7 +97,7 @@ unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> P
             .data
             .uargs
             .read_user_str_bytes(args.uargs() as *const u8),
-        |_| warn_msg!(ctx, "failed to read uargs")
+        |_| warn!(ctx, "failed to read uargs")
     ));
 
     // setting event data

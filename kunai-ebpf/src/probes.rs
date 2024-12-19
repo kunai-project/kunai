@@ -5,12 +5,12 @@ use kunai_common::{
     bpf_events::*,
     co_re,
     consts::*,
-    error, error_msg,
+    error,
     errors::{self, *},
     inspect_err,
     path::{self, *},
     utils::*,
-    warn, warn_msg,
+    warn,
 };
 
 #[cfg(feature = "debug")]

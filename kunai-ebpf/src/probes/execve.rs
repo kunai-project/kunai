@@ -131,7 +131,7 @@ unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
         .read_user_at(arg_start as *const u8, arg_len as u32)
         .is_err()
     {
-        warn_msg!(ctx, "failed to read argv")
+        warn!(ctx, "failed to read argv")
     }
 
     // cgroup parsing

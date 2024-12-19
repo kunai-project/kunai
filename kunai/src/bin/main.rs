@@ -27,7 +27,7 @@ use kunai::util::uname::Utsname;
 use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, error, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, TaskInfo, Type,
+    self, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, TaskInfo, Type,
     MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::Filter;
@@ -2104,7 +2104,11 @@ impl EventConsumer<'_> {
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
-            Type::Error => panic!("error events should be processed earlier"),
+            Type::Log => {
+                // only panic in debug
+                #[cfg(debug_assertions)]
+                panic!("log events should be processed earlier")
+            }
             Type::SyscoreResume => { /*  just ignore it */ }
         }
     }
@@ -2295,11 +2299,12 @@ impl EventProducer {
                     }
                 }
             }
-            Type::Error => {
-                let e = event!(e, bpf_events::ErrorEvent).unwrap();
+            Type::Log => {
+                let e = event!(e, bpf_events::LogEvent).unwrap();
                 match e.data.level {
-                    error::Level::Warn => warn!("{}", e),
-                    error::Level::Error => error!("{}", e),
+                    bpf_events::log::Level::Info => info!("{}", e),
+                    bpf_events::log::Level::Warn => warn!("{}", e),
+                    bpf_events::log::Level::Error => error!("{}", e),
                 }
                 // we don't need to process such event further
                 return true;
@@ -2966,7 +2971,7 @@ impl Command {
                         Type::Unknown
                         | Type::CacheHash
                         | Type::Correlation
-                        | Type::Error
+                        | Type::Log
                         | Type::EndConfigurable
                         | Type::TaskSched
                         | Type::SyscoreResume
