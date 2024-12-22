@@ -47,9 +47,10 @@ not_bpf_target_code! {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(
                 f,
-                "{} line={} tgid={} comm={}",
+                "{} line={} pid={} tgid={} comm={}",
                 self.data.location.as_str(),
                 self.data.line,
+                self.info.process.pid,
                 self.info.process.tgid,
                 self.info.process.comm_str(),
             )?;
