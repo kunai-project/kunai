@@ -7,8 +7,8 @@ use aya_ebpf::helpers::bpf_ktime_get_ns;
 use aya_ebpf::maps::{LruHashMap, LruPerCpuHashMap};
 use aya_ebpf::programs::{ProbeContext, RetProbeContext};
 use aya_ebpf::EbpfContext;
-use kunai_common::inspect_err;
 use kunai_common::kprobe::ProbeFn;
+use kunai_common::{bpf_events, inspect_err};
 
 const READ: Flag = Flag(0b00000001);
 const WRITE: Flag = Flag(0b00000010);
@@ -105,7 +105,7 @@ unsafe fn events_per_sampling(task_id: u64) -> u64 {
 }
 
 #[inline(always)]
-unsafe fn is_task_io_limit_reach(limit: u64) -> (bool, bool) {
+unsafe fn is_task_fs_limit_reach(limit: u64) -> (bool, bool) {
     let eps = events_per_sampling(bpf_task_tracking_id());
     if eps >= limit {
         return (true, eps == limit);
@@ -114,7 +114,7 @@ unsafe fn is_task_io_limit_reach(limit: u64) -> (bool, bool) {
 }
 
 #[inline(always)]
-unsafe fn is_global_io_limit_reach(limit: u64) -> (bool, bool) {
+unsafe fn is_global_fs_limit_reach(limit: u64) -> (bool, bool) {
     let eps = events_per_sampling(0);
     if eps >= limit {
         return (true, eps == limit);
@@ -136,17 +136,23 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
     };
 
     // we allow a process to take alone half of this otherwise we report it
-    if let (true, limit) = is_task_io_limit_reach(task_limit) {
+    if let (true, limit) = is_task_fs_limit_reach(task_limit) {
         if limit {
-            error!(ctx, "current task i/o limit reached");
+            let event = alloc::alloc_zero::<ErrorEvent>()?;
+            event.init_from_current_task(Type::Error)?;
+            event.data.error = bpf_events::error::Error::TaskThrottleFs;
+            pipe_event(ctx, event);
         }
         return Ok(true);
     }
 
     // if there are too many I/O globally a random task can see its I/O ignored
-    if let (true, limit) = is_global_io_limit_reach(glob_limit) {
+    if let (true, limit) = is_global_fs_limit_reach(glob_limit) {
         if limit {
-            error!(ctx, "global i/o limit reached");
+            let event = alloc::alloc_zero::<ErrorEvent>()?;
+            event.init_from_current_task(Type::Error)?;
+            event.data.error = bpf_events::error::Error::GlobalThrottleFs;
+            pipe_event(ctx, event);
         }
         return Ok(true);
     }

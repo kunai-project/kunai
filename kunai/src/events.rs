@@ -1017,6 +1017,22 @@ impl Scannable for ExitData {
 
 impl_std_iocs!(ExitData);
 
+def_user_data!(
+    pub struct ErrorData {
+        pub code: u64,
+        pub message: String,
+    }
+);
+
+impl Scannable for ErrorData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.path)]
+    }
+}
+
+impl_std_iocs!(ErrorData);
+
 #[derive(Default, Debug, Serialize, Deserialize, FieldGetter)]
 pub struct FileScanData {
     pub path: PathBuf,

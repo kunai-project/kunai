@@ -118,6 +118,10 @@ pub enum Type {
     #[str("file_create")]
     FileCreate,
 
+    // error event
+    #[str("error")]
+    Error = 499,
+
     // specific userland events
     // those should never be used in eBPF
     #[str("file_scan")]

@@ -15,7 +15,7 @@ use huby::ByteSize;
 use kunai::containers::Container;
 use kunai::events::{
     BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
-    EventInfo, ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo,
+    ErrorData, EventInfo, ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo,
     InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
     PtraceData, ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, TaskSection,
     UnlinkData, UserEvent,
@@ -1364,6 +1364,36 @@ impl EventConsumer<'_> {
         UserEvent::new(data, info)
     }
 
+    #[inline(always)]
+    fn error_event(
+        &mut self,
+        info: StdEventInfo,
+        event: &bpf_events::ErrorEvent,
+    ) -> UserEvent<ErrorData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        let ti = info.task_info();
+        // we always display a warning on stderr
+        warn!(
+            "comm={} pid={} tgid={} guuid={}: {}",
+            ti.comm_str(),
+            ti.pid,
+            ti.tgid,
+            ti.tg_uuid.into_uuid(),
+            event.data.error.as_str(),
+        );
+
+        let data = ErrorData {
+            ancestors: self.get_ancestors_string(&info),
+            command_line,
+            exe: exe.into(),
+            code: event.data.error as u64,
+            message: String::from(event.data.error.as_str()),
+        };
+
+        UserEvent::new(data, info)
+    }
+
     // shadow processes are processes still in the hashmap but which have exited and
     // have all descendents exited. They are not useful anymore because they are not needed
     // to reconstruct ancestors.
@@ -1910,10 +1940,12 @@ impl EventConsumer<'_> {
         let std_info = self.build_std_event_info(*i);
 
         match etype {
-            Type::Unknown => {
-                error!("Unknown event type: {}", etype as u64)
-            }
-            Type::Max | Type::EndConfigurable | Type::TaskSched | Type::FileScan => {}
+            Type::Unknown // this is checked in producer
+            | Type::Max
+            | Type::EndConfigurable
+            | Type::TaskSched
+            | Type::FileScan => {}
+
             Type::Execve | Type::ExecveScript => {
                 match event!(enc_event, bpf_events::ExecveEvent) {
                     Ok(e) => {
@@ -2090,6 +2122,14 @@ impl EventConsumer<'_> {
                 Err(e) => error!("failed to decode {} event: {:?}", etype, e),
             },
 
+            Type::Error => match event!(enc_event, bpf_events::ErrorEvent) {
+                Ok(e) => {
+                    let mut e = self.error_event(std_info, e);
+                    self.scan_and_print(&mut e);
+                }
+                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+            },
+
             Type::Correlation => match event!(enc_event) {
                 Ok(e) => {
                     self.handle_correlation_event(std_info, e);
@@ -2109,6 +2149,7 @@ impl EventConsumer<'_> {
                 #[cfg(debug_assertions)]
                 panic!("log events should be processed earlier")
             }
+
             Type::SyscoreResume => { /*  just ignore it */ }
         }
     }
@@ -2477,6 +2518,9 @@ impl EventProducer {
                                 continue;
                             }
                         };
+
+                        // check that we didn't send uninitialized events
+                        debug_assert!(info.etype != Type::Unknown, "received unknown event");
 
                         // we set the proper batch number
                         info.batch = ep.batch;
@@ -2966,6 +3010,7 @@ impl Command {
                         Type::BpfSocketFilter => scan_event!(p, BpfSocketFilterData),
                         Type::Exit | Type::ExitGroup => scan_event!(p, ExitData),
                         Type::FileScan => scan_event!(p, FileScanData),
+                        Type::Error => scan_event!(p, ErrorData),
 
                         // types that shound never be seen in replay
                         Type::Unknown
