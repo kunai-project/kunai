@@ -1007,9 +1007,9 @@ dependencies = [
 
 [[package]]
 name = "firo"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a337924a305b9019e74860f043dedcaca49e39b56c49a06610bfcbae686f1b4"
+checksum = "40eceb6920bdb88edc14de401062b81c5c185a0c85c3b689f4ac21e80bda3f31"
 dependencies = [
  "flate2",
  "huby",
