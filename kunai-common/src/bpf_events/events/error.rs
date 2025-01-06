@@ -12,10 +12,14 @@ pub type ErrorEvent = Event<ErrorData>;
 #[derive(StrEnum, Clone, Copy)]
 pub enum Error {
     /// when a task reaches it maximum allowed throughput
-    /// it means some events of this task will be missing to prevent
-    /// loss of other critical events
-    #[str("task reach throughput limit, some events will be missing")]
-    Throttle = 1,
+    /// it means some events of this task will be missing
+    /// to prevent loss of other critical events
+    #[str("throttle filesystem events, per task limit reached")]
+    TaskThrottleFs = 1,
+    /// this error may happen on any task randomly (based on
+    /// current load).
+    #[str("throttle filesystem events, global limit reached")]
+    GlobalThrottleFs = 2,
 }
 
 #[repr(C)]

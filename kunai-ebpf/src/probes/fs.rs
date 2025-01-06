@@ -140,7 +140,7 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
         if limit {
             let event = alloc::alloc_zero::<ErrorEvent>()?;
             event.init_from_current_task(Type::Error)?;
-            event.data.error = bpf_events::error::Error::Throttle;
+            event.data.error = bpf_events::error::Error::TaskThrottleFs;
             pipe_event(ctx, event);
         }
         return Ok(true);
@@ -149,7 +149,10 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
     // if there are too many I/O globally a random task can see its I/O ignored
     if let (true, limit) = is_global_io_limit_reach(glob_limit) {
         if limit {
-            warn!(ctx, "global i/o limit reached");
+            let event = alloc::alloc_zero::<ErrorEvent>()?;
+            event.init_from_current_task(Type::Error)?;
+            event.data.error = bpf_events::error::Error::GlobalThrottleFs;
+            pipe_event(ctx, event);
         }
         return Ok(true);
     }
