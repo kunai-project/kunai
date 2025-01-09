@@ -1623,15 +1623,14 @@ impl EventConsumer<'_> {
         // getting user and group information for task
         let (user, group) = res
             .inspect_err(|e| {
-                if !e.is_unknown_ns() {
-                    let mut ti = *ti;
-                    // fixes the random part to have a searchable uuid for error investigation
-                    ti.set_uuid_random(self.random);
-                    error!(
-                        "failed to get task guuid={} user/group: {e}",
-                        ti.tg_uuid.into_uuid()
-                    )
-                }
+                let mut ti = *ti;
+                // fixes the random part to have a searchable uuid for error investigation
+                ti.set_uuid_random(self.random);
+                // make this debug as it can be quite verbose in some cases
+                debug!(
+                    "failed to get task guuid={} user/group: {e}",
+                    ti.tg_uuid.into_uuid()
+                )
             })
             .unwrap_or_default();
 
