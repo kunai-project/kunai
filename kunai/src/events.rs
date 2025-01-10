@@ -9,7 +9,10 @@ use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
 use gene::{Event, FieldGetter, FieldValue};
 use gene_derive::{Event, FieldGetter};
 
-use kunai_common::{bpf_events, net};
+use kunai_common::{
+    bpf_events::{self, TaskInfo},
+    net,
+};
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -18,6 +21,8 @@ use crate::{
     containers::Container,
     info::{ContainerInfo, StdEventInfo, TaskAdditionalInfo},
 };
+
+pub mod agent;
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
 pub struct File {
@@ -104,10 +109,7 @@ pub struct TaskSection {
 }
 
 impl TaskSection {
-    pub fn from_task_info_with_addition(
-        ti: kunai_common::bpf_events::TaskInfo,
-        add: TaskAdditionalInfo,
-    ) -> Self {
+    pub fn from_task_info_with_addition(ti: TaskInfo, add: TaskAdditionalInfo) -> Self {
         Self {
             name: ti.comm_string(),
             pid: ti.pid,
@@ -1069,5 +1071,22 @@ impl IocGetter for FileScanData {
         let mut v = vec![self.path.to_string_lossy()];
         v.extend(self.meta.iocs());
         v
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, FieldGetter)]
+pub struct LossData {
+    pub read: u64,
+    pub lost: u64,
+    pub eps: f64,
+}
+
+impl From<&bpf_events::LossData> for LossData {
+    fn from(value: &bpf_events::LossData) -> Self {
+        Self {
+            read: value.read,
+            lost: value.lost,
+            eps: value.eps,
+        }
     }
 }
