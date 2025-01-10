@@ -118,6 +118,9 @@ pub enum Type {
     #[str("file_create")]
     FileCreate,
 
+    // for lost events
+    #[str("event_loss")]
+    Loss = 498,
     // error event
     #[str("error")]
     Error = 499,
@@ -230,9 +233,9 @@ pub struct EventInfo {
     pub uuid: Uuid,
     // identify batch number (set in userland)
     pub batch: usize,
-    // time elapsed since system boot in nanoseconds.
-    // The time during the system was suspended is included.
-    // set by using bpf_ktime_get_boot_ns()
+    // Time elapsed since system boot in nanoseconds.
+    // Does not include time the system was suspended.
+    // Set by using bpf_ktime_get_ns()
     pub timestamp: u64,
 }
 
