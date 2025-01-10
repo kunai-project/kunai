@@ -1,6 +1,5 @@
 use core::mem::{size_of, MaybeUninit};
 use ip_network::IpNetwork;
-use libc::{clock_gettime, timespec, CLOCK_MONOTONIC};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
@@ -19,22 +18,6 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
     match ip_network {
         IpNetwork::V4(v4) => v4.is_global(),
         IpNetwork::V6(v6) => v6.is_global(),
-    }
-}
-
-/// Function getting time since boot. Does not include
-/// suspended time.
-pub fn ktime_get_ns() -> Result<u64, io::Error> {
-    let mut ts: timespec = unsafe { std::mem::zeroed() };
-
-    // Call clock_gettime with CLOCK_BOOTTIME
-    let result = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
-
-    if result == 0 {
-        // Convert seconds and nanoseconds to total nanoseconds
-        Ok(ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64)
-    } else {
-        Err(io::Error::last_os_error())
     }
 }
 

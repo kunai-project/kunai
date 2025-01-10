@@ -40,8 +40,6 @@ mod ptrace;
 pub use ptrace::*;
 pub mod error;
 pub use error::*;
-mod loss;
-pub use loss::*;
 
 // prevent using correlation event in bpf code
 not_bpf_target_code! {
@@ -90,7 +88,6 @@ const fn max_bpf_event_size() -> usize {
             Type::FileRename => FileRenameEvent::size_of(),
             Type::FileUnlink => UnlinkEvent::size_of(),
             Type::Log => LogEvent::size_of(),
-            Type::Loss => LossEvent::size_of(),
             Type::Error => ErrorEvent::size_of(),
             Type::SyscoreResume => SysCoreResumeEvent::size_of(),
             // these are event types only used in user land

@@ -14,11 +14,11 @@ use gene::{Compiler, Engine};
 use huby::ByteSize;
 use kunai::containers::Container;
 use kunai::events::{
-    agent::AgentEventInfo, BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData,
-    ConnectData, DnsQueryData, ErrorData, EventInfo, ExecveData, ExitData, FileData,
-    FileRenameData, FileScanData, FilterInfo, InitModuleData, KillData, KunaiEvent, LossData,
-    MmapExecData, MprotectData, NetworkInfo, PrctlData, PtraceData, ScanResult, SendDataData,
-    SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData, UserEvent,
+    BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, ConnectData, DnsQueryData,
+    ErrorData, EventInfo, ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo,
+    InitModuleData, KillData, KunaiEvent, MmapExecData, MprotectData, NetworkInfo, PrctlData,
+    PtraceData, ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, TaskSection,
+    UnlinkData, UserEvent,
 };
 use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo};
 use kunai::ioc::IoC;
@@ -1394,11 +1394,6 @@ impl EventConsumer<'_> {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
-    fn loss_event(&self, info: StdEventInfo, event: &bpf_events::LossEvent) -> UserEvent<LossData> {
-        UserEvent::new(LossData::from(&event.data), info)
-    }
-
     // shadow processes are processes still in the hashmap but which have exited and
     // have all descendents exited. They are not useful anymore because they are not needed
     // to reconstruct ancestors.
@@ -1858,7 +1853,7 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn serialize_print<T: Serialize>(&mut self, event: &mut T) -> bool {
+    fn serialize_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> bool {
         match serde_json::to_string(event) {
             Ok(ser) => {
                 writeln!(self.output, "{ser}").expect("failed to write json event");
@@ -2154,14 +2149,6 @@ impl EventConsumer<'_> {
                 panic!("log events should be processed earlier")
             }
 
-            Type::Loss =>  match event!(enc_event) {
-                Ok(e) => {
-                    let mut evt = self.loss_event(std_info, e);
-                    self.serialize_print(&mut evt);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
             Type::SyscoreResume => { /*  just ignore it */ }
         }
     }
@@ -2227,7 +2214,6 @@ struct EventProducer {
     ebpf_perf_array: AsyncPerfEventArray<MapData>,
     tasks: Vec<tokio::task::JoinHandle<Result<(), anyhow::Error>>>,
     stop: bool,
-    agent_evt_info: AgentEventInfo,
     // flag to be set when the producer needs to reload
     reload: bool,
 }
@@ -2262,7 +2248,6 @@ impl EventProducer {
             ebpf_stats_map: stats_map,
             stats: Stats::new(),
             ebpf_perf_array: perf_array,
-            agent_evt_info: AgentEventInfo::from_procfs()?,
             tasks: vec![],
             stop: false,
             reload: false,
@@ -2307,11 +2292,6 @@ impl EventProducer {
     #[inline(always)]
     async fn send_event<T>(&self, event: Event<T>) -> Result<(), SendError<EncodedEvent>> {
         self.sender.send(EncodedEvent::from_event(event)).await
-    }
-
-    #[inline(always)]
-    fn pipe_event<T>(&mut self, event: Event<T>) {
-        self.pipe.push_back(EncodedEvent::from_event(event));
     }
 
     /// function used to pre-process some targetted events where time is critical and for which
@@ -2514,32 +2494,8 @@ impl EventProducer {
                                 error!(
                                     "some events have been lost in the way from kernel read={} lost={} loss-ratio={:.2}% eps={:.2}: consider event filtering out and/or increase the number of buffered events in configuration. Filtering hints, most frequent events: {top} ",
                                     stats.read, stats.lost, stats.percent_loss(), stats.eps());
-
-                                // used to prevent borrow checker to
-                                // kick in in next block
-                                let lost = stats.lost;
-
-                                // we pipe a data loss event to bubble up info in kunai logs
-                                if let Ok(loss_evt) = ep
-                                    .agent_evt_info
-                                    .new_event_with_data(
-                                        Type::Loss,
-                                        bpf_events::LossData {
-                                            read: stats.read,
-                                            lost: stats.lost,
-                                            eps: stats.eps(),
-                                        },
-                                    )
-                                    .inspect_err(|e| {
-                                        error!("failed to create data loss event: {e}")
-                                    })
-                                {
-                                    // we pipe data loss event
-                                    ep.pipe_event(loss_evt)
-                                }
-
                                 // update last_lost for future error display decision
-                                last_lost_cnt = lost;
+                                last_lost_cnt = stats.lost;
                                 // drop producer
                             }
                         }
@@ -3055,7 +3011,7 @@ impl Command {
                         Type::FileScan => scan_event!(p, FileScanData),
                         Type::Error => scan_event!(p, ErrorData),
 
-                        // types ignored by replay
+                        // types that shound never be seen in replay
                         Type::Unknown
                         | Type::CacheHash
                         | Type::Correlation
@@ -3063,7 +3019,6 @@ impl Command {
                         | Type::EndConfigurable
                         | Type::TaskSched
                         | Type::SyscoreResume
-                        | Type::Loss
                         | Type::Max => {}
                     }
                 }
