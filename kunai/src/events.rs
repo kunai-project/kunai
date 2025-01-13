@@ -66,7 +66,7 @@ pub struct EventSection {
     pub id: u32,
     pub name: String,
     pub uuid: String,
-    pub batch: usize,
+    pub batch: u64,
 }
 
 impl From<&StdEventInfo> for EventSection {

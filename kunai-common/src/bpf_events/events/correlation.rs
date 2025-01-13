@@ -53,7 +53,7 @@ impl From<&ExecveEvent> for CorrelationEvent {
                 nodename: Some(value.data.nodename),
             },
         }
-        .switch_type(Type::Correlation)
+        .with_type(Type::Correlation)
     }
 }
 
@@ -78,7 +78,7 @@ impl From<&CloneEvent> for CorrelationEvent {
                 },
             },
         }
-        .switch_type(Type::Correlation)
+        .with_type(Type::Correlation)
     }
 }
 
@@ -95,7 +95,7 @@ impl From<&ScheduleEvent> for CorrelationEvent {
                 nodename: Some(value.data.nodename),
             },
         }
-        .switch_type(Type::Correlation)
+        .with_type(Type::Correlation)
     }
 }
 
@@ -117,7 +117,7 @@ impl From<&MmapExecEvent> for HashEvent {
             info: value.info,
             data: value.data.filename.into(),
         }
-        .switch_type(Type::CacheHash)
+        .with_type(Type::CacheHash)
     }
 }
 
@@ -127,7 +127,7 @@ impl HashEvent {
             info: event.info,
             data: p.into(),
         }
-        .switch_type(Type::CacheHash)
+        .with_type(Type::CacheHash)
     }
 
     pub fn all_from_execve(event: &ExecveEvent) -> Vec<HashEvent> {

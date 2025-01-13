@@ -2218,7 +2218,7 @@ impl Stats {
 
 struct EventProducer {
     config: Config,
-    batch: usize,
+    batch: u64,
     pipe: VecDeque<EncodedEvent>,
     sender: mpsc::Sender<EncodedEvent>,
     filter: Filter,
@@ -2490,6 +2490,8 @@ impl EventProducer {
                             ep.stats.update(events.read as u64, events.lost as u64);
                             // borrow stats
                             let stats = &ep.stats;
+                            let batch = ep.batch;
+
                             // only show error in leader cpu if needed
                             if cpu_id == leader_cpu_id && stats.lost > last_lost_cnt {
                                 // easy way to create a top most frequent
@@ -2520,7 +2522,7 @@ impl EventProducer {
                                 let lost = stats.lost;
 
                                 // we pipe a data loss event to bubble up info in kunai logs
-                                if let Ok(loss_evt) = ep
+                                if let Ok(mut loss_evt) = ep
                                     .agent_evt_info
                                     .new_event_with_data(
                                         Type::Loss,
@@ -2534,8 +2536,9 @@ impl EventProducer {
                                         error!("failed to create data loss event: {e}")
                                     })
                                 {
+                                    loss_evt.batch(batch);
                                     // we pipe data loss event
-                                    ep.pipe_event(loss_evt)
+                                    ep.pipe_event(loss_evt);
                                 }
 
                                 // update last_lost for future error display decision
@@ -2566,7 +2569,7 @@ impl EventProducer {
                         debug_assert!(info.etype != Type::Unknown, "received unknown event");
 
                         // we set the proper batch number
-                        info.batch = ep.batch;
+                        info.batch(ep.batch);
 
                         // verify that we filter properly kunai events in eBPF
                         debug_assert!(

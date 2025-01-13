@@ -232,7 +232,7 @@ pub struct EventInfo {
     // event uuid
     pub uuid: Uuid,
     // identify batch number (set in userland)
-    pub batch: usize,
+    pub batch: u64,
     // Time elapsed since system boot in nanoseconds.
     // Does not include time the system was suspended.
     // Set by using bpf_ktime_get_ns()
@@ -246,8 +246,12 @@ impl EventInfo {
         self.parent.set_uuid_random(rand);
     }
 
-    pub fn switch_type(&mut self, new: Type) {
+    pub fn with_type(&mut self, new: Type) {
         self.etype = new
+    }
+
+    pub fn batch(&mut self, batch: u64) {
+        self.batch = batch
     }
 }
 
@@ -299,9 +303,14 @@ impl<T> Event<T> {
     }
 
     #[inline]
-    pub fn switch_type(mut self, new: Type) -> Self {
-        // we record original event type
-        self.info.switch_type(new);
+    pub fn with_type(mut self, new: Type) -> Self {
+        self.info.with_type(new);
+        self
+    }
+
+    #[inline]
+    pub fn batch(&mut self, batch: u64) -> &mut Self {
+        self.info.batch(batch);
         self
     }
 }
