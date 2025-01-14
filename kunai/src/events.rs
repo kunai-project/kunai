@@ -23,6 +23,8 @@ use crate::{
 };
 
 pub mod agent;
+mod start;
+pub use start::*;
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
 pub struct File {
@@ -1071,48 +1073,6 @@ impl IocGetter for FileScanData {
         let mut v = vec![self.path.to_string_lossy()];
         v.extend(self.meta.iocs());
         v
-    }
-}
-
-/// Encodes Kunai related data
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct KunaiData {
-    /// Version
-    pub version: String,
-    /// Information about executable
-    pub exe: Hashes,
-    /// Sha256 of the configuration
-    pub config_sha256: String,
-}
-
-/// System related information
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct SystemData {
-    /// Uptime in seconds (read from /proc/uptime)
-    pub uptime: Option<f64>,
-    /// Boot time computed from uptime
-    pub boot_time: Option<DateTime<Utc>>,
-    /// Utsname information, except nodename
-    /// which duplicates information in
-    /// .info.host.name
-    pub sysname: String,
-    pub release: String,
-    pub version: String,
-    pub machine: String,
-    pub domainname: String,
-}
-
-/// Structure holding information we want
-/// to display in start events
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct StartData {
-    pub kunai: KunaiData,
-    pub system: SystemData,
-}
-
-impl StartData {
-    pub fn new() -> Self {
-        Default::default()
     }
 }
 

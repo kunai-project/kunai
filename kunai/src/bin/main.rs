@@ -1405,7 +1405,7 @@ impl EventConsumer<'_> {
         let self_exe = PathBuf::from("/proc/self/exe");
         data.kunai.exe = Hashes::from_path_ref(self_exe.clone().canonicalize().unwrap_or(self_exe));
 
-        data.kunai.config_sha256 = self.config.sha256().ok().unwrap_or("?".into());
+        data.kunai.config.sha256 = self.config.sha256().ok().unwrap_or("?".into());
 
         // setting up uptime and boottime
         if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
