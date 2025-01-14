@@ -11,6 +11,7 @@ pub mod bpf;
 pub mod elf;
 pub mod namespace;
 pub mod uname;
+pub mod uptime;
 
 #[inline]
 pub fn is_public_ip(ip: IpAddr) -> bool {

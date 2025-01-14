@@ -22,7 +22,7 @@ hex = "0.4.3"
 md-5 = "0.10.5"
 sha1 = "0.10.5"
 sha2 = "0.10.6"
-chrono = { version = "0.4.24", features = ["clock"] }
+chrono = { version = "0.4.24", features = ["clock", "serde"] }
 libc = "0.2"
 thiserror = "1.0"
 procfs = "0.16"
@@ -30,8 +30,8 @@ ip_network = "0.4"
 lru-st = { version = "0.2", features = ["sync"] }
 
 # detection engine for events
-gene = { version = "0.4.0" }
-gene_derive = { version = "0.4.0" }
+gene = { version = "0.4" }
+gene_derive = { version = "0.4" }
 
 anyhow = "1.0.68"
 env_logger = "0.10"
