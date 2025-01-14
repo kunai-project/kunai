@@ -1090,8 +1090,8 @@ pub struct KunaiData {
 pub struct SystemData {
     /// Uptime in seconds (read from /proc/uptime)
     pub uptime: Option<f64>,
-    /// Boottime computed from uptime
-    pub boottime: Option<DateTime<Utc>>,
+    /// Boot time computed from uptime
+    pub boot_time: Option<DateTime<Utc>>,
     /// Utsname information, except nodename
     /// which duplicates information in
     /// .info.host.name

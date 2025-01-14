@@ -1411,7 +1411,7 @@ impl EventConsumer<'_> {
         if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
         {
             data.system.uptime = Some(uptime.as_secs());
-            data.system.boottime = uptime.boot_time().ok();
+            data.system.boot_time = uptime.boot_time().ok();
         }
 
         // setting utsname info
