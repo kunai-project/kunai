@@ -118,13 +118,6 @@ pub enum Type {
     #[str("file_create")]
     FileCreate,
 
-    // for lost events
-    #[str("event_loss")]
-    Loss = 498,
-    // error event
-    #[str("error")]
-    Error = 499,
-
     // specific userland events
     // those should never be used in eBPF
     #[str("file_scan")]
@@ -132,14 +125,32 @@ pub enum Type {
 
     // Materialize the end of configurable events
     #[str("end_configurable")]
-    EndConfigurable = 1000,
+    EndConfigurable = 999,
 
-    // Those events are not configurable but should have
-    // fix event number as these are displayed
+    // Following events are not configurable but may
+    // be filterable
+
+    // !!! Events NOT configurable but filterable
+
+    // error event
+    #[str("error")]
+    Error,
+
+    // !!! Events NOT configurable and NOT filterable
+
+    // Agent events types are not configurable
+    // but must have a fixed id
+
+    // lost events
+    #[str("event_loss")]
+    Loss = 1100,
+
+    // start event
     #[str("start")]
     Start,
 
-    // specific events
+    // specific events which are never displayed
+    // do not need a fixed identifier
     #[str("task_sched")]
     TaskSched,
     #[str("correlation")]
