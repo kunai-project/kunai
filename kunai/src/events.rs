@@ -1074,6 +1074,48 @@ impl IocGetter for FileScanData {
     }
 }
 
+/// Encodes Kunai related data
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct KunaiData {
+    /// Version
+    pub version: String,
+    /// Information about executable
+    pub exe: Hashes,
+    /// Sha256 of the configuration
+    pub config_sha256: String,
+}
+
+/// System related information
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct SystemData {
+    /// Uptime in seconds (read from /proc/uptime)
+    pub uptime: Option<f64>,
+    /// Boottime computed from uptime
+    pub boottime: Option<DateTime<Utc>>,
+    /// Utsname information, except nodename
+    /// which duplicates information in
+    /// .info.host.name
+    pub sysname: String,
+    pub release: String,
+    pub version: String,
+    pub machine: String,
+    pub domainname: String,
+}
+
+/// Structure holding information we want
+/// to display in start events
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct StartData {
+    pub kunai: KunaiData,
+    pub system: SystemData,
+}
+
+impl StartData {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
 #[derive(Default, Debug, Serialize, Deserialize, FieldGetter)]
 pub struct LossData {
     pub read: u64,

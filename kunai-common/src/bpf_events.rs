@@ -134,6 +134,11 @@ pub enum Type {
     #[str("end_configurable")]
     EndConfigurable = 1000,
 
+    // Those events are not configurable but should have
+    // fix event number as these are displayed
+    #[str("start")]
+    Start,
+
     // specific events
     #[str("task_sched")]
     TaskSched,

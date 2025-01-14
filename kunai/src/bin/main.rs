@@ -13,6 +13,7 @@ use gene::rules::MAX_SEVERITY;
 use gene::{Compiler, Engine};
 use huby::ByteSize;
 use kunai::containers::Container;
+use kunai::events::StartData;
 use kunai::events::{
     agent::AgentEventInfo, BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData,
     ConnectData, DnsQueryData, ErrorData, EventInfo, ExecveData, ExitData, FileData,
@@ -41,6 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::timeout;
+use uptime::Uptime;
 
 use std::borrow::Cow;
 use std::cmp::max;
@@ -307,7 +309,7 @@ impl EventConsumer<'_> {
         Ok(out)
     }
 
-    pub fn with_config(config: Config) -> anyhow::Result<Self> {
+    pub fn with_config(mut config: Config) -> anyhow::Result<Self> {
         // building up system information
         let system_info = SystemInfo::from_sys()?.with_host_uuid(
             config
@@ -1395,6 +1397,36 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
+    fn start_event(&self, info: StdEventInfo) -> UserEvent<StartData> {
+        let mut data = StartData::new();
+
+        // setting kunai related info
+        data.kunai.version = env!("CARGO_PKG_VERSION").into();
+        let self_exe = PathBuf::from("/proc/self/exe");
+        data.kunai.exe = Hashes::from_path_ref(self_exe.clone().canonicalize().unwrap_or(self_exe));
+
+        data.kunai.config_sha256 = self.config.sha256().ok().unwrap_or("?".into());
+
+        // setting up uptime and boottime
+        if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
+        {
+            data.system.uptime = Some(uptime.as_secs());
+            data.system.boottime = uptime.boot_time().ok();
+        }
+
+        // setting utsname info
+        if let Ok(uts) = Utsname::from_sys() {
+            data.system.sysname = uts.sysname().unwrap_or("?".into()).into();
+            data.system.release = uts.release().unwrap_or("?".into()).into();
+            data.system.version = uts.version().unwrap_or("?".into()).into();
+            data.system.machine = uts.machine().unwrap_or("?".into()).into();
+            data.system.domainname = uts.domainname().unwrap_or("?".into()).into();
+        }
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
     fn loss_event(&self, info: StdEventInfo, event: &bpf_events::LossEvent) -> UserEvent<LossData> {
         UserEvent::new(LossData::from(&event.data), info)
     }
@@ -2154,6 +2186,11 @@ impl EventConsumer<'_> {
                 panic!("log events should be processed earlier")
             }
 
+            Type::Start => {
+                let mut se = self.start_event(std_info);
+                self.serialize_print(&mut se);
+            }
+
             Type::Loss =>  match event!(enc_event) {
                 Ok(e) => {
                     let mut evt = self.loss_event(std_info, e);
@@ -2309,8 +2346,10 @@ impl EventProducer {
         self.sender.send(EncodedEvent::from_event(event)).await
     }
 
+    /// Set event batch number then pipe event
     #[inline(always)]
-    fn pipe_event<T>(&mut self, event: Event<T>) {
+    fn pipe_event<T>(&mut self, mut event: Event<T>) {
+        event.batch(self.batch);
         self.pipe.push_back(EncodedEvent::from_event(event));
     }
 
@@ -2412,11 +2451,11 @@ impl EventProducer {
         // we choose what task will handle the reduce process (handle piped events)
         let leader_cpu_id = online_cpus[0];
         let config = self.config.clone();
+
         let shared = Arc::new(Mutex::new(self));
 
         let event_producer = shared.clone();
 
-        // we spawn a task processing events waiting in the pipe
         let t = task::spawn(async move {
             loop {
                 let c = event_producer.lock().await.process_piped_events().await?;
@@ -2490,7 +2529,6 @@ impl EventProducer {
                             ep.stats.update(events.read as u64, events.lost as u64);
                             // borrow stats
                             let stats = &ep.stats;
-                            let batch = ep.batch;
 
                             // only show error in leader cpu if needed
                             if cpu_id == leader_cpu_id && stats.lost > last_lost_cnt {
@@ -2522,7 +2560,7 @@ impl EventProducer {
                                 let lost = stats.lost;
 
                                 // we pipe a data loss event to bubble up info in kunai logs
-                                if let Ok(mut loss_evt) = ep
+                                if let Ok(loss_evt) = ep
                                     .agent_evt_info
                                     .new_event_with_data(
                                         Type::Loss,
@@ -2536,7 +2574,6 @@ impl EventProducer {
                                         error!("failed to create data loss event: {e}")
                                     })
                                 {
-                                    loss_evt.batch(batch);
                                     // we pipe data loss event
                                     ep.pipe_event(loss_evt);
                                 }
@@ -3066,6 +3103,7 @@ impl Command {
                         | Type::EndConfigurable
                         | Type::TaskSched
                         | Type::SyscoreResume
+                        | Type::Start
                         | Type::Loss
                         | Type::Max => {}
                     }
@@ -3183,10 +3221,19 @@ impl Command {
                     info!("Starting event producer");
                     // we start producer
                     let mut bpf = kunai::prepare_bpf(current_kernel, &conf, vll)?;
-                    let arc_prod =
-                        EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?
-                            .produce()
-                            .await;
+                    let mut prod =
+                        EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?;
+
+                    // we create and pipe a start event
+                    if let Ok(start) = prod
+                        .agent_evt_info
+                        .new_event_with_data(Type::Start, ())
+                        .inspect_err(|e| error!("failed at generating start event: {e}"))
+                    {
+                        prod.pipe_event(start);
+                    }
+
+                    let arc_prod = prod.produce().await;
 
                     // we load and attach bpf programs
                     kunai::load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
@@ -3290,7 +3337,10 @@ impl Command {
     fn config(co: ConfigOpt) -> anyhow::Result<()> {
         if co.dump {
             let conf = Config::default().generate_host_uuid();
-            println!("{}", serde_yaml::to_string(&conf)?);
+            // do not use println because to_string already includes a
+            // trailing newline. Using print! allow one to easily compute
+            // config hash as the one found in start event.
+            print!("{}", serde_yaml::to_string(&conf)?);
             return Ok(());
         }
 

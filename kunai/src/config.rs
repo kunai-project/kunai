@@ -11,6 +11,8 @@ use std::{
 };
 use thiserror::Error;
 
+use crate::util::sha256_data;
+
 pub const DEFAULT_SEND_DATA_MIN_LEN: u64 = 256;
 pub const DEFAULT_MAX_BUFFERED_EVENTS: u16 = 1024;
 
@@ -139,9 +141,12 @@ impl Config {
         }
     }
 
-    pub fn host_uuid(&self) -> Option<uuid::Uuid> {
+    pub fn host_uuid(&mut self) -> Option<uuid::Uuid> {
         // host_uuid in config supersedes system host_uuid
-        self.host_uuid.or(host_uuid())
+        self.host_uuid.or(host_uuid()).and_then(|u| {
+            self.host_uuid = Some(u);
+            self.host_uuid
+        })
     }
 
     pub fn harden(mut self, value: bool) -> Self {
@@ -175,6 +180,12 @@ impl Config {
 
     pub fn disable_all(&mut self) {
         self.events.iter_mut().for_each(|(_, e)| e.disable())
+    }
+
+    /// Serialize the configuration in yaml then
+    /// computes the sha256 of it
+    pub fn sha256(&self) -> Result<String, serde_yaml::Error> {
+        serde_yaml::to_string(self).map(sha256_data)
     }
 }
 
