@@ -6,8 +6,11 @@ use aya_ebpf::EbpfContext;
 use co_re::task_struct;
 use kunai_common::syscalls::SysExitArgs;
 
+const MAP_SIZE: u32 = 4096;
+
 #[map]
-static mut EXECVE_TRACKING: LruHashMap<u128, ExecveEvent> = LruHashMap::with_max_entries(4096, 0);
+static mut EXECVE_TRACKING: LruHashMap<u128, ExecveEvent> =
+    LruHashMap::with_max_entries(MAP_SIZE, 0);
 
 // this guy gives us the real executable path (i.e. a script for instance)
 // we need to hook at another point in order to get the interpreter. For
@@ -63,7 +66,7 @@ unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
 
 #[map]
 static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
-    LruHashMap::with_max_entries(1024, 0);
+    LruHashMap::with_max_entries(MAP_SIZE, 0);
 
 // for kernel < 5.9 bprm_execve does not exists, we must replace the hook
 // by __do_execve_file (done in program loader)
