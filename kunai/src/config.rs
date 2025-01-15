@@ -68,7 +68,7 @@ pub struct Scanner {
 pub struct Config {
     host_uuid: Option<uuid::Uuid>,
     pub max_buffered_events: u16,
-    pub max_eps_io: Option<u64>,
+    pub max_eps_fs: Option<u64>,
     pub workers: Option<usize>,
     pub send_data_min_len: Option<u64>,
     pub harden: bool,
@@ -102,7 +102,7 @@ impl Default for Config {
             },
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
             // this x2 rule generally works for small values of max_buffered_events
-            max_eps_io: Some(DEFAULT_MAX_BUFFERED_EVENTS as u64 * 2),
+            max_eps_fs: Some(DEFAULT_MAX_BUFFERED_EVENTS as u64 * 2),
             workers: None,
             send_data_min_len: None,
             scanner: Scanner {
@@ -229,8 +229,8 @@ impl TryFrom<&Config> for BpfConfig {
         Ok(Self {
             loader: Loader::from_own_pid(),
             filter: value.try_into()?,
-            glob_max_eps_io: value.max_eps_io,
-            task_max_eps_io: value.max_eps_io.map(|m| m.mul(2).div(3)),
+            glob_max_eps_fs: value.max_eps_fs,
+            task_max_eps_fs: value.max_eps_fs.map(|m| m.mul(2).div(3)),
             send_data_min_len: value.send_data_min_len.unwrap_or(DEFAULT_SEND_DATA_MIN_LEN),
         })
     }

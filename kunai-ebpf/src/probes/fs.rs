@@ -128,8 +128,8 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
 
     // we convert event/s to event/sampling
     let (Some(glob_limit), Some(task_limit)) = (
-        cfg.glob_max_eps_io.map(|m| m.div(SAMPLES_IN_1S)),
-        cfg.task_max_eps_io.map(|m| m.div(SAMPLES_IN_1S)),
+        cfg.glob_max_eps_fs.map(|m| m.div(SAMPLES_IN_1S)),
+        cfg.task_max_eps_fs.map(|m| m.div(SAMPLES_IN_1S)),
     ) else {
         // if there is no limit we do not throttle
         return Ok(false);
