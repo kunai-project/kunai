@@ -102,6 +102,10 @@ unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
 
     let event = &mut (*event);
 
+    // attempted to this and use ts instead but this makes
+    // the verifier kicking in on 5.4, with no fix so far
+    // IIRC some registers get stacked and verifier lose track
+    // of their values.
     let current = task_struct::current();
 
     // getting nodename first as we need the current task struct
@@ -144,8 +148,9 @@ unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
 
     pipe_event(ctx, event);
 
-    // we use a LruHashMap so we can safely ignore result
+    // we use LruHashMap so we can safely ignore results
     ignore_result!(EXECVE_TRACKING.remove(&task_uuid));
+    ignore_result!(BPRM_EXECVE_ARGS.remove(&bpf_task_tracking_id()));
 
     Ok(())
 }
