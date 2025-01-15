@@ -2894,7 +2894,7 @@ impl TryFrom<RunOpt> for Config {
 
         // we want to increase max_buffered_events
         if let Some(max_eps_io) = opt.max_eps_io {
-            conf.max_eps_io = Some(max_eps_io);
+            conf.max_eps_fs = Some(max_eps_io);
         }
 
         // supersedes configuration
