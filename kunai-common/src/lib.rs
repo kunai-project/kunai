@@ -1,5 +1,6 @@
 #![deny(unused_imports)]
 #![cfg_attr(target_arch = "bpf", no_std)]
+#![cfg_attr(target_arch = "bpf", allow(static_mut_refs))]
 
 use macros::bpf_target_code;
 

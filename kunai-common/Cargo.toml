@@ -13,7 +13,7 @@ default = []
 user = ["aya", "dns-parser", "uuid", "thiserror", "serde"]
 
 [build-dependencies]
-bindgen = "0.69"
+bindgen = "0.71"
 
 [dependencies]
 # optional deps (only for userland)
