@@ -1,7 +1,4 @@
-use crate::{
-    errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code,
-    utils::bound_value_for_verifier,
-};
+use crate::{errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code};
 use core::mem;
 use kunai_macros::BpfError;
 
@@ -107,9 +104,11 @@ impl<const N: usize> String<N> {
         if self.is_full() {
             return Err(Error::StringIsFull);
         }
-        let k = bound_value_for_verifier(at as isize, 0, (self.cap() - 1) as isize);
-        self.s.as_mut()[k as usize] = b;
-        self.len += 1;
+        if let Some(at) = self.s.get_mut(at) {
+            *at = b;
+            self.len += 1;
+        }
+
         Ok(())
     }
 

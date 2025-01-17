@@ -1,9 +1,6 @@
-use crate::{
-    errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code, utils::cap_size,
-};
+use crate::{errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code};
 
 use super::time::Time;
-use super::utils::bound_value_for_verifier;
 
 use kunai_macros::BpfError;
 
@@ -318,12 +315,11 @@ impl Path {
     pub fn as_slice(&self) -> &[u8] {
         match self.mode {
             Mode::Append => {
-                let len =
-                    bound_value_for_verifier(self.len as isize, 0, self.buffer.len() as isize);
-                &self.buffer[..len as usize]
+                let len = (self.len as usize).clamp(0, self.buffer.len());
+                &self.buffer[..len]
             }
             Mode::Prepend => {
-                let len = cap_size(self.len(), MAX_PATH_LEN - 255);
+                let len = self.len().clamp(0, MAX_PATH_LEN - 255);
                 &self.buffer[(self.buffer.len() - len)..]
             }
         }
