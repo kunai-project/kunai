@@ -69,18 +69,26 @@ impl<const N: usize> Buffer<N> {
             return Err(Error::BufferFull);
         }
 
-        if check_bounds_signed(len, 0, N as i64) && check_bounds_signed(size, 1, N as i64) {
-            if gen::bpf_probe_read_user(
-                self.buf[len as usize..N].as_mut_ptr() as *mut _,
-                size as u32,
-                iov_base as *const _,
-            ) < 0
-            {
-                return Err(Error::FailedToReadIovec);
-            }
-
-            self.len += size as usize;
+        // we check map access is not OOB
+        if !check_bounds_signed(len, 0, N as i64) {
+            return Ok(());
         }
+
+        // we check we will not write OOB
+        if !check_bounds_signed(size, 0, N as i64) {
+            return Ok(());
+        }
+
+        if gen::bpf_probe_read_user(
+            self.buf[len as usize..N].as_mut_ptr() as *mut _,
+            (size as u32).clamp(0, N as u32),
+            iov_base as *const _,
+        ) < 0
+        {
+            return Err(Error::FailedToReadIovec);
+        }
+
+        self.len += size as usize;
 
         Ok(())
     }
@@ -105,18 +113,26 @@ impl<const N: usize> Buffer<N> {
             return Err(Error::BufferFull);
         }
 
-        if check_bounds_signed(len, 0, N as i64) && check_bounds_signed(size, 1, N as i64) {
-            if gen::bpf_probe_read_kernel(
-                self.buf[len as usize..N].as_mut_ptr() as *mut _,
-                size as u32,
-                bvec_base as *const _,
-            ) < 0
-            {
-                return Err(Error::FailedToReadBioVec);
-            }
-
-            self.len += size as usize;
+        // we check map access is not OOB
+        if !check_bounds_signed(len, 0, N as i64) {
+            return Ok(());
         }
+
+        // we check we will not write OOB
+        if !check_bounds_signed(size, 0, N as i64) {
+            return Ok(());
+        }
+
+        if gen::bpf_probe_read_kernel(
+            self.buf[len as usize..N].as_mut_ptr() as *mut _,
+            (size as u32).clamp(0, N as u32),
+            bvec_base as *const _,
+        ) < 0
+        {
+            return Err(Error::FailedToReadBioVec);
+        }
+
+        self.len += size as usize;
 
         Ok(())
     }
