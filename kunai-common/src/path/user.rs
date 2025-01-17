@@ -44,7 +44,7 @@ impl TryFrom<&path::PathBuf> for Path {
 
     fn try_from(value: &path::PathBuf) -> Result<Self, Self::Error> {
         let mut out = Self::default();
-        let path_buf_len = value.to_string_lossy().as_bytes().len();
+        let path_buf_len = value.to_string_lossy().len();
 
         if path_buf_len > out.buffer.len() {
             return Err(Error::FilePathTooLong);
