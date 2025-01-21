@@ -2393,7 +2393,11 @@ impl EventProducer {
                             // practice to load a few eBPF instructions (Aya, Docker ...) to test eBPF features.
                             warn!("couldn't retrieve bpf program's metadata for event={}, it probably got unloaded too quickly", event.info.uuid.into_uuid().as_hyphenated());
                         } else {
-                            error!("failed to retrieve bpf_prog instructions: {}", e);
+                            error!(
+                                "failed to retrieve bpf_prog instructions for event={}: {}",
+                                event.info.uuid.into_uuid().as_hyphenated(),
+                                e
+                            );
                         }
                     }
                 }
