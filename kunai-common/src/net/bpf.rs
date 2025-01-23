@@ -59,10 +59,9 @@ impl SockAddr {
     #[inline(always)]
     pub unsafe fn src_from_sock_common(sk: sock_common) -> Result<Self, Error> {
         let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
-        let sport = sk
-            .skc_num()
-            .map(u16::to_be)
-            .ok_or(Error::SkcPortPairMissing)?;
+        // skc_num is already in the good endianess
+        // https://elixir.bootlin.com/linux/v6.12.6/source/include/net/sock.h#L167
+        let sport = sk.skc_num().ok_or(Error::SkcPortPairMissing)?;
 
         if sa_family == AF_INET as u16 {
             return Ok(SockAddr::new_v4_from_be(
