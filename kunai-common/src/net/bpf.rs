@@ -9,78 +9,110 @@ use super::{Error, SockAddr, SocketInfo};
 
 impl SockAddr {
     #[inline(always)]
+    pub unsafe fn from_sockaddr_user(sa: sockaddr) -> Result<Self, Error> {
+        let sa_family = sa.sa_family_user().ok_or(Error::SaFamilyMissing)?;
+
+        match sa_family {
+            AF_INET => {
+                let sa_in = sockaddr_in::from(sa);
+
+                let addr = sa_in.s_addr_user().ok_or(Error::SaInAddrMissing)?.to_be();
+                let port = sa_in.sin_port_user().ok_or(Error::SaInPortMissing)?.to_be();
+
+                Ok(SockAddr::new_v4_from_be(addr, port))
+            }
+            AF_INET6 => {
+                let sa_in6 = sockaddr_in6::from(sa);
+
+                let addr = sa_in6
+                    .sin6_addr_user()
+                    .and_then(|in6| in6.addr32())
+                    .ok_or(Error::SaIn6AddrMissing)?;
+                let port = sa_in6
+                    .sin6_port_user()
+                    .ok_or(Error::SaIn6PortMissing)?
+                    .to_be();
+
+                Ok(SockAddr::new_v6_from_be(addr, port))
+            }
+            _ => Err(Error::UnsupportedSaFamily),
+        }
+    }
+
+    #[inline(always)]
     pub unsafe fn from_sockaddr(sa: sockaddr) -> Result<Self, Error> {
         let sa_family = sa.sa_family().ok_or(Error::SaFamilyMissing)?;
 
-        if sa_family == AF_INET {
-            let sa_in = sockaddr_in::from(sa);
+        match sa_family {
+            AF_INET => {
+                let sa_in = sockaddr_in::from(sa);
 
-            let addr = sa_in.s_addr().ok_or(Error::SaInAddrMissing)?.to_be();
-            let port = sa_in.sin_port().ok_or(Error::SaInPortMissing)?.to_be();
+                let addr = sa_in.s_addr().ok_or(Error::SaInAddrMissing)?.to_be();
+                let port = sa_in.sin_port().ok_or(Error::SaInPortMissing)?.to_be();
 
-            return Ok(SockAddr::new_v4_from_be(addr, port));
-        } else if sa_family == AF_INET6 {
-            let sa_in6 = sockaddr_in6::from(sa);
+                Ok(SockAddr::new_v4_from_be(addr, port))
+            }
+            AF_INET6 => {
+                let sa_in6 = sockaddr_in6::from(sa);
 
-            let addr = sa_in6
-                .sin6_addr()
-                .and_then(|in6| in6.addr32())
-                .ok_or(Error::SaIn6AddrMissing)?;
-            let port = sa_in6.sin6_port().ok_or(Error::SaIn6PortMissing)?.to_be();
+                let addr = sa_in6
+                    .sin6_addr()
+                    .and_then(|in6| in6.addr32())
+                    .ok_or(Error::SaIn6AddrMissing)?;
+                let port = sa_in6.sin6_port().ok_or(Error::SaIn6PortMissing)?.to_be();
 
-            return Ok(SockAddr::new_v6_from_be(addr, port));
+                Ok(SockAddr::new_v6_from_be(addr, port))
+            }
+            _ => Err(Error::UnsupportedSaFamily),
         }
-
-        return Err(Error::UnsupportedSaFamily);
     }
 
     #[inline(always)]
     pub unsafe fn dst_from_sock_common(sk: sock_common) -> Result<Self, Error> {
-        let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
+        let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)? as u32;
         let dport = sk.skc_dport().ok_or(Error::SkcPortPairMissing)?.to_be();
 
-        if sa_family == AF_INET as u16 {
-            return Ok(SockAddr::new_v4_from_be(
+        match sa_family {
+            AF_INET => Ok(SockAddr::new_v4_from_be(
                 sk.skc_daddr().ok_or(Error::SkcAddrPairMissing)?.to_be(),
                 dport,
-            ));
-        } else if sa_family == AF_INET6 as u16 {
-            return Ok(SockAddr::new_v6_from_be(
+            )),
+            AF_INET6 => Ok(SockAddr::new_v6_from_be(
                 sk.skc_v6_daddr()
                     .and_then(|in6| in6.addr32())
                     .ok_or(Error::SkcV6daddrMissing)?,
                 dport,
-            ));
+            )),
+            _ => Err(Error::UnsupportedSaFamily),
         }
-
-        return Err(Error::UnsupportedSaFamily);
     }
 
     #[inline(always)]
     pub unsafe fn src_from_sock_common(sk: sock_common) -> Result<Self, Error> {
-        let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)?;
-        let sport = sk
-            .skc_num()
-            .map(u16::to_be)
-            .ok_or(Error::SkcPortPairMissing)?;
+        let sa_family = sk.skc_family().ok_or(Error::SkcFamilyMissing)? as u32;
+        // skc_num is already in the good endianess
+        // https://elixir.bootlin.com/linux/v6.12.6/source/include/net/sock.h#L167
+        let sport = sk.skc_num().ok_or(Error::SkcPortPairMissing)?;
 
-        if sa_family == AF_INET as u16 {
-            return Ok(SockAddr::new_v4_from_be(
-                sk.skc_rcv_saddr()
-                    .map(u32::to_be)
-                    .ok_or(Error::SkcAddrPairMissing)?,
-                sport,
-            ));
-        } else if sa_family == AF_INET6 as u16 {
-            return Ok(SockAddr::new_v6_from_be(
-                sk.skc_v6_rcv_saddr()
-                    .and_then(|in6| in6.addr32())
-                    .ok_or(Error::SkcV6daddrMissing)?,
-                sport,
-            ));
+        match sa_family {
+            AF_INET => {
+                return Ok(SockAddr::new_v4_from_be(
+                    sk.skc_rcv_saddr()
+                        .map(u32::to_be)
+                        .ok_or(Error::SkcAddrPairMissing)?,
+                    sport,
+                ));
+            }
+            AF_INET6 => {
+                return Ok(SockAddr::new_v6_from_be(
+                    sk.skc_v6_rcv_saddr()
+                        .and_then(|in6| in6.addr32())
+                        .ok_or(Error::SkcV6daddrMissing)?,
+                    sport,
+                ));
+            }
+            _ => Err(Error::UnsupportedSaFamily),
         }
-
-        return Err(Error::UnsupportedSaFamily);
     }
 }
 

@@ -4,6 +4,7 @@ use aya_ebpf::{
     programs::{ProbeContext, RetProbeContext},
 };
 
+use co_re::sockaddr;
 use kunai_common::{
     co_re::task_struct,
     kprobe::ProbeFn,
@@ -83,7 +84,8 @@ impl SockHelper {
     }
 }
 
-unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
+#[inline(always)]
+unsafe fn is_dns_dst(sock: &co_re::sock) -> Result<bool, ProbeError> {
     let si = SocketInfo::try_from(*sock)?;
 
     // return if socket neither is INET nor INET6
@@ -92,10 +94,10 @@ unsafe fn is_dns_sock(sock: &co_re::sock) -> Result<bool, ProbeError> {
     }
 
     let sock_common = core_read_kernel!(sock, sk_common)?;
-    let ip_port = SockAddr::dst_from_sock_common(sock_common)?;
+    let dst = SockAddr::dst_from_sock_common(sock_common)?;
 
     // filter on dst port
-    Ok(ip_port.port() == 53)
+    Ok(dst.port() == 53)
 }
 
 #[kprobe(function = "vfs_read")]
@@ -128,7 +130,7 @@ unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     let sock = core_read_kernel!(socket, sk)?;
 
     // check if it looks like a connection to a DNS server
-    if !is_dns_sock(&sock)? {
+    if !is_dns_dst(&sock)? {
         return Ok(());
     }
 
@@ -211,6 +213,7 @@ pub fn net_dns_enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
 unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
     let fd: c_int = kprobe_arg!(ctx, 0)?;
     let ubuf: *const u8 = kprobe_arg!(ctx, 1)?;
+    let from_addr = sockaddr::from_ptr(kprobe_arg!(ctx, 4)?);
 
     let current = task_struct::current();
     let file = current
@@ -228,7 +231,10 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
     let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
     let sock = core_read_kernel!(socket, sk)?;
 
-    if !is_dns_sock(&sock)? {
+    // if from_addr isn't null it means we expect the kernel to fill
+    // the remote address during the call. It is possible that socket
+    // does not contain information about the destination address
+    if from_addr.is_null() && !is_dns_dst(&sock)? {
         return Ok(());
     }
 
@@ -271,7 +277,13 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
 
     let fd: c_int = kprobe_arg!(ent_probe_ctx, 0)?;
     let ubuf: *const u8 = kprobe_arg!(ent_probe_ctx, 1)?;
+    let from_addr = sockaddr::from_ptr(kprobe_arg!(ent_probe_ctx, 4)?);
 
+    let mut opt_server = None;
+
+    if let Ok(from) = SockAddr::from_sockaddr_user(from_addr) {
+        opt_server.replace(from);
+    }
     let file = task_struct::current()
         .get_fd(fd as usize)
         .ok_or(ProbeError::FileNotFound)?;
@@ -290,7 +302,7 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
         rc as usize,
     );
 
-    sh.dns_event(exit_ctx, None, false)?;
+    sh.dns_event(exit_ctx, opt_server, false)?;
 
     Ok(())
 }
@@ -332,7 +344,7 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
     let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
     let sock = core_read_kernel!(socket, sk)?;
 
-    if !is_dns_sock(&sock)? {
+    if !is_dns_dst(&sock)? {
         return Ok(());
     }
 
@@ -403,12 +415,8 @@ unsafe fn try_exit_recvmsg(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
 
     if !msg_name.is_null() {
         let addr = co_re::sockaddr::from_ptr(msg_name as *const _);
-        let sa_family = core_read_user!(addr, sa_family)?;
-        if sa_family == AF_INET {
-            let in_addr: co_re::sockaddr_in = addr.into();
-            let ip = core_read_user!(in_addr, s_addr)?.to_be();
-            let port = core_read_user!(in_addr, sin_port)?.to_be();
-            server = Some(SockAddr::new_v4_from_be(ip, port));
+        if let Ok(sa) = SockAddr::from_sockaddr(addr) {
+            server = Some(sa)
         }
     }
 
