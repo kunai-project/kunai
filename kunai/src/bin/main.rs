@@ -3229,6 +3229,7 @@ impl Command {
     fn test(o: TestOpt) -> anyhow::Result<()> {
         let conf = Config::from(o.clone());
         let mut c = EventConsumer::with_config(conf.stdout_output())?;
+        let mut baselined = false;
 
         // we then test on baseline
         let wo = WalkOptions::new()
@@ -3255,7 +3256,8 @@ impl Command {
 
         let mut res = Ok(());
 
-        for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
+        // loop testing rules on test files
+        for (rule_name, (_, rule_res)) in rule_names.iter_mut() {
             // test the rule on a test file
             for tp in o.test_dir.iter().map(PathBuf::from) {
                 let test_file = tp.join(format!("{}.json", rule_name));
@@ -3279,53 +3281,62 @@ impl Command {
                     *rule_res = Ok(())
                 }
             }
+        }
 
-            // we don't test all the rules against baselines
-            if rule.severity() >= o.min_severity_fp {
-                // we test the rule on baseline
-                for tp in o.baseline.iter() {
-                    for f in wo.clone().walk(tp) {
-                        let bf = f.map_err(|e| anyhow!("failed to list baseline file: {e}"))?;
+        // we test the rules against baseline
+        for tp in o.baseline.iter() {
+            for f in wo.clone().walk(tp) {
+                let bf = f.map_err(|e| anyhow!("failed to list baseline file: {e}"))?;
 
-                        let file = fs::File::open(&bf)
-                            .map_err(|e| anyhow!("failed to open baseline file: {e}"))?;
+                let file = fs::File::open(&bf)
+                    .map_err(|e| anyhow!("failed to open baseline file: {e}"))?;
 
-                        // we handle compressed files
-                        let input = {
-                            if bf.extension() == Some(OsStr::new("gz")) {
-                                Input::from_gzip_file(file)
-                            } else {
-                                Input::from_file(file)
-                            }
-                        };
+                // we handle compressed files
+                let input = {
+                    if bf.extension() == Some(OsStr::new("gz")) {
+                        Input::from_gzip_file(file)
+                    } else {
+                        Input::from_file(file)
+                    }
+                };
 
-                        let reader = std::io::BufReader::new(input);
+                let reader = std::io::BufReader::new(input);
 
-                        let mut de = serde_json::Deserializer::from_reader(reader);
+                let mut de = serde_json::Deserializer::from_reader(reader);
 
-                        debug!("reading baseline file: {}", bf.to_string_lossy());
+                debug!("reading baseline file: {}", bf.to_string_lossy());
 
-                        while let Ok(v) = serde_json::Value::deserialize(&mut de) {
-                            let mut e = ReplayEvent::try_from(v.clone())?;
-                            if let Some(sr) = e.scan(&mut c) {
-                                if sr.rules.contains(rule_name) {
-                                    debug!("false positive for rule={} on event={v}", rule_name);
-                                    *rule_res = Err(anyhow!("rule has false positives"));
-                                }
+                while let Ok(v) = serde_json::Value::deserialize(&mut de) {
+                    let mut e = ReplayEvent::try_from(v.clone())?;
+
+                    if let Some(sr) = e.scan(&mut c) {
+                        for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
+                            if rule.severity() >= o.min_severity_fp && sr.rules.contains(rule_name)
+                            {
+                                debug!("false positive for rule={} on event={v}", rule_name);
+                                *rule_res = Err(anyhow!("rule has false positives"));
                             }
                         }
                     }
                 }
-            }
 
-            // printing out rule testing information
-            match rule_res {
+                baselined = true;
+            }
+        }
+
+        // printing out rule testing output
+        rule_names
+            .iter()
+            .for_each(|(rule_name, (_, rule_res))| match rule_res {
                 Ok(_) => info!("rule={rule_name} test successful"),
                 Err(e) => {
                     error!("rule={rule_name} {e}");
                     res = Err(anyhow!("test failure"))
                 }
-            }
+            });
+
+        if !baselined {
+            warn!("rules were not tested against any baseline")
         }
 
         res
