@@ -8,8 +8,9 @@ use bytes::BytesMut;
 use clap::builder::styling;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
+use flate2::bufread::GzDecoder;
 use fs_walk::WalkOptions;
-use gene::rules::MAX_SEVERITY;
+use gene::rules::{CompiledRule, MAX_SEVERITY};
 use gene::{Compiler, Engine};
 use huby::ByteSize;
 use kunai::containers::Container;
@@ -48,6 +49,7 @@ use std::borrow::Cow;
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
+use std::ffi::OsStr;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
@@ -159,13 +161,21 @@ impl SystemInfo {
 enum Input {
     Stdin(std::io::Stdin),
     File(std::fs::File),
+    GzipFile(Box<GzDecoder<BufReader<File>>>),
 }
 
 impl Input {
+    #[inline(always)]
     fn from_file(f: fs::File) -> Self {
         Self::File(f)
     }
 
+    #[inline(always)]
+    fn from_gzip_file(f: File) -> Self {
+        Self::GzipFile(Box::new(GzDecoder::new(BufReader::new(f))))
+    }
+
+    #[inline(always)]
     fn from_stdin() -> Self {
         Self::Stdin(std::io::stdin())
     }
@@ -176,6 +186,7 @@ impl Read for Input {
         match self {
             Self::Stdin(stdin) => stdin.read(buf),
             Self::File(f) => f.read(buf),
+            Self::GzipFile(d) => d.read(buf),
         }
     }
 }
@@ -1718,7 +1729,7 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn scan<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> Option<ScanResult> {
+    fn scan<T: KunaiEvent>(&mut self, event: &mut T) -> Option<ScanResult> {
         let mut scan_result: Option<ScanResult> = None;
 
         if !self.engine.is_empty() {
@@ -2801,6 +2812,41 @@ impl TryFrom<ReplayOpt> for Config {
     }
 }
 
+#[derive(Debug, Parser, Clone)]
+struct TestOpt {
+    /// Paths to the rules we want to test
+    #[arg(short, long, value_name = "PATH")]
+    rule_path: Option<Vec<String>>,
+
+    /// Paths to a test directory
+    #[arg(short, long, value_name = "DIR")]
+    test_dir: Vec<String>,
+
+    /// Paths to files containing baseline activity logs
+    #[arg(short, long, value_name = "PATH")]
+    baseline: Vec<String>,
+
+    /// The minimum severity a rule must have to trigger false-positive
+    /// when running on baseline
+    #[arg(short, long, default_value_t = 6)]
+    min_severity_fp: u8,
+}
+
+impl From<TestOpt> for Config {
+    fn from(opt: TestOpt) -> Self {
+        let mut conf = Self::default();
+
+        // command line supersedes configuration
+
+        // supersedes configuration
+        if let Some(rules) = opt.rule_path {
+            conf.scanner.rules = rules;
+        }
+
+        conf
+    }
+}
+
 #[derive(Debug, Parser)]
 struct RunOpt {
     /// Specify a configuration file to use. Command line options supersede the ones specified in the configuration file.
@@ -3010,6 +3056,8 @@ enum Command {
     Run(RunOpt),
     /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
     Replay(ReplayOpt),
+    /// Test kunai detection rules
+    Test(TestOpt),
     /// Dump a default configuration
     Config(ConfigOpt),
     /// Easy way to show Kunai logs. This will work only with a configuration file and with an output
@@ -3024,7 +3072,276 @@ fn time_it<F: FnMut()>(mut f: F) -> Duration {
     end_time - start_time
 }
 
+// Enum used to deserialize and process events for
+// replay and test commands.
+enum ReplayEvent {
+    Execve(UserEvent<ExecveData>),
+    Clone(UserEvent<CloneData>),
+    Prctl(UserEvent<PrctlData>),
+    Kill(UserEvent<KillData>),
+    Ptrace(UserEvent<PtraceData>),
+    MmapExec(UserEvent<MmapExecData>),
+    MprotectExec(UserEvent<MprotectData>),
+    Connect(UserEvent<ConnectData>),
+    DnsQuery(UserEvent<DnsQueryData>),
+    SendData(UserEvent<SendDataData>),
+    InitModule(UserEvent<InitModuleData>),
+    File(UserEvent<FileData>),
+    FileUnlink(UserEvent<UnlinkData>),
+    FileRename(UserEvent<FileRenameData>),
+    BpfProgLoad(UserEvent<BpfProgLoadData>),
+    BpfSocketFilter(UserEvent<BpfSocketFilterData>),
+    Exit(UserEvent<ExitData>),
+    FileScan(UserEvent<FileScanData>),
+    Error(UserEvent<ErrorData>),
+    #[allow(dead_code)]
+    Start(UserEvent<StartData>),
+    #[allow(dead_code)]
+    Loss(UserEvent<LossData>),
+}
+
+impl ReplayEvent {
+    #[inline]
+    fn scan(&mut self, c: &mut EventConsumer) -> Option<ScanResult> {
+        match self {
+            Self::Execve(u) => c.scan(u),
+            Self::Clone(u) => c.scan(u),
+            Self::Prctl(u) => c.scan(u),
+            Self::Kill(u) => c.scan(u),
+            Self::Ptrace(u) => c.scan(u),
+            Self::MmapExec(u) => c.scan(u),
+            Self::MprotectExec(u) => c.scan(u),
+            Self::Connect(u) => c.scan(u),
+            Self::DnsQuery(u) => c.scan(u),
+            Self::SendData(u) => c.scan(u),
+            Self::InitModule(u) => c.scan(u),
+            Self::File(u) => c.scan(u),
+            Self::FileUnlink(u) => c.scan(u),
+            Self::FileRename(u) => c.scan(u),
+            Self::BpfProgLoad(u) => c.scan(u),
+            Self::BpfSocketFilter(u) => c.scan(u),
+            Self::Exit(u) => c.scan(u),
+            Self::FileScan(u) => c.scan(u),
+            Self::Error(u) => c.scan(u),
+            // not scannable events
+            Self::Start(_) | Self::Loss(_) => None,
+        }
+    }
+
+    #[inline]
+    fn scan_and_print(&mut self, c: &mut EventConsumer) -> bool {
+        match self {
+            Self::Execve(u) => c.scan_and_print(u),
+            Self::Clone(u) => c.scan_and_print(u),
+            Self::Prctl(u) => c.scan_and_print(u),
+            Self::Kill(u) => c.scan_and_print(u),
+            Self::Ptrace(u) => c.scan_and_print(u),
+            Self::MmapExec(u) => c.scan_and_print(u),
+            Self::MprotectExec(u) => c.scan_and_print(u),
+            Self::Connect(u) => c.scan_and_print(u),
+            Self::DnsQuery(u) => c.scan_and_print(u),
+            Self::SendData(u) => c.scan_and_print(u),
+            Self::InitModule(u) => c.scan_and_print(u),
+            Self::File(u) => c.scan_and_print(u),
+            Self::FileUnlink(u) => c.scan_and_print(u),
+            Self::FileRename(u) => c.scan_and_print(u),
+            Self::BpfProgLoad(u) => c.scan_and_print(u),
+            Self::BpfSocketFilter(u) => c.scan_and_print(u),
+            Self::Exit(u) => c.scan_and_print(u),
+            Self::FileScan(u) => c.scan_and_print(u),
+            Self::Error(u) => c.scan_and_print(u),
+            // not scannable events
+            Self::Start(_) | Self::Loss(_) => false,
+        }
+    }
+}
+
+impl TryFrom<serde_json::Value> for ReplayEvent {
+    type Error = anyhow::Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self, anyhow::Error> {
+        let name = value
+            .get("info")
+            .and_then(|info| info.get("event"))
+            .and_then(|event| event.get("name"))
+            .and_then(|name| name.as_str())
+            .ok_or(anyhow!("failed to deserialize event"))?;
+
+        macro_rules! event_enum {
+            ($from:ty, $into:expr) => {{
+                let name = String::from(name);
+                let e = serde_json::from_value::<UserEvent<$from>>(value)
+                    .map_err(|e| anyhow!("failed to deserialize event {name}: {e}"))?;
+
+                Ok($into(e))
+            }};
+        }
+
+        let t = Type::from_str(name).map_err(|e| anyhow!("{e}"))?;
+
+        // exhaustive pattern matching so that we don't miss new events
+        match t {
+            Type::Execve | Type::ExecveScript => event_enum!(ExecveData, ReplayEvent::Execve),
+            Type::Clone => event_enum!(CloneData, ReplayEvent::Clone),
+            Type::Prctl => event_enum!(PrctlData, ReplayEvent::Prctl),
+            Type::Kill => event_enum!(KillData, ReplayEvent::Kill),
+            Type::Ptrace => event_enum!(PtraceData, ReplayEvent::Ptrace),
+            Type::MmapExec => event_enum!(MmapExecData, ReplayEvent::MmapExec),
+            Type::MprotectExec => event_enum!(MprotectData, ReplayEvent::MprotectExec),
+            Type::Connect => event_enum!(ConnectData, ReplayEvent::Connect),
+            Type::DnsQuery => event_enum!(DnsQueryData, ReplayEvent::DnsQuery),
+            Type::SendData => event_enum!(SendDataData, ReplayEvent::SendData),
+            Type::InitModule => event_enum!(InitModuleData, ReplayEvent::InitModule),
+            Type::WriteConfig
+            | Type::Write
+            | Type::ReadConfig
+            | Type::Read
+            | Type::WriteClose
+            | Type::FileCreate => {
+                event_enum!(FileData, ReplayEvent::File)
+            }
+            Type::FileUnlink => event_enum!(UnlinkData, ReplayEvent::FileUnlink),
+            Type::FileRename => event_enum!(FileRenameData, ReplayEvent::FileRename),
+            Type::BpfProgLoad => event_enum!(BpfProgLoadData, ReplayEvent::BpfProgLoad),
+            Type::BpfSocketFilter => {
+                event_enum!(BpfSocketFilterData, ReplayEvent::BpfSocketFilter)
+            }
+            Type::Exit | Type::ExitGroup => event_enum!(ExitData, ReplayEvent::Exit),
+            Type::FileScan => event_enum!(FileScanData, ReplayEvent::FileScan),
+            Type::Error => event_enum!(ErrorData, ReplayEvent::Error),
+            Type::Start => event_enum!(StartData, ReplayEvent::Start),
+            Type::Loss => event_enum!(LossData, ReplayEvent::Loss),
+
+            // internal types
+            Type::Unknown
+            | Type::CacheHash
+            | Type::Correlation
+            | Type::Log
+            | Type::EndConfigurable
+            | Type::TaskSched
+            | Type::SyscoreResume
+            | Type::Max => Err(anyhow!("event type={t} not handled")),
+        }
+    }
+}
+
 impl Command {
+    fn test(o: TestOpt) -> anyhow::Result<()> {
+        let conf = Config::from(o.clone());
+        let mut c = EventConsumer::with_config(conf.stdout_output())?;
+        let mut baselined = false;
+
+        // we then test on baseline
+        let wo = WalkOptions::new()
+            .files()
+            .extension("json")
+            .extension("jsonl")
+            // supports for gzipped content
+            .ends_with(".json.gz")
+            .ends_with(".jsonl.gz");
+
+        let mut rule_names = c
+            .engine
+            .compiled_rules()
+            .clone()
+            .into_iter()
+            .filter(|r| r.is_detection())
+            .map(|r| {
+                (
+                    String::from(r.name()),
+                    (r, Err(anyhow!("rule is untested"))),
+                )
+            })
+            .collect::<HashMap<String, (CompiledRule, Result<(), anyhow::Error>)>>();
+
+        let mut res = Ok(());
+
+        // loop testing rules on test files
+        for (rule_name, (_, rule_res)) in rule_names.iter_mut() {
+            // test the rule on a test file
+            for tp in o.test_dir.iter().map(PathBuf::from) {
+                let test_file = tp.join(format!("{}.json", rule_name));
+                if test_file.is_file() {
+                    let reader = std::io::BufReader::new(Input::from_file(
+                        fs::File::open(test_file)
+                            .map_err(|e| anyhow!("failed to open test file: {e}"))?,
+                    ));
+
+                    let mut de = serde_json::Deserializer::from_reader(reader);
+
+                    while let Ok(v) = serde_json::Value::deserialize(&mut de) {
+                        let mut e = ReplayEvent::try_from(v.clone())?;
+                        if let Some(sr) = e.scan(&mut c) {
+                            if !sr.rules.contains(rule_name) {
+                                debug!("false negative for rule={} on event={v}", rule_name);
+                            }
+                        }
+                    }
+                    // we mark the rule as being tested
+                    *rule_res = Ok(())
+                }
+            }
+        }
+
+        // we test the rules against baseline
+        for tp in o.baseline.iter() {
+            for f in wo.clone().walk(tp) {
+                let bf = f.map_err(|e| anyhow!("failed to list baseline file: {e}"))?;
+
+                let file = fs::File::open(&bf)
+                    .map_err(|e| anyhow!("failed to open baseline file: {e}"))?;
+
+                // we handle compressed files
+                let input = {
+                    if bf.extension() == Some(OsStr::new("gz")) {
+                        Input::from_gzip_file(file)
+                    } else {
+                        Input::from_file(file)
+                    }
+                };
+
+                let reader = std::io::BufReader::new(input);
+
+                let mut de = serde_json::Deserializer::from_reader(reader);
+
+                debug!("reading baseline file: {}", bf.to_string_lossy());
+
+                while let Ok(v) = serde_json::Value::deserialize(&mut de) {
+                    let mut e = ReplayEvent::try_from(v.clone())?;
+
+                    if let Some(sr) = e.scan(&mut c) {
+                        for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
+                            if rule.severity() >= o.min_severity_fp && sr.rules.contains(rule_name)
+                            {
+                                debug!("false positive for rule={} on event={v}", rule_name);
+                                *rule_res = Err(anyhow!("rule has false positives"));
+                            }
+                        }
+                    }
+                }
+
+                baselined = true;
+            }
+        }
+
+        // printing out rule testing output
+        rule_names
+            .iter()
+            .for_each(|(rule_name, (_, rule_res))| match rule_res {
+                Ok(_) => info!("rule={rule_name} test successful"),
+                Err(e) => {
+                    error!("rule={rule_name} {e}");
+                    res = Err(anyhow!("test failure"))
+                }
+            });
+
+        if !baselined {
+            warn!("rules were not tested against any baseline")
+        }
+
+        res
+    }
+
     fn replay(o: ReplayOpt) -> anyhow::Result<()> {
         let bench = o.bench;
         let log_files = o.log_files.clone();
@@ -3032,7 +3349,7 @@ impl Command {
         let mut kunai_scan_time = Duration::new(0, 0);
         let mut data_size = ByteSize::from_bytes(0);
 
-        let mut p = EventConsumer::with_config(conf.stdout_output())?;
+        let mut c = EventConsumer::with_config(conf.stdout_output())?;
         for f in log_files {
             let reader = if f == "-" {
                 std::io::BufReader::new(Input::from_stdin())
@@ -3048,69 +3365,13 @@ impl Command {
                     data_size += ByteSize::from_bytes(serde_json::to_string(&v)?.len() as u64);
                 }
 
-                // we attempt at getting event name from json
-                if let Some(name) = v
-                    .get("info")
-                    .and_then(|info| info.get("event"))
-                    .and_then(|event| event.get("name"))
-                    .and_then(|name| name.as_str())
-                {
-                    macro_rules! scan_event {
-                        ($scanner:expr, $into:ty) => {{
-                            let mut e: UserEvent<$into> = serde_json::from_value(v)?;
-                            if bench {
-                                kunai_scan_time += time_it(|| {
-                                    let _ = $scanner.scan(&mut e);
-                                });
-                            } else {
-                                $scanner.scan_and_print(&mut e);
-                            }
-                        }};
-                    }
-
-                    let t = Type::from_str(name).map_err(|e| anyhow!("{e}"))?;
-
-                    // exhaustive pattern matching so that we don't miss new events
-                    match t {
-                        Type::Execve | Type::ExecveScript => scan_event!(p, ExecveData),
-                        Type::Clone => scan_event!(p, CloneData),
-                        Type::Prctl => scan_event!(p, PrctlData),
-                        Type::Kill => scan_event!(p, KillData),
-                        Type::Ptrace => scan_event!(p, PtraceData),
-                        Type::MmapExec => scan_event!(p, MmapExecData),
-                        Type::MprotectExec => scan_event!(p, MprotectData),
-                        Type::Connect => scan_event!(p, ConnectData),
-                        Type::DnsQuery => scan_event!(p, DnsQueryData),
-                        Type::SendData => scan_event!(p, SendDataData),
-                        Type::InitModule => scan_event!(p, InitModuleData),
-                        Type::WriteConfig
-                        | Type::Write
-                        | Type::ReadConfig
-                        | Type::Read
-                        | Type::WriteClose
-                        | Type::FileCreate => {
-                            scan_event!(p, FileData)
-                        }
-                        Type::FileUnlink => scan_event!(p, UnlinkData),
-                        Type::FileRename => scan_event!(p, FileRenameData),
-                        Type::BpfProgLoad => scan_event!(p, BpfProgLoadData),
-                        Type::BpfSocketFilter => scan_event!(p, BpfSocketFilterData),
-                        Type::Exit | Type::ExitGroup => scan_event!(p, ExitData),
-                        Type::FileScan => scan_event!(p, FileScanData),
-                        Type::Error => scan_event!(p, ErrorData),
-
-                        // types ignored by replay
-                        Type::Unknown
-                        | Type::CacheHash
-                        | Type::Correlation
-                        | Type::Log
-                        | Type::EndConfigurable
-                        | Type::TaskSched
-                        | Type::SyscoreResume
-                        | Type::Start
-                        | Type::Loss
-                        | Type::Max => {}
-                    }
+                let mut e = ReplayEvent::try_from(v.clone())?;
+                if bench {
+                    kunai_scan_time += time_it(|| {
+                        let _ = e.scan(&mut c);
+                    });
+                } else {
+                    e.scan_and_print(&mut c);
                 }
             }
         }
@@ -3629,6 +3890,7 @@ fn main() -> Result<(), anyhow::Error> {
         Some(Command::Install(o)) => Command::install(o),
         Some(Command::Config(o)) => Command::config(o),
         Some(Command::Replay(o)) => Command::replay(o),
+        Some(Command::Test(o)) => Command::test(o),
         Some(Command::Logs(o)) => Command::logs(o),
         Some(Command::Run(o)) => Command::run(Some(o), verifier_level),
         None => Command::run(None, verifier_level),

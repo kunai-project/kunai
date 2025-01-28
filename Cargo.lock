@@ -1053,9 +1053,9 @@ checksum = "f81ec6369c545a7d40e4589b5597581fa1c441fe1cce96dd1de43159910a36a2"
 
 [[package]]
 name = "fs-walk"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b916d76dbd9446be6a7266359cf633cad350b61a96ac7ff936d13c24f88cf4bc"
+checksum = "a8418cfcfe26dd2e7d413774d113f77f647ba9b19804b542b374ba7cbfb7ef1d"
 
 [[package]]
 name = "fs4"
@@ -1075,9 +1075,9 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "gene"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b7c2d409104c5cf1ace9ec17e4a38dc859722f0fffcaa9d21e060499f8995f1"
+checksum = "2715f17a73ce6f65c988ed6b371dcf1781b80604d28879bc1cd77f1b4c76fc38"
 dependencies = [
  "gene_derive",
  "lazy_static",
@@ -1091,9 +1091,9 @@ dependencies = [
 
 [[package]]
 name = "gene_derive"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57b65675f5cf61735bab23b0b1dcb654f75f96d3b23bf482c39ee36f28f0d9d3"
+checksum = "65ef5ab483abaf46b587dc094e05fac3b1550f8d4f01a0aee0910bed0521bb69"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1432,6 +1432,7 @@ dependencies = [
  "communityid",
  "env_logger",
  "firo",
+ "flate2",
  "fs-walk",
  "gene",
  "gene_derive",
@@ -1902,20 +1903,20 @@ dependencies = [
 
 [[package]]
 name = "pest"
-version = "2.7.5"
+version = "2.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae9cee2a55a544be8b89dc6848072af97a20f2422603c10865be2a42b580fff5"
+checksum = "8b7cafe60d6cf8e62e1b9b2ea516a089c008945bb5a275416789e7db0bc199dc"
 dependencies = [
  "memchr",
- "thiserror 1.0.61",
+ "thiserror 2.0.7",
  "ucd-trie",
 ]
 
 [[package]]
 name = "pest_derive"
-version = "2.7.5"
+version = "2.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81d78524685f5ef2a3b3bd1cafbc9fcabb036253d9b1463e726a91cd16e2dfc2"
+checksum = "816518421cfc6887a0d62bf441b6ffb4536fcc926395a69e1a85852d4363f57e"
 dependencies = [
  "pest",
  "pest_generator",
@@ -1923,9 +1924,9 @@ dependencies = [
 
 [[package]]
 name = "pest_generator"
-version = "2.7.5"
+version = "2.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68bd1206e71118b5356dae5ddc61c8b11e28b09ef6a31acbd15ea48a28e0c227"
+checksum = "7d1396fd3a870fc7838768d171b4616d5c91f6cc25e377b673d714567d99377b"
 dependencies = [
  "pest",
  "pest_meta",
@@ -1936,9 +1937,9 @@ dependencies = [
 
 [[package]]
 name = "pest_meta"
-version = "2.7.5"
+version = "2.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c747191d4ad9e4a4ab9c8798f1e82a39affe7ef9648390b7e5548d18e099de6"
+checksum = "e1e58089ea25d717bfd31fb534e4f3afcc2cc569c70de3e239778991ea3b7dea"
 dependencies = [
  "once_cell",
  "pest",
