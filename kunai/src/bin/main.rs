@@ -8,6 +8,7 @@ use bytes::BytesMut;
 use clap::builder::styling;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
+use flate2::bufread::GzDecoder;
 use fs_walk::WalkOptions;
 use gene::rules::{CompiledRule, MAX_SEVERITY};
 use gene::{Compiler, Engine};
@@ -48,6 +49,7 @@ use std::borrow::Cow;
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
+use std::ffi::OsStr;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
@@ -159,13 +161,21 @@ impl SystemInfo {
 enum Input {
     Stdin(std::io::Stdin),
     File(std::fs::File),
+    GzipFile(Box<GzDecoder<BufReader<File>>>),
 }
 
 impl Input {
+    #[inline(always)]
     fn from_file(f: fs::File) -> Self {
         Self::File(f)
     }
 
+    #[inline(always)]
+    fn from_gzip_file(f: File) -> Self {
+        Self::GzipFile(Box::new(GzDecoder::new(BufReader::new(f))))
+    }
+
+    #[inline(always)]
     fn from_stdin() -> Self {
         Self::Stdin(std::io::stdin())
     }
@@ -176,6 +186,7 @@ impl Read for Input {
         match self {
             Self::Stdin(stdin) => stdin.read(buf),
             Self::File(f) => f.read(buf),
+            Self::GzipFile(d) => d.read(buf),
         }
     }
 }
@@ -3223,7 +3234,10 @@ impl Command {
         let wo = WalkOptions::new()
             .files()
             .extension("json")
-            .extension("jsonl");
+            .extension("jsonl")
+            // supports for gzipped content
+            .ends_with(".json.gz")
+            .ends_with(".jsonl.gz");
 
         let mut rule_names = c
             .engine
@@ -3273,12 +3287,23 @@ impl Command {
                     for f in wo.clone().walk(tp) {
                         let bf = f.map_err(|e| anyhow!("failed to list baseline file: {e}"))?;
 
-                        let reader = std::io::BufReader::new(Input::from_file(
-                            fs::File::open(bf)
-                                .map_err(|e| anyhow!("failed to open baseline file: {e}"))?,
-                        ));
+                        let file = fs::File::open(&bf)
+                            .map_err(|e| anyhow!("failed to open baseline file: {e}"))?;
+
+                        // we handle compressed files
+                        let input = {
+                            if bf.extension() == Some(OsStr::new("gz")) {
+                                Input::from_gzip_file(file)
+                            } else {
+                                Input::from_file(file)
+                            }
+                        };
+
+                        let reader = std::io::BufReader::new(input);
 
                         let mut de = serde_json::Deserializer::from_reader(reader);
+
+                        debug!("reading baseline file: {}", bf.to_string_lossy());
 
                         while let Ok(v) = serde_json::Value::deserialize(&mut de) {
                             let mut e = ReplayEvent::try_from(v.clone())?;
@@ -3292,11 +3317,9 @@ impl Command {
                     }
                 }
             }
-        }
 
-        // printing out rule testing information
-        for (rule_name, (_, r)) in rule_names.iter() {
-            match r {
+            // printing out rule testing information
+            match rule_res {
                 Ok(_) => info!("rule={rule_name} test successful"),
                 Err(e) => {
                     error!("rule={rule_name} {e}");

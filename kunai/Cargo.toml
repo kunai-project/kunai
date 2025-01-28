@@ -59,6 +59,7 @@ yara-x = { version = "0.11" }
 fs-walk = { version = "0.1.0" }
 communityid = { version = "0.1", features = ["serde"] }
 serde_yaml = "0.9"
+flate2 = "1.0"
 
 [dev-dependencies]
 tempfile = "3.12.0"

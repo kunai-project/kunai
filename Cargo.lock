@@ -1053,9 +1053,9 @@ checksum = "f81ec6369c545a7d40e4589b5597581fa1c441fe1cce96dd1de43159910a36a2"
 
 [[package]]
 name = "fs-walk"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b916d76dbd9446be6a7266359cf633cad350b61a96ac7ff936d13c24f88cf4bc"
+checksum = "a8418cfcfe26dd2e7d413774d113f77f647ba9b19804b542b374ba7cbfb7ef1d"
 
 [[package]]
 name = "fs4"
@@ -1432,6 +1432,7 @@ dependencies = [
  "communityid",
  "env_logger",
  "firo",
+ "flate2",
  "fs-walk",
  "gene",
  "gene_derive",
