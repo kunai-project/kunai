@@ -1,6 +1,6 @@
 use core::mem::{size_of, MaybeUninit};
 use ip_network::IpNetwork;
-use libc::{clock_gettime, timespec, CLOCK_MONOTONIC};
+use libc::{clock_gettime, rlimit, timespec, CLOCK_MONOTONIC};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
@@ -93,6 +93,30 @@ pub fn getrandom<T: Sized>() -> Result<T, RandError> {
 
 pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
     if unsafe { libc::kill(pid, sig) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[inline(always)]
+pub fn getrlimit(resource: u32) -> Result<rlimit, io::Error> {
+    let mut rlim: rlimit = rlimit {
+        rlim_cur: 0, // Set the soft limit to 0 initially
+        rlim_max: 0, // Set the hard limit to 0 initially
+    };
+
+    // Get the current limit
+    if unsafe { libc::getrlimit(resource, &mut rlim) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    Ok(rlim)
+}
+
+#[inline(always)]
+pub fn setrlimit(resource: u32, rlimit: rlimit) -> Result<(), io::Error> {
+    // Set the new limit
+    if unsafe { libc::setrlimit(resource, &rlimit) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
