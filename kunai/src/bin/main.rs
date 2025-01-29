@@ -36,6 +36,7 @@ use kunai_common::config::Filter;
 use kunai_common::{inspect_err, kernel};
 
 use kunai_macros::StrEnum;
+use libc::{RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::LevelFilter;
 use lru_st::collections::LruHashSet;
 use namespace::{Mnt, Namespace};
@@ -3393,6 +3394,17 @@ impl Command {
             Some(ro) => ro.try_into()?,
             None => Config::default(),
         };
+
+        // we set RLIMIT_MEMLOCK programmatically otherwise kunai fails at starting
+        // as a service on old kernels, even though securityfs has been set properly.
+        // This is very likely because securityfs isn't mounted when kunai starts
+        // mounted yet
+        let mut rlimit =
+            getrlimit(RLIMIT_MEMLOCK).map_err(|e| anyhow!("failed to get RLIMIT_MEMLOCK: {e}"))?;
+        rlimit.rlim_cur = RLIM_INFINITY;
+        rlimit.rlim_max = RLIM_INFINITY;
+        setrlimit(RLIMIT_MEMLOCK, rlimit)
+            .map_err(|e| anyhow!("failed to set RLIMIT_MEMLOCK: {e}"))?;
 
         // checks on harden mode
         if conf.harden {
