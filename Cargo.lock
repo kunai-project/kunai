@@ -1421,7 +1421,7 @@ checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
 
 [[package]]
 name = "kunai"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "aya",
@@ -1461,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "kunai-common"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "aya",
  "aya-ebpf",
@@ -1478,7 +1478,7 @@ dependencies = [
 
 [[package]]
 name = "kunai-macros"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3399,7 +3399,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "clap",
