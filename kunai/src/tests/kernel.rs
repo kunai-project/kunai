@@ -7,9 +7,12 @@ use kunai::{
     util::{is_bpf_lsm_enabled, uname::Utsname},
 };
 use kunai_common::kernel;
-use libc::{rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY};
+use libc::{
+    makedev, mknod, rlimit, LINUX_REBOOT_CMD_POWER_OFF, RLIMIT_MEMLOCK, RLIM_INFINITY, S_IFCHR,
+    S_IRUSR, S_IWUSR,
+};
 use log::{error, info, warn};
-use std::{ffi::CString, panic};
+use std::{ffi::CString, panic, path::Path};
 
 fn mount(src: &str, target: &str, filesystem_type: &str) -> anyhow::Result<()> {
     // Paths and options
@@ -102,8 +105,27 @@ fn custom_panic_handler(info: &panic::PanicHookInfo) {
     unsafe { libc::reboot(LINUX_REBOOT_CMD_POWER_OFF) };
 }
 
+fn mknode_urandom() -> anyhow::Result<()> {
+    let path = CString::new("/dev/urandom").unwrap();
+    let mode = S_IFCHR | S_IRUSR | S_IWUSR; // Character device with read/write permissions
+    let dev = makedev(1, 9); // Major 1, Minor 9 for /dev/urandom
+
+    let result = unsafe { mknod(path.as_ptr(), mode, dev as _) };
+
+    if result != 0 {
+        Err(std::io::Error::last_os_error().into())
+    } else {
+        Ok(())
+    }
+}
+
 fn main() -> ! {
     panic::set_hook(Box::new(custom_panic_handler));
+
+    if !Path::new("/dev/urandom").exists() {
+        println!("/dev/urandom does not exists, trying to create it");
+        mknode_urandom().unwrap();
+    }
 
     println!("initializing logger");
     // building the logger
