@@ -2764,6 +2764,10 @@ struct ReplayOpt {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
+    /// Prints all events
+    #[arg(long)]
+    all: bool,
+
     /// Benchmark scanning engine
     #[arg(long)]
     bench: bool,
@@ -3345,6 +3349,7 @@ impl Command {
 
     fn replay(o: ReplayOpt) -> anyhow::Result<()> {
         let bench = o.bench;
+        let all = o.all;
         let log_files = o.log_files.clone();
         let conf: Config = o.try_into()?;
         let mut kunai_scan_time = Duration::new(0, 0);
@@ -3371,8 +3376,8 @@ impl Command {
                     kunai_scan_time += time_it(|| {
                         let _ = e.scan(&mut c);
                     });
-                } else {
-                    e.scan_and_print(&mut c);
+                } else if !e.scan_and_print(&mut c) && all {
+                    println!("{v}");
                 }
             }
         }
