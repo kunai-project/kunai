@@ -23,7 +23,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             packages: ''
           - arch: aarch64
-            runner: ubuntu-latest
+            runner: ubuntu-latest-arm
             target: aarch64-unknown-linux-gnu
             packages: gcc-aarch64-linux-gnu
 
@@ -114,7 +114,7 @@ jobs:
             qemu-package: qemu-system-x86
             runner: ubuntu-latest
           - arch: aarch64
-            runner: ubuntu-latest
+            runner: ubuntu-latest-arm
             qemu-package: qemu-system-arm
 
     steps:
