@@ -10,6 +10,37 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:    
+
+  clippy:
+    name: Run clippy ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            runner: ubuntu-latest-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # we need to fetch rust deps first to speed up cargo xtask
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo
+          ~/.rustup
+          target
+        key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+
+    - name: Run clippy on full project
+      run: cargo xtask clippy -- --workspace -- -D warnings
     
   build:
     name: Build ${{ matrix.arch }}
@@ -45,9 +76,6 @@ jobs:
           ~/.rustup
           target
         key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
-
-    - name: Run clippy on full project
-      run: cargo xtask clippy -- --workspace -- -D warnings
 
     - name: Install bpf-linker
       run: cargo install bpf-linker
