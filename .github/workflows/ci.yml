@@ -124,7 +124,7 @@ jobs:
     - name: Install system tools
       run: |
         sudo apt update
-        sudo apt install -y ${{ matrix.qemu-package }}
+        sudo apt install -y ${{ matrix.qemu-package }} libbpf-dev
         
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
