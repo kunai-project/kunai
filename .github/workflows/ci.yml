@@ -36,7 +36,7 @@ jobs:
 
     # we install aarch64 GCC to cross compile
     - name: Install aarch64 GCC
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      if: matrix.arch == 'aarch64'
       run: |
         sudo apt install -y gcc-aarch64-linux-gnu
 
@@ -94,7 +94,7 @@ jobs:
     
     # we install aarch64 GCC to cross compile
     - name: Install aarch64 GCC
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      if: matrix.arch == 'aarch64'
       run: |
         sudo apt install -y gcc-aarch64-linux-gnu
         
