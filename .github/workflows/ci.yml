@@ -43,6 +43,9 @@ jobs:
       run: cargo xtask clippy -- --workspace -- -D warnings
     
   build:
+    # run after clippy
+    needs: clippy
+
     name: Build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
