@@ -56,7 +56,8 @@ impl<const N: usize> Buffer<N> {
         let iov_len = iov.iov_len().ok_or(Error::IovLenMissing)?;
         let iov_base = iov.iov_base().ok_or(Error::IovBaseMissing)?;
 
-        let len = self.len as i64;
+        // our offset is at current len to append
+        let offset = self.len as i64;
 
         let mut size = iov_len as i64;
 
@@ -64,13 +65,13 @@ impl<const N: usize> Buffer<N> {
             size = min(count as i64, size);
         }
 
-        let left = N as i64 - len;
+        let left = N as i64 - offset;
         if size > left {
             return Err(Error::BufferFull);
         }
 
         // we check map access is not OOB
-        if !check_bounds_signed(len, 0, N as i64) {
+        if !check_bounds_signed(offset, 0, N as i64) {
             return Ok(());
         }
 
@@ -79,18 +80,28 @@ impl<const N: usize> Buffer<N> {
             return Ok(());
         }
 
-        if gen::bpf_probe_read_user(
-            self.buf[len as usize..N].as_mut_ptr() as *mut _,
-            (size as u32).clamp(0, N as u32),
-            iov_base as *const _,
-        ) < 0
+        if let Some(dst) = self
+            .buf
+            // we need to clamp as we cast offset and bounds might be lost by verifier
+            .get_mut((offset as usize).clamp(0, N)..N)
+            .map(|d| d.as_mut_ptr())
         {
-            return Err(Error::FailedToReadIovec);
+            if gen::bpf_probe_read_user(
+                dst as *mut _,
+                (size as u32).clamp(0, N as u32),
+                iov_base as *const _,
+            ) < 0
+            {
+                return Err(Error::FailedToReadIovec);
+            }
+
+            self.len += size as usize;
+            Ok(())
+        } else {
+            // this path should never be taken as we
+            // bound checked everything upstream
+            Err(Error::ShouldNotHappen)
         }
-
-        self.len += size as usize;
-
-        Ok(())
     }
 
     #[inline(always)]
@@ -101,20 +112,21 @@ impl<const N: usize> Buffer<N> {
 
         let bvec_base = (page.to_va() as u64).wrapping_add(bv_offset as u64);
 
-        let len = self.len as i64;
+        // our offset is at current len to append
+        let offset = self.len as i64;
         let mut size = bv_len as i64;
 
         if let Some(count) = count {
             size = min(count as i64, size);
         }
 
-        let left = N as i64 - len;
+        let left = N as i64 - offset;
         if size > left {
             return Err(Error::BufferFull);
         }
 
         // we check map access is not OOB
-        if !check_bounds_signed(len, 0, N as i64) {
+        if !check_bounds_signed(offset, 0, N as i64) {
             return Ok(());
         }
 
@@ -123,18 +135,28 @@ impl<const N: usize> Buffer<N> {
             return Ok(());
         }
 
-        if gen::bpf_probe_read_kernel(
-            self.buf[len as usize..N].as_mut_ptr() as *mut _,
-            (size as u32).clamp(0, N as u32),
-            bvec_base as *const _,
-        ) < 0
+        if let Some(dst) = self
+            .buf
+            // we need to clamp as we cast offset and bounds might be lost by verifier
+            .get_mut((offset as usize).clamp(0, N)..N)
+            .map(|d| d.as_mut_ptr())
         {
-            return Err(Error::FailedToReadBioVec);
+            if gen::bpf_probe_read_kernel(
+                dst as *mut _,
+                (size as u32).clamp(0, N as u32),
+                bvec_base as *const _,
+            ) < 0
+            {
+                return Err(Error::FailedToReadBioVec);
+            }
+
+            self.len += size as usize;
+            Ok(())
+        } else {
+            // this path should never be taken as we
+            // bound checked everything upstream
+            Err(Error::ShouldNotHappen)
         }
-
-        self.len += size as usize;
-
-        Ok(())
     }
 
     #[inline(always)]
