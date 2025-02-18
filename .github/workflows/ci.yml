@@ -21,9 +21,11 @@ jobs:
           - arch: x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            packages: ''
           - arch: aarch64
             runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            packages: gcc-aarch64-linux-gnu
 
     steps:
     - name: Checkout
@@ -32,13 +34,7 @@ jobs:
     - name: Install system tools
       run: |
         sudo apt update
-        sudo apt install -y clang lld libbpf-dev
-
-    # we install aarch64 GCC to cross compile
-    - name: Install aarch64 GCC
-      if: matrix.arch == 'aarch64'
-      run: |
-        sudo apt install -y gcc-aarch64-linux-gnu
+        sudo apt install -y clang lld libbpf-dev ${{ matrix.packages }}
 
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
@@ -55,15 +51,10 @@ jobs:
 
     - name: Install bpf-linker
       run: cargo install bpf-linker
-      
-    - name: Build (eBPF and userland)
-      if: matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo xtask build --release --target=${{ matrix.target }}
 
     - name: Build (eBPF and userland)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
       env: 
-        CC: aarch64-linux-gnu-gcc
+        CC: ${{ matrix.arch == 'aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
       run: cargo xtask build --release --target=${{ matrix.target }}
 
@@ -77,11 +68,11 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            qemu-package: qemu-system-x86
+            packages: qemu-system-x86
             runner: ubuntu-latest
           - arch: aarch64
             runner: ubuntu-latest
-            qemu-package: qemu-system-arm
+            packages: qemu-system-arm gcc-aarch64-linux-gnu
 
     steps:
     - name: Checkout
@@ -90,13 +81,7 @@ jobs:
     - name: Install system tools
       run: |
         sudo apt update
-        sudo apt install -y ${{ matrix.qemu-package }} libbpf-dev
-    
-    # we install aarch64 GCC to cross compile
-    - name: Install aarch64 GCC
-      if: matrix.arch == 'aarch64'
-      run: |
-        sudo apt install -y gcc-aarch64-linux-gnu
+        sudo apt install -y ${{ matrix.packages }} libbpf-dev
         
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
