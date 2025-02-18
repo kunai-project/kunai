@@ -102,6 +102,15 @@ jobs:
         path: cache
         key: ${{ env.KERNEL_CACHE_KEY }}
 
+    - name: Set cache key
+      run: echo "KERNEL_CACHE_KEY=vmlinuz-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
+
+    - name: Cache Linux Kernels
+      uses: actions/cache@v4
+      with:
+        path: cache
+        key: cache-${{ env.KERNEL_CACHE_KEY }}
+
     - name: Linux Kernel LTS 5.4
       env:
         ARCH: ${{ matrix.arch }}
