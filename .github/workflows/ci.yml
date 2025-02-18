@@ -110,10 +110,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: amd64
+          - arch: x86_64
             qemu-package: qemu-system-x86
             runner: ubuntu-latest
-          - arch: arm64
+          - arch: aarch64
             runner: ubuntu-latest
             qemu-package: qemu-system-arm
 
@@ -134,7 +134,7 @@ jobs:
           ~/.cargo
           ~/.rustup
           target
-        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+        key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
       
     - name: Set kernel cache key
       run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
