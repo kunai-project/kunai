@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kunai", "kunai-common", "xtask"]
+members = ["kunai", "kunai-common", "xstub", "xtask"]
 
 [workspace.package]
 version = "0.5.3"
