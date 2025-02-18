@@ -20,7 +20,7 @@ jobs:
     - name: Install system tools
       run: |
         sudo apt update
-        sudo apt install -y qemu-system-x86 clang lld libbpf-dev
+        sudo apt install -y clang lld libbpf-dev
 
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
@@ -41,14 +41,48 @@ jobs:
     - name: Build (eBPF and userland)
       run: cargo xtask build --release
 
-    - name: Set cache key
-      run: echo "KERNEL_CACHE_KEY=vmlinuz-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
+  tests:
+    needs: build
+    
+    name: Testing on ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            qemu-package: qemu-system-x86
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest
+            qemu-package: qemu-system-arm
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      
+    - name: Install system tools
+      run: |
+        sudo apt update
+        sudo apt install -y ${{ matrix.qemu-package }}
+        
+    # we need to fetch rust deps first to speed up cargo xtask
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo
+          ~/.rustup
+          target
+        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+      
+    - name: Set kernel cache key
+      run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
 
     - name: Cache Linux Kernels
       uses: actions/cache@v4
       with:
         path: cache
-        key: cache-${{ env.KERNEL_CACHE_KEY }}
+        key: ${{ env.KERNEL_CACHE_KEY }}
 
     - name: Linux Kernel LTS 5.4
       run: ./scripts/ci/test_kernel.sh 5.4
