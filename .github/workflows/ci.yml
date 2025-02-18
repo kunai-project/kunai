@@ -128,7 +128,7 @@ jobs:
         
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo
