@@ -220,6 +220,15 @@ struct inode
 	unsigned long i_ino;
 	struct super_block *i_sb;
 	loff_t i_size;
+	// mac time changed in kernel 6.11
+	// https://elixir.bootlin.com/linux/v6.11/source/include/linux/fs.h#L668
+	time64_t i_atime_sec;
+	time64_t i_mtime_sec;
+	time64_t i_ctime_sec;
+	u32 i_atime_nsec;
+	u32 i_mtime_nsec;
+	u32 i_ctime_nsec;
+	// use these kernels < 6.11
 	union
 	{
 		struct timespec64 i_atime;
@@ -243,10 +252,16 @@ SHIM(inode, i_sb);
 SHIM(inode, i_size);
 SHIM(inode, i_atime);
 SHIM(inode, __i_atime);
+SHIM(inode, i_atime_sec);
+SHIM(inode, i_atime_nsec);
 SHIM(inode, i_mtime);
 SHIM(inode, __i_mtime);
+SHIM(inode, i_mtime_sec);
+SHIM(inode, i_mtime_nsec);
 SHIM(inode, i_ctime);
 SHIM(inode, __i_ctime);
+SHIM(inode, i_ctime_sec);
+SHIM(inode, i_ctime_nsec);
 
 struct file
 {
