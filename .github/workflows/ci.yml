@@ -9,9 +9,23 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-jobs:
+jobs:    
+    
   build:
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            packages: ''
+          - arch: aarch64
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            packages: gcc-aarch64-linux-gnu
 
     steps:
     - name: Checkout
@@ -20,39 +34,96 @@ jobs:
     - name: Install system tools
       run: |
         sudo apt update
-        sudo apt install -y qemu-system-x86 clang lld libbpf-dev
+        sudo apt install -y clang lld libbpf-dev ${{ matrix.packages }}
 
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo
           ~/.rustup
           target
-        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+        key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
     - name: Run clippy on full project
       run: cargo xtask clippy -- --workspace -- -D warnings
 
     - name: Install bpf-linker
       run: cargo install bpf-linker
-      
+
     - name: Build (eBPF and userland)
-      run: cargo xtask build --release
+      env: 
+        CC: ${{ matrix.arch == 'aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      run: cargo xtask build --release --target=${{ matrix.target }}
+
+  tests:
+    needs: build
+    
+    name: Testing on ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            packages: qemu-system-x86
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-latest
+            packages: qemu-system-arm gcc-aarch64-linux-gnu
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      
+    - name: Install system tools
+      run: |
+        sudo apt update
+        sudo apt install -y ${{ matrix.packages }} libbpf-dev
+        
+    # we need to fetch rust deps first to speed up cargo xtask
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo
+          ~/.rustup
+          target
+        key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+      
+    - name: Set kernel cache key
+      run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
+
+    - name: Cache Linux Kernels
+      uses: actions/cache@v4
+      with:
+        path: cache
+        key: ${{ env.KERNEL_CACHE_KEY }}
 
     - name: Linux Kernel LTS 5.4
+      env:
+        ARCH: ${{ matrix.arch }}
       run: ./scripts/ci/test_kernel.sh 5.4
       
     - name: Linux Kernel LTS 5.10
+      env:
+        ARCH: ${{ matrix.arch }}
       run: ./scripts/ci/test_kernel.sh 5.10
 
     - name: Linux Kernel LTS 5.15
+      env:
+        ARCH: ${{ matrix.arch }}
       run: ./scripts/ci/test_kernel.sh 5.15
 
     - name: Linux Kernel LTS 6.1
+      env:
+        ARCH: ${{ matrix.arch }}
       run: ./scripts/ci/test_kernel.sh 6.1
 
     - name: Linux Kernel LTS 6.6
+      env:
+        ARCH: ${{ matrix.arch }}
       run: ./scripts/ci/test_kernel.sh 6.6
 

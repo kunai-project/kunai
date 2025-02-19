@@ -11,7 +11,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  track:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,7 +27,7 @@ jobs:
         
     - name: Cache
       id: cache-linux
-      uses: actions/cache@v4.0.2
+      uses: actions/cache@v4
       with:
         # A list of files, directories, and wildcard patterns to cache and restore
         path: ./linux/
