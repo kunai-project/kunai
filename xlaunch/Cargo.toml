@@ -1,0 +1,11 @@
+[package]
+name = "xlaunch"
+description = "Cross architecture xtask launcher"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]

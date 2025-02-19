@@ -3398,6 +3398,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "xlaunch"
+version = "0.5.3"
+
+[[package]]
 name = "xtask"
 version = "0.5.3"
 dependencies = [
