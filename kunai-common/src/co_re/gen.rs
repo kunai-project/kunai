@@ -279,6 +279,12 @@ pub struct inode {
     pub i_ino: ::core::ffi::c_ulong,
     pub i_sb: *mut super_block,
     pub i_size: loff_t,
+    pub i_atime_sec: time64_t,
+    pub i_mtime_sec: time64_t,
+    pub i_ctime_sec: time64_t,
+    pub i_atime_nsec: u32_,
+    pub i_mtime_nsec: u32_,
+    pub i_ctime_nsec: u32_,
     pub __bindgen_anon_1: inode__bindgen_ty_1,
     pub __bindgen_anon_2: inode__bindgen_ty_2,
     pub __bindgen_anon_3: inode__bindgen_ty_3,
@@ -356,6 +362,24 @@ unsafe extern "C" {
     pub fn shim_inode___i_atime_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
+    pub fn shim_inode_i_atime_sec(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_atime_sec_user(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_atime_sec_exists(inode: *mut inode) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_atime_nsec(inode: *mut inode) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_atime_nsec_user(inode: *mut inode) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_atime_nsec_exists(inode: *mut inode) -> bool;
+}
+unsafe extern "C" {
     pub fn shim_inode_i_mtime(inode: *mut inode) -> timespec64;
 }
 unsafe extern "C" {
@@ -374,6 +398,24 @@ unsafe extern "C" {
     pub fn shim_inode___i_mtime_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
+    pub fn shim_inode_i_mtime_sec(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_mtime_sec_user(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_mtime_sec_exists(inode: *mut inode) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_mtime_nsec(inode: *mut inode) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_mtime_nsec_user(inode: *mut inode) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_mtime_nsec_exists(inode: *mut inode) -> bool;
+}
+unsafe extern "C" {
     pub fn shim_inode_i_ctime(inode: *mut inode) -> timespec64;
 }
 unsafe extern "C" {
@@ -390,6 +432,24 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_inode___i_ctime_exists(inode: *mut inode) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_ctime_sec(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_ctime_sec_user(inode: *mut inode) -> ::core::ffi::c_longlong;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_ctime_sec_exists(inode: *mut inode) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_ctime_nsec(inode: *mut inode) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_ctime_nsec_user(inode: *mut inode) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_inode_i_ctime_nsec_exists(inode: *mut inode) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

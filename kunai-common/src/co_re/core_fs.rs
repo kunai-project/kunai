@@ -16,27 +16,55 @@ impl inode {
     rust_shim_kernel_impl!(inode, i_sb, super_block);
     rust_shim_kernel_impl!(inode, i_size, i64);
 
-    // handle i_atime member (renamed in 6.7)
+    // for kernels < 6.7
     rust_shim_kernel_impl!(pub(self),_i_atime, inode, i_atime, timespec64);
+    // for kernels in [6.7; 6.11]
     rust_shim_kernel_impl!(pub(self), ___i_atime, inode, __i_atime, timespec64);
+    // for kernels >= 6.11
+    rust_shim_kernel_impl!(pub(self), i_atime_sec, inode, i_atime_sec, i64);
+    rust_shim_kernel_impl!(pub(self), i_atime_nsec, inode, i_atime_nsec, i64);
 
     pub unsafe fn i_atime(&self) -> Option<timespec64> {
-        self._i_atime().or_else(|| self.___i_atime())
+        self._i_atime().or_else(|| self.___i_atime()).or_else(|| {
+            Some(timespec64 {
+                tv_sec: self.i_atime_sec()?,
+                tv_nsec: self.i_atime_nsec()?,
+            })
+        })
     }
 
-    // handle i_mtime member (renamed in 6.7)
+    // for kernels < 6.7
     rust_shim_kernel_impl!(pub(self),_i_mtime, inode, i_mtime, timespec64);
+    // for kernels in [6.7; 6.11]
     rust_shim_kernel_impl!(pub(self), ___i_mtime, inode, __i_mtime, timespec64);
+    // for kernels >= 6.11
+    rust_shim_kernel_impl!(pub(self),i_mtime_sec, inode, i_mtime_sec, i64);
+    rust_shim_kernel_impl!(pub(self),i_mtime_nsec, inode, i_mtime_nsec, i64);
 
     pub unsafe fn i_mtime(&self) -> Option<timespec64> {
-        self._i_mtime().or_else(|| self.___i_mtime())
+        self._i_mtime().or_else(|| self.___i_mtime()).or_else(|| {
+            Some(timespec64 {
+                tv_sec: self.i_mtime_sec()?,
+                tv_nsec: self.i_mtime_nsec()?,
+            })
+        })
     }
 
+    // for kernels < 6.6
     rust_shim_kernel_impl!(pub(self),_i_ctime, inode, i_ctime, timespec64);
+    // for kernels in [6.6; 6.11]
     rust_shim_kernel_impl!(pub(self), ___i_ctime, inode, __i_ctime, timespec64);
+    // for kernels >= 6.11
+    rust_shim_kernel_impl!(pub(self),i_ctime_sec, inode, i_ctime_sec, i64);
+    rust_shim_kernel_impl!(pub(self),i_ctime_nsec, inode, i_ctime_nsec, i64);
 
     pub unsafe fn i_ctime(&self) -> Option<timespec64> {
-        self._i_ctime().or_else(|| self.___i_ctime())
+        self._i_ctime().or_else(|| self.___i_ctime()).or_else(|| {
+            Some(timespec64 {
+                tv_sec: self.i_ctime_sec()?,
+                tv_nsec: self.i_ctime_nsec()?,
+            })
+        })
     }
 
     #[inline(always)]
