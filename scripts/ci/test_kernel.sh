@@ -20,7 +20,7 @@ fi
 if [[ "$arch" == "amd64" ]]; then
     cargo xtask build --release -- --bin tests
 elif [[ "$arch" == "arm64" ]]; then
-    CC=aarch64-linux-gnu-gcc CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo xtask build --release --target aarch64-unknown-linux-gnu --bin tests
+    CC=aarch64-linux-gnu-gcc CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo xtask build --release --target aarch64-unknown-linux-gnu -- --bin tests
 else
     echo "cannot compile"
     exit 1
