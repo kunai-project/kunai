@@ -106,7 +106,7 @@ fn custom_panic_handler(info: &panic::PanicHookInfo) {
 }
 
 fn mknode_urandom() -> anyhow::Result<()> {
-    let path = CString::new("/dev/urandom").unwrap();
+    let path = CString::new("/dev/urandom").expect("cannot create cstring");
     let mode = S_IFCHR | S_IRUSR | S_IWUSR; // Character device with read/write permissions
     let dev = makedev(1, 9); // Major 1, Minor 9 for /dev/urandom
 

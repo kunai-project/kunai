@@ -10,6 +10,8 @@ use crate::util::{get_clk_tck, ktime_get_ns};
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("procfs lacks mnt namespace")]
+    NoMntNamespace,
     #[error("procfs: {0}")]
     Procfs(#[from] procfs::ProcError),
     #[error("io: {0}")]
@@ -32,7 +34,10 @@ impl AgentEventInfo {
         let namespaces = p.namespaces()?;
         let clk_tck = get_clk_tck()? as u64;
 
-        let mnt = namespaces.0.get(&OsString::from("mnt")).unwrap();
+        let mnt = namespaces
+            .0
+            .get(&OsString::from("mnt"))
+            .ok_or(Error::NoMntNamespace)?;
 
         let comm_bytes = stat.comm.as_bytes();
         let mut comm = [0; COMM_SIZE];

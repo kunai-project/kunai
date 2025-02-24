@@ -344,7 +344,7 @@ impl EventConsumer<'_> {
             filter,
             engine: Engine::new(),
             iocs: HashMap::new(),
-            random: util::getrandom::<u32>().unwrap(),
+            random: util::getrandom::<u32>()?,
             cache: Cache::with_max_entries(10000),
             processes: HashMap::with_capacity(512),
             killed_tasks: LruHashSet::with_max_entries(512),
@@ -1974,6 +1974,7 @@ impl EventConsumer<'_> {
 
     #[inline(always)]
     fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
+        // this should never panic as we fully control encoding
         let i = unsafe { enc_event.info() }.unwrap();
 
         // we don't handle our own events
@@ -2295,12 +2296,17 @@ impl EventProducer {
         sender: mpsc::Sender<EncodedEvent>,
     ) -> anyhow::Result<Self> {
         let filter = (&config).try_into()?;
-        let stats_map: AyaHashMap<_, Type, u64> =
-            AyaHashMap::try_from(bpf.take_map(bpf_events::KUNAI_STATS_MAP).unwrap()).unwrap();
+        let stats_map: AyaHashMap<_, Type, u64> = AyaHashMap::try_from(
+            bpf.take_map(bpf_events::KUNAI_STATS_MAP)
+                .expect("cannot take KUNAI_STATS_MAP"),
+        )
+        .map_err(|e| anyhow!("cannot convert KUNAI_STATS_MAP: {e}"))?;
 
-        let perf_array =
-            AsyncPerfEventArray::try_from(bpf.take_map(bpf_events::KUNAI_EVENTS_MAP).unwrap())
-                .unwrap();
+        let perf_array = AsyncPerfEventArray::try_from(
+            bpf.take_map(bpf_events::KUNAI_EVENTS_MAP)
+                .expect("cannot take KUNAI_EVENTS_MAP"),
+        )
+        .map_err(|e| anyhow!("cannot convert KUNAI_EVENTS_MAP: {e}"))?;
 
         Ok(EventProducer {
             config,
@@ -2375,15 +2381,17 @@ impl EventProducer {
 
         #[allow(clippy::single_match)]
         match i.etype {
-            Type::Execve => {
-                let event = mut_event!(e, bpf_events::ExecveEvent).unwrap();
+            Type::Execve => match mut_event!(e, bpf_events::ExecveEvent) {
+                Ok(event) => {
                 if event.data.interpreter != event.data.executable {
                     event.info.etype = Type::ExecveScript
                 }
             }
-            Type::BpfProgLoad => {
-                let event = mut_event!(e, bpf_events::BpfProgLoadEvent).unwrap();
+                Err(e) => error!("producer cannot decode {} event: {:?}", etype, e),
+            },
 
+            Type::BpfProgLoad => match mut_event!(e, bpf_events::BpfProgLoadEvent) {
+                Ok(event) => {
                 // dumping eBPF program from userland
                 match util::bpf::bpf_dump_xlated_by_id_and_tag(event.data.id, event.data.tag) {
                     Ok(insns) => {
@@ -2414,8 +2422,11 @@ impl EventProducer {
                     }
                 }
             }
-            Type::Log => {
-                let e = event!(e, bpf_events::LogEvent).unwrap();
+                Err(e) => error!("producer cannot decode {} event: {:?}", etype, e),
+            },
+
+            Type::Log => match event!(e, bpf_events::LogEvent) {
+                Ok(e) => {
                 match e.data.level {
                     bpf_events::log::Level::Info => info!("{}", e),
                     bpf_events::log::Level::Warn => warn!("{}", e),
@@ -2424,6 +2435,9 @@ impl EventProducer {
                 // we don't need to process such event further
                 return true;
             }
+
+                Err(e) => error!("producer cannot decode {} event: {:?}", etype, e),
+            },
             Type::SyscoreResume => {
                 debug!("received syscore_resume event");
                 self.reload = true;
@@ -2443,19 +2457,25 @@ impl EventProducer {
         let i = unsafe { e.info() }.unwrap();
 
         match i.etype {
-            Type::Execve | Type::ExecveScript => {
-                let event = event!(e, bpf_events::ExecveEvent).unwrap();
+            Type::Execve | Type::ExecveScript => match event!(e, bpf_events::ExecveEvent) {
+                Ok(event) => {
                 for e in bpf_events::HashEvent::all_from_execve(event) {
-                    self.send_event(e).await.unwrap();
+                        self.send_event(e)
+                            .await
+                            .expect("cannot send HashEvent to consumer");
                 }
             }
+                Err(e) => error!("pass_through_events cannot decode {} event: {:?}", etype, e),
+            },
 
-            Type::MmapExec => {
-                let event = event!(e, bpf_events::MmapExecEvent).unwrap();
+            Type::MmapExec => match event!(e, bpf_events::MmapExecEvent) {
+                Ok(event) => {
                 self.send_event(bpf_events::HashEvent::from(event))
                     .await
-                    .unwrap();
+                        .expect("cannot send MmapExecEvent to consumer");
             }
+                Err(e) => error!("pass_through_events cannot decode {} event: {:?}", etype, e),
+            },
 
             _ => {}
         }
@@ -2510,7 +2530,7 @@ impl EventProducer {
                         config.max_buffered_events as usize,
                     )),
                 )
-                .unwrap();
+                .expect("cannot open perf event buffer");
             let event_producer = shared.clone();
             let bar = barrier.clone();
             let conf = config.clone();
@@ -3446,10 +3466,12 @@ impl Command {
         // creating tokio runtime
         let runtime = builder
             // the thread must drop CLONE_FS in order to be able to navigate in mnt namespaces
-            .on_thread_start(|| unshare(libc::CLONE_FS).unwrap())
+            .on_thread_start(|| {
+                unshare(libc::CLONE_FS).expect("cannot initialize thread with unshare(CLONE_FS)")
+            })
             .enable_all()
             .build()
-            .unwrap();
+            .expect("cannot build tokio runtime");
 
         // we start event reader and event processor before loading the programs
         // if we load the programs first we might have some event lost errors
