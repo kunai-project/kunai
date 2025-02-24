@@ -5,6 +5,7 @@ use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{fs, io, net::IpAddr};
+use thiserror::Error;
 
 pub mod account;
 pub mod bpf;
@@ -68,9 +69,11 @@ pub fn page_shift() -> Result<u64, io::Error> {
     Ok(page_shift)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum RandError {
+    #[error("getrandom call failure")]
     CallFailure,
+    #[error("getrandom partially randomized")]
     PartiallyRandomized,
 }
 

@@ -270,6 +270,7 @@ impl<'a> Program<'a> {
 
     pub fn load(&mut self, btf: &Btf) -> Result<(), Error> {
         let hook = self.attach_point();
+        let prog_name = self.name.clone();
         let program = self.prog_mut();
 
         match program {
@@ -280,7 +281,7 @@ impl<'a> Program<'a> {
                 p.load()?;
             }
             programs::Program::Lsm(p) => {
-                let attach = hook.unwrap();
+                let attach = hook.ok_or(Error::NoAttachFn(prog_name))?;
                 p.load(&attach, btf)?;
             }
             _ => {
