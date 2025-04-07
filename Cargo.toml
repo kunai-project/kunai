@@ -3,7 +3,7 @@ resolver = "2"
 members = ["kunai", "kunai-common", "xlaunch", "xtask"]
 
 [workspace.package]
-version = "0.5.4"
+version = "0.5.5"
 edition = "2021"
 authors = ["Quentin JEROME <qjerome@rawsec.lu>"]
 license = "GPL-3.0"
