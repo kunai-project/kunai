@@ -1581,10 +1581,20 @@ impl EventConsumer<'_> {
             e.children.insert(info.process_key());
         });
 
+        let (command_line, opt_err) = event.data.argv.to_argv();
+        opt_err.inspect(|e| {
+            error!(
+                "utf8 decoding error while parsing argv for comm={} pid={} task={}: {e}",
+                info.task_info().comm_string(),
+                info.task_info().tgid,
+                info.task_info().tg_uuid.into_uuid()
+            )
+        });
+
         // we insert only if not existing
         self.processes.entry(pk).or_insert(Process {
             image,
-            command_line: event.data.argv.to_argv(),
+            command_line,
             pid: info.task_info().tgid,
             flags: info.task_info().flags,
             resolved: HashMap::new(),
