@@ -1594,7 +1594,7 @@ impl EventConsumer<'_> {
         // we insert only if not existing
         self.processes.entry(pk).or_insert(Process {
             image,
-            command_line: event.data.argv.to_argv(),
+            command_line,
             pid: info.task_info().tgid,
             flags: info.task_info().flags,
             resolved: HashMap::new(),
