@@ -755,6 +755,17 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
+    fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
+        let ck = i.process_key();
+        self.processes
+            .get(&ck)
+            .and_then(|t| t.real_parent_key)
+            .and_then(|ptk| self.processes.get(&ptk))
+            .map(|c| c.command_line.join(" "))
+            .unwrap_or("?".into())
+    }
+
+    #[inline(always)]
     fn get_parent_image(&self, i: &StdEventInfo) -> String {
         let ck = i.process_key();
         self.processes
@@ -880,6 +891,7 @@ impl EventConsumer<'_> {
 
         let mut data = ExecveData {
             ancestors,
+            parent_command_line: self.get_parent_command_line(&info),
             parent_exe: self.get_parent_image(&info),
             command_line: cli,
             exe: self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
