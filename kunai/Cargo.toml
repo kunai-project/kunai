@@ -36,7 +36,7 @@ gene_derive = { version = "0.4" }
 anyhow = "1.0.68"
 env_logger = "0.10"
 log = "0.4"
-tokio = { version = "1.42", features = [
+tokio = { version = "1.43", features = [
     "macros",
     "rt",
     "rt-multi-thread",
