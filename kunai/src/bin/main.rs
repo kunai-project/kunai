@@ -3040,6 +3040,10 @@ struct ConfigOpt {
     /// List available events
     #[arg(long, exclusive = true)]
     list_events: bool,
+
+    /// Path to the configuration file
+    #[arg(long, exclusive = true)]
+    validate: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -3429,6 +3433,7 @@ impl Command {
 
     fn inner_run(opt_ro: Option<RunOpt>, vll: VerifierLogLevel) -> anyhow::Result<()> {
         let current_kernel = Utsname::kernel_version()?;
+
         let conf: Config = match opt_ro {
             Some(ro) => ro.try_into()?,
             None => Config::default(),
@@ -3678,6 +3683,17 @@ impl Command {
                 }
             }
             return Ok(());
+        }
+
+        if let Some(p) = co.validate {
+            EventConsumer::with_config(
+                serde_yaml::from_str(
+                    &std::fs::read_to_string(p)
+                        .map_err(|e| anyhow!("failed at reading configuration: {e}"))?,
+                )
+                .map_err(|e| anyhow!("failed at deserializing YAML configuration: {e}"))?,
+            )
+            .map_err(|e| anyhow!("failed at initializing event consumer: {e}"))?;
         }
 
         Ok(())
