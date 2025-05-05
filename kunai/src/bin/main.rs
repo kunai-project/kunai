@@ -3289,12 +3289,7 @@ impl Command {
             .clone()
             .into_iter()
             .filter(|r| r.is_detection())
-            .map(|r| {
-                (
-                    String::from(r.name()),
-                    (r, Err(anyhow!("rule is untested"))),
-                )
-            })
+            .map(|r| (String::from(r.name()), (r, Ok::<_, anyhow::Error>(()))))
             .collect::<HashMap<String, (CompiledRule, Result<(), anyhow::Error>)>>();
 
         let mut res = Ok(());
@@ -3303,7 +3298,9 @@ impl Command {
         for (rule_name, (_, rule_res)) in rule_names.iter_mut() {
             // test the rule on a test file
             for tp in o.test_dir.iter().map(PathBuf::from) {
+                // the test file must be named $RULE_NAME.json
                 let test_file = tp.join(format!("{}.json", rule_name));
+
                 if test_file.is_file() {
                     let reader = std::io::BufReader::new(Input::from_file(
                         fs::File::open(test_file)
@@ -3317,11 +3314,12 @@ impl Command {
                         if let Some(sr) = e.scan(&mut c) {
                             if !sr.rules.contains(rule_name) {
                                 debug!("false negative for rule={} on event={v}", rule_name);
+                                *rule_res = Err(anyhow!("detection rule has false negatives"));
                             }
                         }
                     }
-                    // we mark the rule as being tested
-                    *rule_res = Ok(())
+                } else {
+                    *rule_res = Err(anyhow!("rule is untested"))
                 }
             }
         }
