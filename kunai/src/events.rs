@@ -288,10 +288,10 @@ impl From<gene::Detections<'_>> for Detections {
     fn from(mut value: gene::Detections) -> Self {
         Self {
             iocs: HashSet::new(),
-            rules: value.rules.drain().map(|s| s.to_string()).collect(),
-            tags: value.tags.drain().map(|s| s.to_string()).collect(),
-            attack: value.attack.drain().map(|s| s.to_string()).collect(),
-            actions: value.actions.drain().map(|s| s.to_string()).collect(),
+            rules: value.rules.drain().map(|s| s.into_owned()).collect(),
+            tags: value.tags.drain().map(|s| s.into_owned()).collect(),
+            attack: value.attack.drain().map(|s| s.into_owned()).collect(),
+            actions: value.actions.drain().map(|s| s.into_owned()).collect(),
             severity: value.severity,
         }
     }
@@ -315,9 +315,9 @@ pub struct Filters {
 impl From<gene::Filters<'_>> for Filters {
     fn from(mut value: gene::Filters) -> Self {
         Self {
-            rules: value.rules.drain().map(|s| s.to_string()).collect(),
-            tags: value.tags.drain().map(|s| s.to_string()).collect(),
-            actions: value.actions.drain().map(|s| s.to_string()).collect(),
+            rules: value.rules.drain().map(|s| s.into_owned()).collect(),
+            tags: value.tags.drain().map(|s| s.into_owned()).collect(),
+            actions: value.actions.drain().map(|s| s.into_owned()).collect(),
         }
     }
 }
