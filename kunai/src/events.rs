@@ -480,6 +480,7 @@ macro_rules! def_user_data {
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct ExecveData {
     pub ancestors: String,
+    pub parent_command_line: String,
     pub parent_exe: String,
     pub command_line: String,
     pub exe: Hashes,
