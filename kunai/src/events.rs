@@ -6,7 +6,7 @@ use std::{
 };
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
-use gene::{Event, FieldGetter, FieldValue};
+use gene::{rules::MAX_SEVERITY, Event, FieldGetter, FieldValue};
 use gene_derive::{Event, FieldGetter};
 
 use kunai_common::{
@@ -258,8 +258,8 @@ macro_rules! impl_std_iocs {
     };
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
-pub struct ScanResult {
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Detections {
     /// union of the rule names matching the event
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
@@ -280,31 +280,83 @@ pub struct ScanResult {
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
     pub actions: HashSet<String>,
-    /// flag indicating whether a filter rule matched
-    #[serde(skip)]
-    pub filtered: bool,
     /// total severity score (bounded to [MAX_SEVERITY](rules::MAX_SEVERITY))
     pub severity: u8,
 }
 
-impl From<gene::ScanResult> for ScanResult {
-    fn from(value: gene::ScanResult) -> Self {
-        ScanResult {
+impl From<gene::Detections<'_>> for Detections {
+    fn from(mut value: gene::Detections) -> Self {
+        Self {
             iocs: HashSet::new(),
-            rules: value.rules,
-            tags: value.tags,
-            attack: value.attack,
-            actions: value.actions,
-            filtered: value.filtered,
+            rules: value.rules.drain().map(|s| s.to_string()).collect(),
+            tags: value.tags.drain().map(|s| s.to_string()).collect(),
+            attack: value.attack.drain().map(|s| s.to_string()).collect(),
+            actions: value.actions.drain().map(|s| s.to_string()).collect(),
             severity: value.severity,
+        }
+    }
+}
+
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Filters {
+    /// union of the rule names matching the event
+    #[getter(skip)]
+    pub rules: HashSet<String>,
+    /// union of tags defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub tags: HashSet<String>,
+    /// union of actions defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub actions: HashSet<String>,
+}
+
+impl From<gene::Filters<'_>> for Filters {
+    fn from(mut value: gene::Filters) -> Self {
+        Self {
+            rules: value.rules.drain().map(|s| s.to_string()).collect(),
+            tags: value.tags.drain().map(|s| s.to_string()).collect(),
+            actions: value.actions.drain().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
+pub struct ScanResult {
+    pub detections: Option<Detections>,
+    pub filters: Option<Filters>,
+}
+
+impl From<gene::ScanResult<'_>> for ScanResult {
+    fn from(value: gene::ScanResult) -> Self {
+        Self {
+            detections: value.detections.map(Detections::from),
+            filters: value.filters.map(Filters::from),
         }
     }
 }
 
 impl ScanResult {
     #[inline(always)]
+    pub fn contains_detection<S: AsRef<str>>(&self, rule: S) -> bool {
+        self.detections
+            .as_ref()
+            .map(|d| d.rules.contains(rule.as_ref()))
+            .unwrap_or_default()
+    }
+
+    #[inline(always)]
+    pub fn contains_filter<S: AsRef<str>>(&self, rule: S) -> bool {
+        self.filters
+            .as_ref()
+            .map(|f| f.rules.contains(rule.as_ref()))
+            .unwrap_or_default()
+    }
+
+    #[inline(always)]
     pub fn is_detection(&self) -> bool {
-        !(self.rules.is_empty() && self.iocs.is_empty())
+        self.detections.is_some()
     }
 
     #[inline(always)]
@@ -314,13 +366,32 @@ impl ScanResult {
 
     #[inline(always)]
     pub fn is_filtered(&self) -> bool {
-        self.filtered
+        self.filters.is_some()
+    }
+
+    #[inline(always)]
+    pub fn severity(&self) -> u8 {
+        self.detections
+            .as_ref()
+            .map(|d| d.severity)
+            .unwrap_or_default()
+    }
+
+    #[inline]
+    pub fn update_iocs<S: AsRef<str>>(&mut self, iocs: impl Iterator<Item = (S, u8)>) {
+        let detections = self.detections.get_or_insert_default();
+
+        iocs.for_each(|(ioc, sev)| {
+            detections.iocs.insert(ioc.as_ref().to_string());
+            detections.severity =
+                (sev.clamp(0, MAX_SEVERITY) + detections.severity).clamp(0, MAX_SEVERITY);
+        });
     }
 }
 
 pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannable {
-    fn set_detection(&mut self, sr: ScanResult);
-    fn get_detection(&self) -> &Option<ScanResult>;
+    fn set_detection(&mut self, d: Detections);
+    fn get_detection(&self) -> &Option<Detections>;
     fn info(&self) -> &EventInfo;
 }
 
@@ -329,7 +400,7 @@ pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannabl
 pub struct UserEvent<T> {
     pub data: T,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detection: Option<ScanResult>,
+    pub detection: Option<Detections>,
     pub info: EventInfo,
 }
 
@@ -358,12 +429,12 @@ where
     T: FieldGetter + IocGetter + Scannable,
 {
     #[inline(always)]
-    fn set_detection(&mut self, sr: ScanResult) {
+    fn set_detection(&mut self, sr: Detections) {
         self.detection = Some(sr)
     }
 
     #[inline(always)]
-    fn get_detection(&self) -> &Option<ScanResult> {
+    fn get_detection(&self) -> &Option<Detections> {
         &self.detection
     }
 
