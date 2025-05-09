@@ -1194,8 +1194,10 @@ dependencies = [
 [[package]]
 name = "gene"
 version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "883e5554fd1f9fce23eeaf37f7a7b5326f94e32f33cce67d102c0d943682eb01"
 dependencies = [
- "gene_derive 0.5.0",
+ "gene_derive",
  "lazy_static",
  "pest",
  "pest_derive",
@@ -1203,15 +1205,6 @@ dependencies = [
  "serde",
  "serde_yaml",
  "thiserror 1.0.61",
-]
-
-[[package]]
-name = "gene_derive"
-version = "0.5.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.90",
 ]
 
 [[package]]
@@ -1685,7 +1678,7 @@ dependencies = [
  "flate2",
  "fs-walk",
  "gene",
- "gene_derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gene_derive",
  "hex",
  "huby",
  "ip_network",
