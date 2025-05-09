@@ -259,7 +259,7 @@ macro_rules! impl_std_iocs {
 }
 
 #[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Detections {
+pub struct Detection {
     /// union of the rule names matching the event
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
@@ -284,8 +284,8 @@ pub struct Detections {
     pub severity: u8,
 }
 
-impl From<gene::Detections<'_>> for Detections {
-    fn from(mut value: gene::Detections) -> Self {
+impl From<gene::Detection<'_>> for Detection {
+    fn from(mut value: gene::Detection) -> Self {
         Self {
             iocs: HashSet::new(),
             rules: value.rules.drain().map(|s| s.into_owned()).collect(),
@@ -298,7 +298,7 @@ impl From<gene::Detections<'_>> for Detections {
 }
 
 #[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Filters {
+pub struct Filter {
     /// union of the rule names matching the event
     #[getter(skip)]
     pub rules: HashSet<String>,
@@ -312,8 +312,8 @@ pub struct Filters {
     pub actions: HashSet<String>,
 }
 
-impl From<gene::Filters<'_>> for Filters {
-    fn from(mut value: gene::Filters) -> Self {
+impl From<gene::Filter<'_>> for Filter {
+    fn from(mut value: gene::Filter) -> Self {
         Self {
             rules: value.rules.drain().map(|s| s.into_owned()).collect(),
             tags: value.tags.drain().map(|s| s.into_owned()).collect(),
@@ -324,15 +324,15 @@ impl From<gene::Filters<'_>> for Filters {
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
 pub struct ScanResult {
-    pub detections: Option<Detections>,
-    pub filters: Option<Filters>,
+    pub detection: Option<Detection>,
+    pub filter: Option<Filter>,
 }
 
 impl From<gene::ScanResult<'_>> for ScanResult {
     fn from(value: gene::ScanResult) -> Self {
         Self {
-            detections: value.detections.map(Detections::from),
-            filters: value.filters.map(Filters::from),
+            detection: value.detection.map(Detection::from),
+            filter: value.filter.map(Filter::from),
         }
     }
 }
@@ -340,7 +340,7 @@ impl From<gene::ScanResult<'_>> for ScanResult {
 impl ScanResult {
     #[inline(always)]
     pub fn contains_detection<S: AsRef<str>>(&self, rule: S) -> bool {
-        self.detections
+        self.detection
             .as_ref()
             .map(|d| d.rules.contains(rule.as_ref()))
             .unwrap_or_default()
@@ -348,7 +348,7 @@ impl ScanResult {
 
     #[inline(always)]
     pub fn contains_filter<S: AsRef<str>>(&self, rule: S) -> bool {
-        self.filters
+        self.filter
             .as_ref()
             .map(|f| f.rules.contains(rule.as_ref()))
             .unwrap_or_default()
@@ -356,7 +356,7 @@ impl ScanResult {
 
     #[inline(always)]
     pub fn is_detection(&self) -> bool {
-        self.detections.is_some()
+        self.detection.is_some()
     }
 
     #[inline(always)]
@@ -366,12 +366,12 @@ impl ScanResult {
 
     #[inline(always)]
     pub fn is_filtered(&self) -> bool {
-        self.filters.is_some()
+        self.filter.is_some()
     }
 
     #[inline(always)]
     pub fn severity(&self) -> u8 {
-        self.detections
+        self.detection
             .as_ref()
             .map(|d| d.severity)
             .unwrap_or_default()
@@ -379,7 +379,7 @@ impl ScanResult {
 
     #[inline]
     pub fn update_iocs<S: AsRef<str>>(&mut self, iocs: impl Iterator<Item = (S, u8)>) {
-        let detections = self.detections.get_or_insert_default();
+        let detections = self.detection.get_or_insert_default();
 
         iocs.for_each(|(ioc, sev)| {
             detections.iocs.insert(ioc.as_ref().to_string());
@@ -390,8 +390,10 @@ impl ScanResult {
 }
 
 pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannable {
-    fn set_detection(&mut self, d: Detections);
-    fn get_detection(&self) -> &Option<Detections>;
+    fn set_detection(&mut self, d: Detection) -> &Detection;
+    fn get_detection(&self) -> &Option<Detection>;
+    fn set_filter(&mut self, f: Filter) -> &Filter;
+    fn get_filter(&self) -> &Option<Filter>;
     fn info(&self) -> &EventInfo;
 }
 
@@ -400,7 +402,9 @@ pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannabl
 pub struct UserEvent<T> {
     pub data: T,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detection: Option<Detections>,
+    pub detection: Option<Detection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Filter>,
     pub info: EventInfo,
 }
 
@@ -429,13 +433,25 @@ where
     T: FieldGetter + IocGetter + Scannable,
 {
     #[inline(always)]
-    fn set_detection(&mut self, sr: Detections) {
-        self.detection = Some(sr)
+    fn set_detection(&mut self, d: Detection) -> &Detection {
+        self.detection = Some(d);
+        self.detection.as_ref().unwrap()
     }
 
     #[inline(always)]
-    fn get_detection(&self) -> &Option<Detections> {
+    fn get_detection(&self) -> &Option<Detection> {
         &self.detection
+    }
+
+    #[inline(always)]
+    fn set_filter(&mut self, f: Filter) -> &Filter {
+        self.filter = Some(f);
+        self.filter.as_ref().unwrap()
+    }
+
+    #[inline(always)]
+    fn get_filter(&self) -> &Option<Filter> {
+        &self.filter
     }
 
     #[inline(always)]
@@ -449,6 +465,7 @@ impl<T> UserEvent<T> {
         Self {
             data,
             detection: None,
+            filter: None,
             info: info.into(),
         }
     }
@@ -457,6 +474,7 @@ impl<T> UserEvent<T> {
         Self {
             data,
             detection: None,
+            filter: None,
             info,
         }
     }

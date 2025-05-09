@@ -1933,7 +1933,7 @@ impl EventConsumer<'_> {
 
         // scan for iocs and filter/matching rules
         if let Some(sr) = self.scan(event) {
-            if let Some(d) = sr.detections {
+            if let Some(d) = sr.detection {
                 let severity = d.severity;
                 event.set_detection(d);
 
@@ -1948,10 +1948,12 @@ impl EventConsumer<'_> {
                 if let Some(d) = event.get_detection() {
                     self.handle_actions(event, &d.actions, true)
                 }
-            } else if sr.is_only_filter() {
+            }
+            if let Some(f) = sr.filter {
+                event.set_filter(f);
                 printed = self.serialize_print(event);
-                if let Some(f) = sr.filters.as_ref() {
-                    self.handle_actions(event, &f.actions, true)
+                if let Some(f) = event.get_filter() {
+                    self.handle_actions(event, &f.actions, false)
                 }
             }
         }
