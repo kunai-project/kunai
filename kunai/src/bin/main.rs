@@ -3282,16 +3282,20 @@ impl Command {
         let mut rule_names = c
             .engine
             .compiled_rules()
-            .clone()
-            .into_iter()
-            .filter(|r| r.is_detection())
-            .map(|r| (String::from(r.name()), (r, Ok::<_, anyhow::Error>(()))))
+            .iter()
+            .filter(|r| r.is_detection() | r.is_filter())
+            .map(|r| {
+                (
+                    String::from(r.name()),
+                    (r.clone(), Ok::<_, anyhow::Error>(())),
+                )
+            })
             .collect::<HashMap<String, (CompiledRule, Result<(), anyhow::Error>)>>();
 
         let mut res = Ok(());
 
         // loop testing rules on test files
-        for (rule_name, (_, rule_res)) in rule_names.iter_mut() {
+        for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
             // test the rule on a test file
             for tp in o.test_dir.iter().map(PathBuf::from) {
                 // the test file must be named $RULE_NAME.json
@@ -3308,9 +3312,16 @@ impl Command {
                     while let Ok(v) = serde_json::Value::deserialize(&mut de) {
                         let mut e = ReplayEvent::try_from(v.clone())?;
                         if let Some(sr) = e.scan(&mut c) {
-                            if !sr.rules.contains(rule_name) {
-                                debug!("false negative for rule={} on event={v}", rule_name);
+                            if rule.is_detection() && !sr.contains_detection(rule_name) {
+                                debug!(
+                                    "false negative for detection rule={} on event={v}",
+                                    rule_name
+                                );
                                 *rule_res = Err(anyhow!("detection rule has false negatives"));
+                            }
+                            if rule.is_filter() && !sr.contains_filter(rule.name()) {
+                                debug!("false negative for filter rule={} on event={v}", rule_name);
+                                *rule_res = Err(anyhow!("filter rule has false negatives"));
                             }
                         }
                     }
@@ -3348,7 +3359,8 @@ impl Command {
 
                     if let Some(sr) = e.scan(&mut c) {
                         for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
-                            if rule.severity() >= o.min_severity_fp && sr.rules.contains(rule_name)
+                            if rule.severity() >= o.min_severity_fp
+                                && sr.contains_detection(rule_name)
                             {
                                 debug!("false positive for rule={} on event={v}", rule_name);
                                 *rule_res = Err(anyhow!("rule has false positives"));
