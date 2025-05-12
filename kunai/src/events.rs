@@ -6,7 +6,7 @@ use std::{
 };
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
-use gene::{Event, FieldGetter, FieldValue};
+use gene::{rules::MAX_SEVERITY, Event, FieldGetter, FieldValue};
 use gene_derive::{Event, FieldGetter};
 
 use kunai_common::{
@@ -258,8 +258,8 @@ macro_rules! impl_std_iocs {
     };
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
-pub struct ScanResult {
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Detection {
     /// union of the rule names matching the event
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
@@ -280,31 +280,83 @@ pub struct ScanResult {
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
     pub actions: HashSet<String>,
-    /// flag indicating whether a filter rule matched
-    #[serde(skip)]
-    pub filtered: bool,
     /// total severity score (bounded to [MAX_SEVERITY](rules::MAX_SEVERITY))
     pub severity: u8,
 }
 
-impl From<gene::ScanResult> for ScanResult {
-    fn from(value: gene::ScanResult) -> Self {
-        ScanResult {
+impl From<gene::Detection<'_>> for Detection {
+    fn from(mut value: gene::Detection) -> Self {
+        Self {
             iocs: HashSet::new(),
-            rules: value.rules,
-            tags: value.tags,
-            attack: value.attack,
-            actions: value.actions,
-            filtered: value.filtered,
+            rules: value.rules.drain().map(|s| s.into_owned()).collect(),
+            tags: value.tags.drain().map(|s| s.into_owned()).collect(),
+            attack: value.attack.drain().map(|s| s.into_owned()).collect(),
+            actions: value.actions.drain().map(|s| s.into_owned()).collect(),
             severity: value.severity,
+        }
+    }
+}
+
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Filter {
+    /// union of the rule names matching the event
+    #[getter(skip)]
+    pub rules: HashSet<String>,
+    /// union of tags defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub tags: HashSet<String>,
+    /// union of actions defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub actions: HashSet<String>,
+}
+
+impl From<gene::Filter<'_>> for Filter {
+    fn from(mut value: gene::Filter) -> Self {
+        Self {
+            rules: value.rules.drain().map(|s| s.into_owned()).collect(),
+            tags: value.tags.drain().map(|s| s.into_owned()).collect(),
+            actions: value.actions.drain().map(|s| s.into_owned()).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
+pub struct ScanResult {
+    pub detection: Option<Detection>,
+    pub filter: Option<Filter>,
+}
+
+impl From<gene::ScanResult<'_>> for ScanResult {
+    fn from(value: gene::ScanResult) -> Self {
+        Self {
+            detection: value.detection.map(Detection::from),
+            filter: value.filter.map(Filter::from),
         }
     }
 }
 
 impl ScanResult {
     #[inline(always)]
+    pub fn contains_detection<S: AsRef<str>>(&self, rule: S) -> bool {
+        self.detection
+            .as_ref()
+            .map(|d| d.rules.contains(rule.as_ref()))
+            .unwrap_or_default()
+    }
+
+    #[inline(always)]
+    pub fn contains_filter<S: AsRef<str>>(&self, rule: S) -> bool {
+        self.filter
+            .as_ref()
+            .map(|f| f.rules.contains(rule.as_ref()))
+            .unwrap_or_default()
+    }
+
+    #[inline(always)]
     pub fn is_detection(&self) -> bool {
-        !(self.rules.is_empty() && self.iocs.is_empty())
+        self.detection.is_some()
     }
 
     #[inline(always)]
@@ -314,13 +366,34 @@ impl ScanResult {
 
     #[inline(always)]
     pub fn is_filtered(&self) -> bool {
-        self.filtered
+        self.filter.is_some()
+    }
+
+    #[inline(always)]
+    pub fn severity(&self) -> u8 {
+        self.detection
+            .as_ref()
+            .map(|d| d.severity)
+            .unwrap_or_default()
+    }
+
+    #[inline]
+    pub fn update_iocs<S: AsRef<str>>(&mut self, iocs: impl Iterator<Item = (S, u8)>) {
+        let detections = self.detection.get_or_insert_default();
+
+        iocs.for_each(|(ioc, sev)| {
+            detections.iocs.insert(ioc.as_ref().to_string());
+            detections.severity =
+                (sev.clamp(0, MAX_SEVERITY) + detections.severity).clamp(0, MAX_SEVERITY);
+        });
     }
 }
 
 pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannable {
-    fn set_detection(&mut self, sr: ScanResult);
-    fn get_detection(&self) -> &Option<ScanResult>;
+    fn set_detection(&mut self, d: Detection) -> &Detection;
+    fn get_detection(&self) -> &Option<Detection>;
+    fn set_filter(&mut self, f: Filter) -> &Filter;
+    fn get_filter(&self) -> &Option<Filter>;
     fn info(&self) -> &EventInfo;
 }
 
@@ -329,7 +402,9 @@ pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannabl
 pub struct UserEvent<T> {
     pub data: T,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detection: Option<ScanResult>,
+    pub detection: Option<Detection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Filter>,
     pub info: EventInfo,
 }
 
@@ -358,13 +433,25 @@ where
     T: FieldGetter + IocGetter + Scannable,
 {
     #[inline(always)]
-    fn set_detection(&mut self, sr: ScanResult) {
-        self.detection = Some(sr)
+    fn set_detection(&mut self, d: Detection) -> &Detection {
+        self.detection = Some(d);
+        self.detection.as_ref().unwrap()
     }
 
     #[inline(always)]
-    fn get_detection(&self) -> &Option<ScanResult> {
+    fn get_detection(&self) -> &Option<Detection> {
         &self.detection
+    }
+
+    #[inline(always)]
+    fn set_filter(&mut self, f: Filter) -> &Filter {
+        self.filter = Some(f);
+        self.filter.as_ref().unwrap()
+    }
+
+    #[inline(always)]
+    fn get_filter(&self) -> &Option<Filter> {
+        &self.filter
     }
 
     #[inline(always)]
@@ -378,6 +465,7 @@ impl<T> UserEvent<T> {
         Self {
             data,
             detection: None,
+            filter: None,
             info: info.into(),
         }
     }
@@ -386,6 +474,7 @@ impl<T> UserEvent<T> {
         Self {
             data,
             detection: None,
+            filter: None,
             info,
         }
     }

@@ -10,7 +10,7 @@ use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
 use flate2::bufread::GzDecoder;
 use fs_walk::WalkOptions;
-use gene::rules::{CompiledRule, MAX_SEVERITY};
+use gene::rules::CompiledRule;
 use gene::{Compiler, Engine};
 use huby::ByteSize;
 use kunai::containers::Container;
@@ -1741,10 +1741,10 @@ impl EventConsumer<'_> {
 
     #[inline(always)]
     fn scan<T: KunaiEvent>(&mut self, event: &mut T) -> Option<ScanResult> {
-        let mut scan_result: Option<ScanResult> = None;
+        let mut opt_scan_result: Option<ScanResult> = None;
 
         if !self.engine.is_empty() {
-            scan_result = match self.engine.scan(event) {
+            opt_scan_result = match self.engine.scan(event) {
                 Ok(sr) => sr.map(ScanResult::from),
                 Err((sr, e)) => {
                     error!("event scanning error: {e}");
@@ -1755,34 +1755,26 @@ impl EventConsumer<'_> {
 
         // no need to scan for IoC if not necessary
         if !self.iocs.is_empty() {
-            // we collect a vector of ioc matching
-            let matching_iocs = event
-                .iocs()
-                .iter()
-                .filter(|ioc| self.iocs.contains_key(&ioc.to_string()))
-                .map(|ioc| ioc.to_string())
-                .collect::<HashSet<String>>();
+            let iocs = event.iocs();
 
-            let ioc_severity: usize = matching_iocs
+            let mut matching_iocs = iocs
                 .iter()
-                .map(|ioc| self.iocs.get(ioc).map(|e| *e as usize).unwrap_or_default())
-                .sum();
+                .flat_map(|ioc| {
+                    self.iocs
+                        .get_key_value(&ioc.to_string())
+                        .map(|(i, s)| (i, *s))
+                })
+                .peekable();
 
-            if !matching_iocs.is_empty() {
-                // we create a new ScanResult if necessary
-                if scan_result.is_none() {
-                    scan_result = Some(ScanResult::default());
-                }
+            if matching_iocs.peek().is_some() {
+                let scan_result = opt_scan_result.get_or_insert_default();
 
                 // we add ioc matching to the list of matching rules
-                if let Some(sr) = scan_result.as_mut() {
-                    sr.iocs = matching_iocs;
-                    sr.severity = ioc_severity.clamp(0, MAX_SEVERITY as usize) as u8;
-                }
+                scan_result.update_iocs(matching_iocs);
             }
         }
 
-        scan_result
+        opt_scan_result
     }
 
     #[inline(always)]
@@ -1941,9 +1933,9 @@ impl EventConsumer<'_> {
 
         // scan for iocs and filter/matching rules
         if let Some(sr) = self.scan(event) {
-            if sr.is_detection() {
-                let severity = sr.severity;
-                event.set_detection(sr);
+            if let Some(d) = sr.detection {
+                let severity = d.severity;
+                event.set_detection(d);
 
                 // we print event only if needed
                 printed = if severity >= self.config.scanner.min_severity {
@@ -1953,12 +1945,16 @@ impl EventConsumer<'_> {
                 };
 
                 // get_detection will always be false for filters
-                if let Some(sr) = event.get_detection() {
-                    self.handle_actions(event, &sr.actions, true);
+                if let Some(d) = event.get_detection() {
+                    self.handle_actions(event, &d.actions, true)
                 }
-            } else if sr.is_only_filter() {
+            }
+            if let Some(f) = sr.filter {
+                event.set_filter(f);
                 printed = self.serialize_print(event);
-                self.handle_actions(event, &sr.actions, false);
+                if let Some(f) = event.get_filter() {
+                    self.handle_actions(event, &f.actions, false)
+                }
             }
         }
 
@@ -3286,16 +3282,20 @@ impl Command {
         let mut rule_names = c
             .engine
             .compiled_rules()
-            .clone()
-            .into_iter()
-            .filter(|r| r.is_detection())
-            .map(|r| (String::from(r.name()), (r, Ok::<_, anyhow::Error>(()))))
+            .iter()
+            .filter(|r| r.is_detection() | r.is_filter())
+            .map(|r| {
+                (
+                    String::from(r.name()),
+                    (r.clone(), Ok::<_, anyhow::Error>(())),
+                )
+            })
             .collect::<HashMap<String, (CompiledRule, Result<(), anyhow::Error>)>>();
 
         let mut res = Ok(());
 
         // loop testing rules on test files
-        for (rule_name, (_, rule_res)) in rule_names.iter_mut() {
+        for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
             // test the rule on a test file
             for tp in o.test_dir.iter().map(PathBuf::from) {
                 // the test file must be named $RULE_NAME.json
@@ -3312,9 +3312,16 @@ impl Command {
                     while let Ok(v) = serde_json::Value::deserialize(&mut de) {
                         let mut e = ReplayEvent::try_from(v.clone())?;
                         if let Some(sr) = e.scan(&mut c) {
-                            if !sr.rules.contains(rule_name) {
-                                debug!("false negative for rule={} on event={v}", rule_name);
+                            if rule.is_detection() && !sr.contains_detection(rule_name) {
+                                debug!(
+                                    "false negative for detection rule={} on event={v}",
+                                    rule_name
+                                );
                                 *rule_res = Err(anyhow!("detection rule has false negatives"));
+                            }
+                            if rule.is_filter() && !sr.contains_filter(rule.name()) {
+                                debug!("false negative for filter rule={} on event={v}", rule_name);
+                                *rule_res = Err(anyhow!("filter rule has false negatives"));
                             }
                         }
                     }
@@ -3352,7 +3359,8 @@ impl Command {
 
                     if let Some(sr) = e.scan(&mut c) {
                         for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
-                            if rule.severity() >= o.min_severity_fp && sr.rules.contains(rule_name)
+                            if rule.severity() >= o.min_severity_fp
+                                && sr.contains_detection(rule_name)
                             {
                                 debug!("false positive for rule={} on event={v}", rule_name);
                                 *rule_res = Err(anyhow!("rule has false positives"));
