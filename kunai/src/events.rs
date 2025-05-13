@@ -179,8 +179,11 @@ impl<'de> Deserialize<'de> for UtcDateTime {
     }
 }
 
-impl FieldGetter for UtcDateTime {
-    fn get_from_iter(&self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
+impl<'f> FieldGetter<'f> for UtcDateTime {
+    fn get_from_iter(
+        &'f self,
+        i: core::slice::Iter<'_, std::string::String>,
+    ) -> Option<FieldValue<'f>> {
         if i.len() > 0 {
             return None;
         }
@@ -389,7 +392,9 @@ impl ScanResult {
     }
 }
 
-pub trait KunaiEvent: ::gene::Event + ::gene::FieldGetter + IocGetter + Scannable {
+pub trait KunaiEvent<'e>:
+    ::gene::Event<'e> + ::gene::FieldGetter<'e> + IocGetter + Scannable
+{
     fn set_detection(&mut self, d: Detection) -> &Detection;
     fn get_detection(&self) -> &Option<Detection>;
     fn set_filter(&mut self, f: Filter) -> &Filter;
@@ -428,9 +433,9 @@ where
     }
 }
 
-impl<T> KunaiEvent for UserEvent<T>
+impl<'e, T> KunaiEvent<'e> for UserEvent<T>
 where
-    T: FieldGetter + IocGetter + Scannable,
+    T: FieldGetter<'e> + IocGetter + Scannable,
 {
     #[inline(always)]
     fn set_detection(&mut self, d: Detection) -> &Detection {

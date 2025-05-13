@@ -1752,7 +1752,10 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn scan<T: KunaiEvent>(&mut self, event: &mut T) -> Option<ScanResult> {
+    fn scan<T>(&mut self, event: &mut T) -> Option<ScanResult>
+    where
+        T: for<'e> KunaiEvent<'e>,
+    {
         let mut opt_scan_result: Option<ScanResult> = None;
 
         if !self.engine.is_empty() {
@@ -1790,12 +1793,10 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn handle_actions<T: Serialize + KunaiEvent>(
-        &mut self,
-        event: &T,
-        actions: &HashSet<String>,
-        is_detection: bool,
-    ) {
+    fn handle_actions<T>(&mut self, event: &T, actions: &HashSet<String>, is_detection: bool)
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
         // some actions are allowed only for detections
         #[allow(clippy::collapsible_if)]
         if is_detection {
@@ -1834,12 +1835,10 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn file_scan_event<T: Serialize + KunaiEvent>(
-        &mut self,
-        event: &T,
-        ns: Mnt,
-        p: &Path,
-    ) -> UserEvent<FileScanData> {
+    fn file_scan_event<T>(&mut self, event: &T, ns: Mnt, p: &Path) -> UserEvent<FileScanData>
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
         // if the scanner is None, signatures will be an empty Vec
         let (sigs, err) = match self.file_scanner.as_mut() {
             Some(s) => match self
@@ -1866,7 +1865,10 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn action_scan_files<T: Serialize + KunaiEvent>(&mut self, event: &T) -> anyhow::Result<()> {
+    fn action_scan_files<T>(&mut self, event: &T) -> anyhow::Result<()>
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
         // this check prevents infinite loop for FileScan events
         if event.info().event.id == Type::FileScan.id() {
             return Ok(());
@@ -1934,7 +1936,10 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn scan_and_print<T: Serialize + KunaiEvent>(&mut self, event: &mut T) -> bool {
+    fn scan_and_print<T>(&mut self, event: &mut T) -> bool
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
         let mut printed = false;
 
         // default: we have neither rules nor iocs

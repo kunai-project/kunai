@@ -55,11 +55,11 @@ impl<'de> Deserialize<'de> for Container {
     }
 }
 
-impl FieldGetter for Container {
+impl<'f> FieldGetter<'f> for Container {
     fn get_from_iter(
-        &self,
+        &'f self,
         i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<gene::FieldValue> {
+    ) -> Option<gene::FieldValue<'f>> {
         if i.len() > 0 {
             return None;
         }
