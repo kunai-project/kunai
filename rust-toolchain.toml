@@ -3,4 +3,4 @@ channel = "1.84"
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 
 # to have the necessary for code analysis
-components = ["rust-src"]
+components = ["rust-src", "clippy"]
