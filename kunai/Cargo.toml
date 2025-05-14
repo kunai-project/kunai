@@ -30,8 +30,8 @@ ip_network = "0.4"
 lru-st = { version = "0.2", features = ["sync"] }
 
 # detection engine for events
-gene = { version = "0.5" }
-gene_derive = { version = "0.5" }
+gene = { version = "0.6" }
+gene_derive = { version = "0.6" }
 
 anyhow = "1.0.68"
 env_logger = "0.10"
