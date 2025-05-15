@@ -31,10 +31,10 @@ pub struct BpfProgData {
     pub loaded: bool,
 }
 
-pub type BpfSocketFilterEvent = Event<BpfSocketFilter>;
+pub type BpfSocketFilterEvent = Event<BpfSocketFilterData>;
 
 #[repr(C)]
-pub struct BpfSocketFilter {
+pub struct BpfSocketFilterData {
     pub socket_info: SocketInfo,
     pub filter: Buffer<2048>,
     pub filter_len: u16,

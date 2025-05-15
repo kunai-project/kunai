@@ -33,17 +33,17 @@ impl SendEntropyEvent {
 }
 
 not_bpf_target_code! {
-    impl SendEntropyEvent {
+    impl SendEntropyData {
         // we cannot do complicated operations of f32 in eBPF
         #[inline]
         pub fn shannon_entropy(&self) -> f32{
             let mut entropy = 0.0;
 
-            for &freq in &self.data.freq{
+            for &freq in &self.freq{
                 if freq == 0{
                     continue
                 }
-                let p = freq as f32 / self.data.freq_sum as f32;
+                let p = freq as f32 / self.freq_sum as f32;
                 entropy -= p * p.log2();
             }
 
