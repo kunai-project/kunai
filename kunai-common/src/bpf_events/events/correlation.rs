@@ -1,5 +1,5 @@
 use super::{CloneEvent, ExecveEvent, MmapExecEvent, ScheduleEvent};
-use crate::bpf_events::{Event, Nodename, Type};
+use crate::bpf_events::{Event, EventInfo, Nodename, Type};
 use crate::path::Path;
 use crate::{buffer::Buffer, cgroup::Cgroup};
 
@@ -122,19 +122,19 @@ impl From<&MmapExecEvent> for HashEvent {
 }
 
 impl HashEvent {
-    pub fn from_execve_with_path(event: &ExecveEvent, p: Path) -> Self {
+    pub fn new(info: EventInfo, p: Path) -> Self {
         Self {
-            info: event.info,
+            info,
             data: p.into(),
         }
         .with_type(Type::CacheHash)
     }
 
     pub fn all_from_execve(event: &ExecveEvent) -> Vec<HashEvent> {
-        let mut v = vec![Self::from_execve_with_path(event, event.data.executable)];
+        let mut v = vec![Self::new(event.info, event.data.executable)];
 
         if event.data.interpreter != event.data.executable {
-            v.push(Self::from_execve_with_path(event, event.data.interpreter));
+            v.push(Self::new(event.info, event.data.interpreter));
         }
 
         v
