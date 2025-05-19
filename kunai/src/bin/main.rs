@@ -29,8 +29,7 @@ use kunai::util::uname::Utsname;
 use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, event, mut_event, EncodedEvent, Event, PrctlOption, Signal, TaskInfo, Type,
-    MAX_BPF_EVENT_SIZE,
+    self, EbpfEvent, PrctlOption, Signal, TaskInfo, Type, MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::Filter;
 use kunai_common::{inspect_err, kernel};
@@ -882,25 +881,25 @@ impl EventConsumer<'_> {
     fn execve_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::ExecveEvent,
+        bpf_data: bpf_events::ExecveData,
     ) -> UserEvent<ExecveData> {
         let ancestors = self.get_ancestors_string(&info);
         let cli = self.get_command_line(info.process_key());
 
-        let opt_mnt_ns = Self::task_mnt_ns(&event.info);
+        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
 
         let mut data = ExecveData {
             ancestors,
             parent_command_line: self.get_parent_command_line(&info),
             parent_exe: self.get_parent_image(&info),
             command_line: cli,
-            exe: self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.executable)),
+            exe: self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.executable)),
             interpreter: None,
         };
 
-        if event.data.executable != event.data.interpreter {
+        if bpf_data.executable != bpf_data.interpreter {
             data.interpreter =
-                Some(self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.interpreter)))
+                Some(self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.interpreter)))
         }
 
         UserEvent::new(data, info)
@@ -910,13 +909,13 @@ impl EventConsumer<'_> {
     fn clone_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::CloneEvent,
+        bpf_data: bpf_events::CloneData,
     ) -> UserEvent<CloneData> {
         let data = CloneData {
             ancestors: self.get_ancestors_string(&info),
-            exe: event.data.executable.to_path_buf().into(),
+            exe: bpf_data.executable.to_path_buf().into(),
             command_line: self.get_command_line(info.process_key()),
-            flags: event.data.flags,
+            flags: bpf_data.flags,
         };
         UserEvent::new(data, info)
     }
@@ -925,13 +924,13 @@ impl EventConsumer<'_> {
     fn prctl_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::PrctlEvent,
+        bpf_data: bpf_events::PrctlData,
     ) -> UserEvent<PrctlData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let option = PrctlOption::try_from_uint(event.data.option)
+        let option = PrctlOption::try_from_uint(bpf_data.option)
             .map(|o| o.as_str().into())
-            .unwrap_or(format!("unknown({})", event.data.option))
+            .unwrap_or(format!("unknown({})", bpf_data.option))
             .to_string();
 
         let data = PrctlData {
@@ -939,11 +938,11 @@ impl EventConsumer<'_> {
             exe: exe.into(),
             command_line,
             option,
-            arg2: event.data.arg2,
-            arg3: event.data.arg3,
-            arg4: event.data.arg4,
-            arg5: event.data.arg5,
-            success: event.data.success,
+            arg2: bpf_data.arg2,
+            arg3: bpf_data.arg3,
+            arg4: bpf_data.arg4,
+            arg5: bpf_data.arg5,
+            success: bpf_data.success,
         };
 
         UserEvent::new(data, info)
@@ -953,14 +952,14 @@ impl EventConsumer<'_> {
     fn kill_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::KillEvent,
+        bpf_data: bpf_events::KillData,
     ) -> UserEvent<KillData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let signal = Signal::from_uint_to_string(event.data.signal);
+        let signal = Signal::from_uint_to_string(bpf_data.signal);
 
         // we need to set uuid part of target task
-        let mut target = event.data.target;
+        let mut target = bpf_data.target;
         target.set_uuid_random(self.random);
 
         // get the command line
@@ -988,12 +987,12 @@ impl EventConsumer<'_> {
     fn ptrace_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::PtraceEvent,
+        bpf_data: bpf_events::PtraceData,
     ) -> UserEvent<PtraceData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
         // we need to set uuid part of target task
-        let mut target = event.data.target;
+        let mut target = bpf_data.target;
         target.set_uuid_random(self.random);
 
         // get the command line
@@ -1005,7 +1004,7 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
-            mode: event.data.mode,
+            mode: bpf_data.mode,
             target: TargetTask {
                 command_line: self.get_command_line(tk),
                 exe: self.get_exe(tk).into(),
@@ -1020,10 +1019,10 @@ impl EventConsumer<'_> {
     fn mmap_exec_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::MmapExecEvent,
+        bpf_data: bpf_events::MmapExecData,
     ) -> UserEvent<kunai::events::MmapExecData> {
-        let filename = event.data.filename;
-        let opt_mnt_ns = Self::task_mnt_ns(&event.info);
+        let filename = bpf_data.filename;
+        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
         let mmapped_hashes = self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
 
         let (exe, command_line) = self.get_exe_and_command_line(&info);
@@ -1042,18 +1041,18 @@ impl EventConsumer<'_> {
     fn dns_query_events(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::DnsQueryEvent,
+        bpf_data: bpf_events::DnsQueryData,
     ) -> Vec<UserEvent<DnsQueryData>> {
         let mut out = vec![];
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let src: SockAddr = event.data.src.into();
-        let dst: SockAddr = event.data.dst.into();
-        let si = SocketInfo::from(event.data.socket);
+        let src: SockAddr = bpf_data.src.into();
+        let dst: SockAddr = bpf_data.dst.into();
+        let si = SocketInfo::from(bpf_data.socket);
 
         let community_id = Flow::new(
             // this is valid to cast as a u8
-            Protocol::from(event.data.socket.proto as u8),
+            Protocol::from(bpf_data.socket.proto as u8),
             src.ip,
             src.port,
             dst.ip,
@@ -1062,7 +1061,7 @@ impl EventConsumer<'_> {
         .community_id_v1(0)
         .base64();
 
-        let responses = event.data.answers().unwrap_or_default();
+        let responses = bpf_data.answers().unwrap_or_default();
         let ancestors = self.get_ancestors_string(&info);
 
         for r in responses {
@@ -1100,7 +1099,7 @@ impl EventConsumer<'_> {
     fn file_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::FileEvent,
+        bpf_data: bpf_events::FileData,
     ) -> UserEvent<FileData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1108,7 +1107,7 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            path: event.data.path.to_path_buf(),
+            path: bpf_data.path.to_path_buf(),
         };
 
         UserEvent::new(data, info)
@@ -1118,7 +1117,7 @@ impl EventConsumer<'_> {
     fn unlink_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::UnlinkEvent,
+        bpf_data: bpf_events::UnlinkData,
     ) -> UserEvent<UnlinkData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1126,8 +1125,8 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            path: event.data.path.into(),
-            success: event.data.success,
+            path: bpf_data.path.into(),
+            success: bpf_data.success,
         };
 
         UserEvent::new(data, info)
@@ -1137,7 +1136,7 @@ impl EventConsumer<'_> {
     fn bpf_prog_load_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::BpfProgLoadEvent,
+        bpf_data: bpf_events::BpfProgData,
     ) -> UserEvent<BpfProgLoadData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1145,15 +1144,15 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            id: event.data.id,
+            id: bpf_data.id,
             prog_type: BpfProgTypeInfo {
-                id: event.data.prog_type,
-                name: util::bpf::bpf_type_to_string(event.data.prog_type),
+                id: bpf_data.prog_type,
+                name: util::bpf::bpf_type_to_string(bpf_data.prog_type),
             },
-            tag: hex::encode(event.data.tag),
-            attached_func: event.data.attached_func_name.into(),
-            name: event.data.name.into(),
-            ksym: event.data.ksym.into(),
+            tag: hex::encode(bpf_data.tag),
+            attached_func: bpf_data.attached_func_name.into(),
+            name: bpf_data.name.into(),
+            ksym: bpf_data.ksym.into(),
             bpf_prog: kunai::events::BpfProgInfo {
                 md5: "?".into(),
                 sha1: "?".into(),
@@ -1161,11 +1160,11 @@ impl EventConsumer<'_> {
                 sha512: "?".into(),
                 size: 0,
             },
-            verified_insns: event.data.verified_insns,
-            loaded: event.data.loaded,
+            verified_insns: bpf_data.verified_insns,
+            loaded: bpf_data.loaded,
         };
 
-        if let Some(h) = &event.data.hashes {
+        if let Some(h) = &bpf_data.hashes {
             data.bpf_prog.md5 = h.md5.into();
             data.bpf_prog.sha1 = h.sha1.into();
             data.bpf_prog.sha256 = h.sha256.into();
@@ -1180,7 +1179,7 @@ impl EventConsumer<'_> {
     fn bpf_socket_filter_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::BpfSocketFilterEvent,
+        bpf_data: bpf_events::BpfSocketFilterData,
     ) -> UserEvent<BpfSocketFilterData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1188,16 +1187,16 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            socket: SocketInfo::from(event.data.socket_info),
+            socket: SocketInfo::from(bpf_data.socket_info),
             filter: FilterInfo {
-                md5: md5_data(event.data.filter.as_slice()),
-                sha1: sha1_data(event.data.filter.as_slice()),
-                sha256: sha256_data(event.data.filter.as_slice()),
-                sha512: sha512_data(event.data.filter.as_slice()),
-                len: event.data.filter_len, // size in filter sock_filter blocks
-                size: event.data.filter.len(), // size in bytes
+                md5: md5_data(bpf_data.filter.as_slice()),
+                sha1: sha1_data(bpf_data.filter.as_slice()),
+                sha256: sha256_data(bpf_data.filter.as_slice()),
+                sha512: sha512_data(bpf_data.filter.as_slice()),
+                len: bpf_data.filter_len, // size in filter sock_filter blocks
+                size: bpf_data.filter.len(), // size in bytes
             },
-            attached: event.data.attached,
+            attached: bpf_data.attached,
         };
 
         //Self::json_event(info, data)
@@ -1208,7 +1207,7 @@ impl EventConsumer<'_> {
     fn mprotect_event(
         &self,
         info: StdEventInfo,
-        event: &bpf_events::MprotectEvent,
+        bpf_data: bpf_events::MprotectData,
     ) -> UserEvent<MprotectData> {
         let (exe, cmd_line) = self.get_exe_and_command_line(&info);
 
@@ -1216,8 +1215,8 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line: cmd_line,
             exe: exe.into(),
-            addr: event.data.start,
-            prot: event.data.prot,
+            addr: bpf_data.start,
+            prot: bpf_data.prot,
         };
 
         UserEvent::new(data, info)
@@ -1227,14 +1226,14 @@ impl EventConsumer<'_> {
     fn connect_event(
         &self,
         info: StdEventInfo,
-        event: &bpf_events::ConnectEvent,
+        bpf_data: bpf_events::ConnectData,
     ) -> UserEvent<ConnectData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-        let src: SockAddr = event.data.src.into();
-        let dst: SockAddr = event.data.dst.into();
+        let src: SockAddr = bpf_data.src.into();
+        let dst: SockAddr = bpf_data.dst.into();
 
         let flow: Flow = Flow::new(
-            Protocol::from(event.data.socket.proto as u8),
+            Protocol::from(bpf_data.socket.proto as u8),
             src.ip,
             src.port,
             dst.ip,
@@ -1245,7 +1244,7 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            socket: SocketInfo::from(event.data.socket),
+            socket: SocketInfo::from(bpf_data.socket),
             src,
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst.ip, &info).into()),
@@ -1255,7 +1254,7 @@ impl EventConsumer<'_> {
                 is_v6: dst.ip.is_ipv6(),
             },
             community_id: flow.community_id_v1(0).base64(),
-            connected: event.data.connected,
+            connected: bpf_data.connected,
         };
 
         UserEvent::new(data, info)
@@ -1265,14 +1264,14 @@ impl EventConsumer<'_> {
     fn send_data_event(
         &self,
         info: StdEventInfo,
-        event: &bpf_events::SendEntropyEvent,
+        bpf_data: bpf_events::SendEntropyData,
     ) -> UserEvent<SendDataData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
-        let dst: SockAddr = event.data.dst.into();
-        let src: SockAddr = event.data.src.into();
+        let dst: SockAddr = bpf_data.dst.into();
+        let src: SockAddr = bpf_data.src.into();
 
         let flow = Flow::new(
-            Protocol::from(event.data.socket.proto as u8),
+            Protocol::from(bpf_data.socket.proto as u8),
             src.ip,
             src.port,
             dst.ip,
@@ -1283,8 +1282,8 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
-            socket: SocketInfo::from(event.data.socket),
-            src: event.data.src.into(),
+            socket: SocketInfo::from(bpf_data.socket),
+            src: bpf_data.src.into(),
             dst: NetworkInfo {
                 hostname: Some(self.get_resolved(dst.ip, &info).into()),
                 ip: dst.ip,
@@ -1293,8 +1292,8 @@ impl EventConsumer<'_> {
                 is_v6: dst.ip.is_ipv6(),
             },
             community_id: flow.community_id_v1(0).base64(),
-            data_entropy: event.shannon_entropy(),
-            data_size: event.data.real_data_size,
+            data_entropy: bpf_data.shannon_entropy(),
+            data_size: bpf_data.real_data_size,
         };
 
         UserEvent::new(data, info)
@@ -1304,7 +1303,7 @@ impl EventConsumer<'_> {
     fn init_module_event(
         &self,
         info: StdEventInfo,
-        event: &bpf_events::InitModuleEvent,
+        bpf_data: bpf_events::InitModuleData,
     ) -> UserEvent<InitModuleData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1312,10 +1311,10 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            syscall: event.data.args.syscall_name().into(),
-            module_name: event.data.name.to_string(),
-            args: event.data.uargs.to_string(),
-            loaded: event.data.loaded,
+            syscall: bpf_data.args.syscall_name().into(),
+            module_name: bpf_data.name.to_string(),
+            args: bpf_data.uargs.to_string(),
+            loaded: bpf_data.loaded,
         };
 
         UserEvent::new(data, info)
@@ -1325,7 +1324,7 @@ impl EventConsumer<'_> {
     fn file_rename_event(
         &self,
         info: StdEventInfo,
-        event: &bpf_events::FileRenameEvent,
+        bpf_data: bpf_events::FileRenameData,
     ) -> UserEvent<FileRenameData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1333,8 +1332,8 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            old: event.data.old_name.into(),
-            new: event.data.new_name.into(),
+            old: bpf_data.old_name.into(),
+            new: bpf_data.new_name.into(),
         };
 
         UserEvent::new(data, info)
@@ -1344,7 +1343,7 @@ impl EventConsumer<'_> {
     fn exit_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::ExitEvent,
+        bpf_data: bpf_events::ExitData,
     ) -> UserEvent<ExitData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1352,10 +1351,10 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            error_code: event.data.error_code,
+            error_code: bpf_data.error_code,
         };
 
-        let etype = event.ty();
+        let etype = info.bpf.etype;
         // cleanup tasks when process exits
         if (matches!(etype, Type::Exit) && info.task_info().pid == info.task_info().tgid)
             || matches!(etype, Type::ExitGroup)
@@ -1394,7 +1393,7 @@ impl EventConsumer<'_> {
     fn error_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::ErrorEvent,
+        bpf_data: bpf_events::ErrorData,
     ) -> UserEvent<ErrorData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
@@ -1406,15 +1405,15 @@ impl EventConsumer<'_> {
             ti.pid,
             ti.tgid,
             ti.tg_uuid.into_uuid(),
-            event.data.error.as_str(),
+            bpf_data.error.as_str(),
         );
 
         let data = ErrorData {
             ancestors: self.get_ancestors_string(&info),
             command_line,
             exe: exe.into(),
-            code: event.data.error as u64,
-            message: String::from(event.data.error.as_str()),
+            code: bpf_data.error as u64,
+            message: String::from(bpf_data.error.as_str()),
         };
 
         UserEvent::new(data, info)
@@ -1451,8 +1450,12 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn loss_event(&self, info: StdEventInfo, event: &bpf_events::LossEvent) -> UserEvent<LossData> {
-        UserEvent::new(LossData::from(&event.data), info)
+    fn loss_event(
+        &self,
+        info: StdEventInfo,
+        bpf_data: bpf_events::LossData,
+    ) -> UserEvent<LossData> {
+        UserEvent::new(LossData::from(&bpf_data), info)
     }
 
     // shadow processes are processes still in the hashmap but which have exited and
@@ -1516,11 +1519,11 @@ impl EventConsumer<'_> {
     fn handle_correlation_event(
         &mut self,
         info: StdEventInfo,
-        event: &bpf_events::CorrelationEvent,
+        bpf_data: bpf_events::CorrelationData,
     ) {
         let pk = info.process_key();
         let mut parent_key = info.parent_key();
-        let execve_flag = matches!(event.data.origin, Type::Execve | Type::ExecveScript);
+        let execve_flag = matches!(bpf_data.origin, Type::Execve | Type::ExecveScript);
 
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
@@ -1538,12 +1541,12 @@ impl EventConsumer<'_> {
             // we fix nodename if not set yet
             // tasks init from procfs are lacking nodename
             if v.nodename.is_none() {
-                v.nodename = event.data.nodename()
+                v.nodename = bpf_data.nodename()
             }
             return;
         }
 
-        let cgroup = event.data.cgroup;
+        let cgroup = bpf_data.cgroup;
 
         // we encountered some cgroup parsing error in eBPF
         // so we need to resolve cgroup in userland
@@ -1583,7 +1586,7 @@ impl EventConsumer<'_> {
             if info.task_info().is_kernel_thread() {
                 KERNEL_IMAGE.into()
             } else {
-                event.data.exe.to_path_buf()
+                bpf_data.exe.to_path_buf()
             }
         };
 
@@ -1593,7 +1596,7 @@ impl EventConsumer<'_> {
             e.children.insert(info.process_key());
         });
 
-        let (command_line, opt_err) = event.data.argv.to_argv();
+        let (command_line, opt_err) = bpf_data.argv.to_argv();
         opt_err.inspect(|e| {
             error!(
                 "utf8 decoding error while parsing argv for comm={} pid={} task={}: {e}",
@@ -1612,7 +1615,7 @@ impl EventConsumer<'_> {
             resolved: HashMap::new(),
             container: container_type,
             cgroups,
-            nodename: event.data.nodename(),
+            nodename: bpf_data.nodename(),
             real_parent_key: Some(parent_key),
             kernel_task_info: Some(*info.task_info()),
             children: HashSet::new(),
@@ -1623,9 +1626,9 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn handle_hash_event(&mut self, info: StdEventInfo, event: &bpf_events::HashEvent) {
+    fn handle_hash_event(&mut self, info: StdEventInfo, bpf_data: bpf_events::HashData) {
         let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-        self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&event.data.path));
+        self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.path));
     }
 
     #[inline(always)]
@@ -1996,246 +1999,183 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn handle_event(&mut self, enc_event: &mut EncodedEvent) {
-        // this should never panic as we fully control encoding
-        let i = unsafe { enc_event.info() }.unwrap();
-
+    fn handle_event(&mut self, evt: EbpfEvent) {
         // we don't handle our own events
-        if i.process.tgid as u32 == std::process::id() {
+        if evt.info().process.tgid as u32 == std::process::id() {
             debug!("skipping our event");
         }
 
-        let etype = i.etype;
+        self.cache_namespaces(evt.info());
 
-        self.cache_namespaces(i);
+        match evt {
+            EbpfEvent::Execve(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                // this event is used for correlation but cannot be processed
+                // asynchronously so we have to handle correlation here
 
-        let std_info = self.build_std_event_info(*i);
+                let correlation_event = bpf_events::CorrelationEvent::from(e.as_ref());
+                self.handle_correlation_event(std_info.clone(), correlation_event.data);
 
-        match etype {
-            Type::Unknown // this is checked in producer
-            | Type::Max
-            | Type::EndConfigurable
-            | Type::TaskSched
-            | Type::FileScan => {}
+                if self.filter.is_enabled(std_info.bpf.etype) {
+                    // we have to rebuild std_info as it has it is uses correlation
+                    // information
+                    let std_info = self.build_std_event_info(std_info.bpf);
+                    let mut e = self.execve_event(std_info, e.data);
 
-            Type::Execve | Type::ExecveScript => {
-                match event!(enc_event, bpf_events::ExecveEvent) {
-                    Ok(e) => {
-                        // this event is used for correlation but cannot be processed
-                        // asynchronously so we have to handle correlation here
-                        self.handle_correlation_event(
-                            std_info.clone(),
-                            &bpf_events::CorrelationEvent::from(e),
-                        );
-
-                        if self.filter.is_enabled(std_info.bpf.etype) {
-                            // we have to rebuild std_info as it has it is uses correlation
-                            // information
-                            let std_info = self.build_std_event_info(std_info.bpf);
-                            let mut e = self.execve_event(std_info, e);
-
-                            self.scan_and_print(&mut e);
-                        }
-                    }
-                    Err(e) => error!("failed to decode {} event: {:?}", etype, e),
+                    self.scan_and_print(&mut e);
                 }
             }
 
-            Type::Clone => match event!(enc_event, bpf_events::CloneEvent) {
-                Ok(e) => {
-                    // this event is used for correlation but cannot be processed
-                    // asynchronously so we have to handle correlation here
-                    self.handle_correlation_event(
-                        std_info.clone(),
-                        &bpf_events::CorrelationEvent::from(e),
-                    );
+            EbpfEvent::Clone(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                // this event is used for correlation but cannot be processed
+                // asynchronously so we have to handle correlation here
+                let correlation_event = bpf_events::CorrelationEvent::from(e.as_ref());
+                self.handle_correlation_event(std_info.clone(), correlation_event.data);
 
-                    // we let clone event go in EventProducer not to break correlation
-                    if self.filter.is_enabled(Type::Clone) {
-                        // we have to rebuild std_info as it has it is uses correlation
-                        // information
-                        let std_info = self.build_std_event_info(std_info.bpf);
-                        let mut e = self.clone_event(std_info, e);
-                        self.scan_and_print(&mut e);
-                    }
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::Prctl => match event!(enc_event, bpf_events::PrctlEvent) {
-                Ok(e) => {
-                    let mut e = self.prctl_event(std_info, e);
+                // we let clone event go in EventProducer not to break correlation
+                if self.filter.is_enabled(Type::Clone) {
+                    // we have to rebuild std_info as it has it is uses correlation
+                    // information
+                    let std_info = self.build_std_event_info(std_info.bpf);
+                    let mut e = self.clone_event(std_info, e.data);
                     self.scan_and_print(&mut e);
                 }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
+            }
 
-            Type::Kill => match event!(enc_event, bpf_events::KillEvent) {
-                Ok(e) => {
-                    let mut e = self.kill_event(std_info, e);
+            EbpfEvent::Prctl(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.prctl_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::Kill(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.kill_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::Ptrace(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.ptrace_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::MmapExec(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.mmap_exec_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::Mprotect(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.mprotect_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::Connect(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.connect_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::DnsQuery(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                for e in self.dns_query_events(std_info, e.data).iter_mut() {
+                    self.scan_and_print(e);
+                }
+            }
+
+            EbpfEvent::SendEntropy(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.send_data_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::InitModule(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.init_module_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::File(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.file_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::Unlink(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.unlink_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::FileRename(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.file_rename_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::BpfProgLoad(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.bpf_prog_load_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::BpfSocketFilter(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.bpf_socket_filter_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
+            EbpfEvent::Exit(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let ty = std_info.bpf.etype;
+                let mut e = self.exit_event(std_info, e.data);
+                // exit and exit_group will always reach consumer as they are used
+                // to clean up the processes HashMap. So we need to check if we want
+                // to display those only now.
+                if self.filter.is_enabled(ty) {
                     self.scan_and_print(&mut e);
                 }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
+            }
 
-            Type::Ptrace => match event!(enc_event, bpf_events::PtraceEvent) {
-                Ok(e) => {
-                    let mut e = self.ptrace_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
+            EbpfEvent::Error(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.error_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
 
-            Type::MmapExec => match event!(enc_event, bpf_events::MmapExecEvent) {
-                Ok(e) => {
-                    let mut e = self.mmap_exec_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
+            EbpfEvent::Correlation(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                self.handle_correlation_event(std_info, e.data);
+            }
 
-            Type::MprotectExec => match event!(enc_event, bpf_events::MprotectEvent) {
-                Ok(e) => {
-                    let mut e = self.mprotect_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
+            EbpfEvent::Hash(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                self.handle_hash_event(std_info, e.data);
+            }
 
-            Type::Connect => match event!(enc_event, bpf_events::ConnectEvent) {
-                Ok(e) => {
-                    let mut e = self.connect_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::DnsQuery => match event!(enc_event, bpf_events::DnsQueryEvent) {
-                Ok(e) => {
-                    for e in self.dns_query_events(std_info, e).iter_mut() {
-                        self.scan_and_print(e);
-                    }
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::SendData => match event!(enc_event, bpf_events::SendEntropyEvent) {
-                Ok(e) => {
-                    let mut e = self.send_data_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::InitModule => match event!(enc_event, bpf_events::InitModuleEvent) {
-                Ok(e) => {
-                    let mut e = self.init_module_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::WriteConfig
-            | Type::Write
-            | Type::ReadConfig
-            | Type::Read
-            | Type::WriteClose
-            | Type::FileCreate => match event!(enc_event, bpf_events::FileEvent) {
-                Ok(e) => {
-                    let mut e = self.file_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::FileUnlink => match event!(enc_event, bpf_events::UnlinkEvent) {
-                Ok(e) => {
-                    let mut e = self.unlink_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::FileRename => match event!(enc_event, bpf_events::FileRenameEvent) {
-                Ok(e) => {
-                    let mut e = self.file_rename_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::BpfProgLoad => match event!(enc_event, bpf_events::BpfProgLoadEvent) {
-                Ok(e) => {
-                    let mut e = self.bpf_prog_load_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::BpfSocketFilter => match event!(enc_event, bpf_events::BpfSocketFilterEvent) {
-                Ok(e) => {
-                    let mut e = self.bpf_socket_filter_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::Exit | Type::ExitGroup => match event!(enc_event, bpf_events::ExitEvent) {
-                Ok(e) => {
-                    let ty = std_info.bpf.etype;
-                    let mut e = self.exit_event(std_info, e);
-                    // exit and exit_group will always reach consumer as they are used
-                    // to clean up the processes HashMap. So we need to check if we want
-                    // to display those only now.
-                    if self.filter.is_enabled(ty) {
-                        self.scan_and_print(&mut e);
-                    }
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::Error => match event!(enc_event, bpf_events::ErrorEvent) {
-                Ok(e) => {
-                    let mut e = self.error_event(std_info, e);
-                    self.scan_and_print(&mut e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::Correlation => match event!(enc_event) {
-                Ok(e) => {
-                    self.handle_correlation_event(std_info, e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::CacheHash => match event!(enc_event) {
-                Ok(e) => {
-                    self.handle_hash_event(std_info, e);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
-
-            Type::Log => {
+            EbpfEvent::Log(_) => {
                 // only panic in debug
                 #[cfg(debug_assertions)]
                 panic!("log events should be processed earlier")
             }
 
-            Type::Start => {
+            EbpfEvent::Start(e) => {
+                let std_info = self.build_std_event_info(e.info);
                 let mut se = self.start_event(std_info);
                 self.serialize_print(&mut se);
             }
 
-            Type::Loss =>  match event!(enc_event) {
-                Ok(e) => {
-                    let mut evt = self.loss_event(std_info, e);
-                    self.serialize_print(&mut evt);
-                }
-                Err(e) => error!("failed to decode {} event: {:?}", etype, e),
-            },
+            EbpfEvent::Loss(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut evt = self.loss_event(std_info, e.data);
+                self.serialize_print(&mut evt);
+            }
 
-            Type::SyscoreResume => { /*  just ignore it */ }
+            EbpfEvent::SysCoreResume(_) => { /*  just ignore it */ }
+            EbpfEvent::Schedule(_) => { /*  just ignore it */ }
         }
     }
 }
@@ -2292,8 +2232,8 @@ impl Stats {
 struct EventProducer {
     config: Config,
     batch: u64,
-    pipe: VecDeque<EncodedEvent>,
-    sender: mpsc::Sender<EncodedEvent>,
+    pipe: VecDeque<EbpfEvent>,
+    sender: mpsc::Sender<EbpfEvent>,
     filter: Filter,
     ebpf_stats_map: AyaHashMap<MapData, Type, u64>,
     stats: Stats,
@@ -2316,7 +2256,7 @@ impl EventProducer {
     pub fn with_params(
         bpf: &mut Ebpf,
         config: Config,
-        sender: mpsc::Sender<EncodedEvent>,
+        sender: mpsc::Sender<EbpfEvent>,
     ) -> anyhow::Result<Self> {
         let filter = (&config).try_into()?;
         let stats_map: AyaHashMap<_, Type, u64> = AyaHashMap::try_from(
@@ -2351,7 +2291,7 @@ impl EventProducer {
     // Additionaly it is very useful as it guarantees events are printed/piped into
     // other tools in the damn good order.
     #[inline(always)]
-    async fn process_piped_events(&mut self) -> Result<usize, SendError<EncodedEvent>> {
+    async fn process_piped_events(&mut self) -> Result<usize, SendError<EbpfEvent>> {
         let mut c = 0;
         // nothing to do
         if self.pipe.is_empty() {
@@ -2363,12 +2303,14 @@ impl EventProducer {
         // events for which info can be decoded
         self.pipe
             .make_contiguous()
-            .sort_unstable_by_key(|enc_evt| unsafe { enc_evt.info_unchecked().timestamp });
+            .sort_unstable_by_key(|enc_evt| enc_evt.info().timestamp);
 
-        while let Some(enc_evt) = self.pipe.front() {
-            let eb = unsafe { enc_evt.info_unchecked() }.batch;
+        let current_batch = self.batch.saturating_sub(1);
+
+        while let Some(evt) = self.pipe.front() {
+            let eb = evt.info().batch;
             // process all events but the current batch
-            if eb >= self.batch.saturating_sub(1) {
+            if eb >= current_batch {
                 break;
             }
             // send event to event processor
@@ -2383,15 +2325,15 @@ impl EventProducer {
     }
 
     #[inline(always)]
-    async fn send_event<T>(&self, event: Event<T>) -> Result<(), SendError<EncodedEvent>> {
-        self.sender.send(EncodedEvent::from_event(event)).await
+    async fn send_event(&self, event: EbpfEvent) -> Result<(), SendError<EbpfEvent>> {
+        self.sender.send(event).await
     }
 
     /// Set event batch number then pipe event
     #[inline(always)]
-    fn pipe_event<T>(&mut self, mut event: Event<T>) {
-        event.batch(self.batch);
-        self.pipe.push_back(EncodedEvent::from_event(event));
+    fn pipe_event(&mut self, mut event: EbpfEvent) {
+        event.set_batch(self.batch);
+        self.pipe.push_back(event);
     }
 
     /// function used to pre-process some targetted events where time is critical and for which
@@ -2399,76 +2341,57 @@ impl EventProducer {
     /// this function must return true if main processing loop has to pass to the next event
     /// after the call.
     #[inline(always)]
-    fn process_time_critical(&mut self, e: &mut EncodedEvent) -> bool {
-        // event info has already been decoded successfully
-        let i = unsafe { e.info_unchecked() };
-        let etype = i.etype;
+    fn process_time_critical(&mut self, e: &mut EbpfEvent) -> bool {
+        match e {
+            EbpfEvent::BpfProgLoad(e) => {
+                // dumping eBPF program from userland
+                match util::bpf::bpf_dump_xlated_by_id_and_tag(e.data.id, e.data.tag) {
+                    Ok(insns) => {
+                        let h = bpf_events::ProgHashes {
+                            md5: md5_data(insns.as_slice()).try_into().unwrap(),
+                            sha1: sha1_data(insns.as_slice()).try_into().unwrap(),
+                            sha256: sha256_data(insns.as_slice()).try_into().unwrap(),
+                            sha512: sha512_data(insns.as_slice()).try_into().unwrap(),
+                            size: insns.len(),
+                        };
 
-        #[allow(clippy::single_match)]
-        match i.etype {
-            Type::Execve => match mut_event!(e, bpf_events::ExecveEvent) {
-                Ok(event) => {
-                    if event.data.interpreter != event.data.executable {
-                        event.info.etype = Type::ExecveScript
+                        e.data.hashes = Some(h);
                     }
-                }
-                Err(e) => error!("producer cannot decode {} event: {:?}", etype, e),
-            },
 
-            Type::BpfProgLoad => match mut_event!(e, bpf_events::BpfProgLoadEvent) {
-                Ok(event) => {
-                    // dumping eBPF program from userland
-                    match util::bpf::bpf_dump_xlated_by_id_and_tag(event.data.id, event.data.tag) {
-                        Ok(insns) => {
-                            let h = bpf_events::ProgHashes {
-                                md5: md5_data(insns.as_slice()).try_into().unwrap(),
-                                sha1: sha1_data(insns.as_slice()).try_into().unwrap(),
-                                sha256: sha256_data(insns.as_slice()).try_into().unwrap(),
-                                sha512: sha512_data(insns.as_slice()).try_into().unwrap(),
-                                size: insns.len(),
-                            };
-
-                            event.data.hashes = Some(h);
-                        }
-
-                        Err(e) => {
-                            if e.is_io_error_not_found() {
-                                // It may happen that we do not manage to get program's metadata. This happens
-                                // when programs gets loaded and very quickly unloaded. It seems a common
-                                // practice to load a few eBPF instructions (Aya, Docker ...) to test eBPF features.
-                                warn!("couldn't retrieve bpf program's metadata for event={}, it probably got unloaded too quickly", event.info.uuid.into_uuid().as_hyphenated());
-                            } else {
-                                error!(
-                                    "failed to retrieve bpf_prog instructions for event={}: {}",
-                                    event.info.uuid.into_uuid().as_hyphenated(),
-                                    e
-                                );
-                            }
+                    Err(err) => {
+                        if err.is_io_error_not_found() {
+                            // It may happen that we do not manage to get program's metadata. This happens
+                            // when programs gets loaded and very quickly unloaded. It seems a common
+                            // practice to load a few eBPF instructions (Aya, Docker ...) to test eBPF features.
+                            warn!("couldn't retrieve bpf program's metadata for event={}, it probably got unloaded too quickly", e.info.uuid.into_uuid().as_hyphenated());
+                        } else {
+                            error!(
+                                "failed to retrieve bpf_prog instructions for event={}: {}",
+                                e.info.uuid.into_uuid().as_hyphenated(),
+                                err
+                            );
                         }
                     }
                 }
-                Err(e) => error!("producer cannot decode {} event: {:?}", etype, e),
-            },
+            }
 
-            Type::Log => match event!(e, bpf_events::LogEvent) {
-                Ok(e) => {
-                    match e.data.level {
-                        bpf_events::log::Level::Info => info!("{}", e),
-                        bpf_events::log::Level::Warn => warn!("{}", e),
-                        bpf_events::log::Level::Error => error!("{}", e),
-                    }
-                    // we don't need to process such event further
-                    return true;
+            EbpfEvent::Log(e) => {
+                match e.data.level {
+                    bpf_events::log::Level::Info => info!("{}", e),
+                    bpf_events::log::Level::Warn => warn!("{}", e),
+                    bpf_events::log::Level::Error => error!("{}", e),
                 }
+                // we don't need to process such event further
+                return true;
+            }
 
-                Err(e) => error!("producer cannot decode {} event: {:?}", etype, e),
-            },
-            Type::SyscoreResume => {
+            EbpfEvent::SysCoreResume(_) => {
                 debug!("received syscore_resume event");
                 self.reload = true;
                 // we don't need to process such event further
                 return true;
             }
+
             _ => {}
         }
 
@@ -2478,31 +2401,21 @@ impl EventProducer {
     /// this method pass through some events directly to the event processor
     /// only events that can be processed asynchronously should be passed through
     #[inline(always)]
-    async fn pass_through_events(&self, e: &EncodedEvent) {
-        // event info has already been decoded successfully
-        let i = unsafe { e.info_unchecked() };
-        let etype = i.etype;
-
-        match i.etype {
-            Type::Execve | Type::ExecveScript => match event!(e, bpf_events::ExecveEvent) {
-                Ok(event) => {
-                    for e in bpf_events::HashEvent::all_from_execve(event) {
-                        self.send_event(e)
-                            .await
-                            .expect("cannot send HashEvent to consumer");
-                    }
-                }
-                Err(e) => error!("pass_through_events cannot decode {} event: {:?}", etype, e),
-            },
-
-            Type::MmapExec => match event!(e, bpf_events::MmapExecEvent) {
-                Ok(event) => {
-                    self.send_event(bpf_events::HashEvent::from(event))
+    async fn pass_through_events(&self, e: &EbpfEvent) {
+        match e {
+            EbpfEvent::Execve(e) => {
+                for e in bpf_events::HashEvent::all_from_execve(e) {
+                    self.send_event(EbpfEvent::from(e))
                         .await
-                        .expect("cannot send MmapExecEvent to consumer");
+                        .expect("cannot send HashEvent to consumer");
                 }
-                Err(e) => error!("pass_through_events cannot decode {} event: {:?}", etype, e),
-            },
+            }
+
+            EbpfEvent::MmapExec(e) => {
+                self.send_event(bpf_events::HashEvent::new(e.info, e.data.filename).into())
+                    .await
+                    .expect("cannot send MmapExecEvent to consumer");
+            }
 
             _ => {}
         }
@@ -2638,7 +2551,7 @@ impl EventProducer {
                                     })
                                 {
                                     // we pipe data loss event
-                                    ep.pipe_event(loss_evt);
+                                    ep.pipe_event(loss_evt.into());
                                 }
 
                                 // update last_lost for future error display decision
@@ -2651,29 +2564,20 @@ impl EventProducer {
                     // events.read contains the number of events that have been read,
                     // and is always <= buffers.len()
                     for buf in buffers.iter().take(events.read) {
-                        let mut dec = EncodedEvent::from_bytes(buf);
-                        let mut ep = event_producer.lock().await;
-
-                        // we make sure here that only events for which we can grab info for
-                        // are pushed to the pipe. It is simplifying the error handling process
-                        // in sorting the pipe afterwards
-                        let info = match unsafe { dec.info_mut() } {
-                            Ok(info) => info,
-                            Err(_) => {
-                                error!("failed to decode info");
-                                continue;
-                            }
+                        let Ok(mut evt) = EbpfEvent::from_bytes(buf)
+                            .inspect_err(|e| error!("failed at decoding ebpf event: {e}"))
+                        else {
+                            continue;
                         };
 
-                        // check that we didn't send uninitialized events
-                        debug_assert!(info.etype != Type::Unknown, "received unknown event");
+                        let mut ep = event_producer.lock().await;
 
                         // we set the proper batch number
-                        info.batch(ep.batch);
+                        evt.set_batch(ep.batch);
 
                         // verify that we filter properly kunai events in eBPF
                         debug_assert!(
-                            info.process.pid as u32 != process::id(),
+                            evt.info().process.pid as u32 != process::id(),
                             "kunai event should not reach userland"
                         );
 
@@ -2681,17 +2585,17 @@ impl EventProducer {
                         // we eventually change event type in this function
                         // example: Execve -> ExecveScript if necessary
                         // when the function returns true event doesn't need to go further
-                        if ep.process_time_critical(&mut dec) {
+                        if ep.process_time_critical(&mut evt) {
                             continue;
                         }
 
                         // passing through some events directly to the consumer
                         // this is mostly usefull for correlation purposes
-                        ep.pass_through_events(&dec).await;
+                        ep.pass_through_events(&evt).await;
 
                         // we must get the event type here because we eventually changed it
                         // info_unchecked can be used here as we are sure info is valid
-                        let etype = unsafe { dec.info_unchecked() }.etype;
+                        let etype = evt.info().etype;
 
                         // filtering out unwanted events but let Execve/Clone go as those are used
                         // for correlation on consumer side.
@@ -2709,7 +2613,7 @@ impl EventProducer {
                             continue;
                         }
 
-                        ep.pipe.push_back(dec);
+                        ep.pipe.push_back(evt);
                     }
 
                     // all threads wait here after some events have been collected
@@ -3517,7 +3421,7 @@ impl Command {
 
         // we start event reader and event processor before loading the programs
         // if we load the programs first we might have some event lost errors
-        let (sender, mut receiver) = mpsc::channel::<EncodedEvent>(512);
+        let (sender, mut receiver) = mpsc::channel::<EbpfEvent>(512);
 
         // we start consumer
         let mut cons = EventConsumer::with_config(conf.clone())?;
@@ -3529,13 +3433,13 @@ impl Command {
             #[cfg(debug_assertions)]
             let mut last_batch = 0;
 
-            while let Some(mut enc) = receiver.recv().await {
+            while let Some(evt) = receiver.recv().await {
                 // this is a debug_assertion testing that events arrive in
                 // the order they were generated in eBPF. At this time
                 // encoded event's timestamp is the one generated in eBPF
                 #[cfg(debug_assertions)]
                 {
-                    let info = unsafe { enc.info_unchecked() };
+                    let info = evt.info();
                     // we skip correlation (passe through events)
                     if !matches!(info.etype, Type::CacheHash) {
                         let evt_ts = info.timestamp;
@@ -3554,7 +3458,7 @@ impl Command {
                     }
                 };
 
-                cons.handle_event(&mut enc);
+                cons.handle_event(evt);
             }
 
             Ok::<(), anyhow::Error>(())
@@ -3576,7 +3480,7 @@ impl Command {
                         .new_event_with_data(Type::Start, ())
                         .inspect_err(|e| error!("failed at generating start event: {e}"))
                     {
-                        prod.pipe_event(start);
+                        prod.pipe_event(EbpfEvent::Start(Box::new(start)));
                     }
 
                     let arc_prod = prod.produce().await;
