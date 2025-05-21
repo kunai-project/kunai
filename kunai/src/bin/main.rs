@@ -14,7 +14,6 @@ use gene::rules::CompiledRule;
 use gene::{Compiler, Engine};
 use huby::ByteSize;
 use kunai::containers::Container;
-use kunai::events::StartData;
 use kunai::events::{
     agent::AgentEventInfo, BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData,
     ConnectData, DnsQueryData, ErrorData, EventInfo, ExecveData, ExitData, FileData,
@@ -22,6 +21,7 @@ use kunai::events::{
     MmapExecData, MprotectData, NetworkInfo, PrctlData, PtraceData, ScanResult, SendDataData,
     SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData, UserEvent,
 };
+use kunai::events::{IoUringOp, IoUringSqeData, StartData};
 use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
@@ -32,6 +32,7 @@ use kunai_common::bpf_events::{
     self, EbpfEvent, PrctlOption, Signal, TaskInfo, Type, MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::Filter;
+use kunai_common::io_uring::io_uring_op;
 use kunai_common::{inspect_err, kernel};
 
 use kunai_macros::StrEnum;
@@ -1390,6 +1391,31 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
+    fn io_uring_sqe_event(
+        &mut self,
+        info: StdEventInfo,
+        bpf_data: bpf_events::IoUringSqeData,
+    ) -> UserEvent<IoUringSqeData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+
+        let opcode = io_uring_op::try_from_uint(bpf_data.opcode)
+            .ok()
+            .map(|o| o.as_str());
+
+        let data = IoUringSqeData {
+            ancestors: self.get_ancestors_string(&info),
+            command_line,
+            exe: exe.into(),
+            op: IoUringOp {
+                code: bpf_data.opcode,
+                name: String::from(opcode.unwrap_or("?")),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
     fn error_event(
         &mut self,
         info: StdEventInfo,
@@ -2138,6 +2164,12 @@ impl EventConsumer<'_> {
                 if self.filter.is_enabled(ty) {
                     self.scan_and_print(&mut e);
                 }
+            }
+
+            EbpfEvent::IoUringSqe(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.io_uring_sqe_event(std_info, e.data);
+                self.scan_and_print(&mut e);
             }
 
             EbpfEvent::Error(e) => {
@@ -3052,6 +3084,7 @@ enum ReplayEvent {
     BpfProgLoad(UserEvent<BpfProgLoadData>),
     BpfSocketFilter(UserEvent<BpfSocketFilterData>),
     Exit(UserEvent<ExitData>),
+    IoUringSqe(UserEvent<IoUringSqeData>),
     FileScan(UserEvent<FileScanData>),
     Error(UserEvent<ErrorData>),
     #[allow(dead_code)]
@@ -3081,6 +3114,7 @@ impl ReplayEvent {
             Self::BpfProgLoad(u) => c.scan(u),
             Self::BpfSocketFilter(u) => c.scan(u),
             Self::Exit(u) => c.scan(u),
+            Self::IoUringSqe(u) => c.scan(u),
             Self::FileScan(u) => c.scan(u),
             Self::Error(u) => c.scan(u),
             // not scannable events
@@ -3108,6 +3142,7 @@ impl ReplayEvent {
             Self::BpfProgLoad(u) => c.scan_and_print(u),
             Self::BpfSocketFilter(u) => c.scan_and_print(u),
             Self::Exit(u) => c.scan_and_print(u),
+            Self::IoUringSqe(u) => c.scan_and_print(u),
             Self::FileScan(u) => c.scan_and_print(u),
             Self::Error(u) => c.scan_and_print(u),
             // not scannable events
@@ -3167,6 +3202,7 @@ impl TryFrom<serde_json::Value> for ReplayEvent {
                 event_enum!(BpfSocketFilterData, ReplayEvent::BpfSocketFilter)
             }
             Type::Exit | Type::ExitGroup => event_enum!(ExitData, ReplayEvent::Exit),
+            Type::IoUringSqe => event_enum!(IoUringSqeData, ReplayEvent::IoUringSqe),
             Type::FileScan => event_enum!(FileScanData, ReplayEvent::FileScan),
             Type::Error => event_enum!(ErrorData, ReplayEvent::Error),
             Type::Start => event_enum!(StartData, ReplayEvent::Start),

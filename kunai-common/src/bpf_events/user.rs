@@ -10,8 +10,8 @@ use crate::bpf_events::{CorrelationEvent, HashEvent};
 use super::{
     BpfProgLoadEvent, BpfSocketFilterEvent, CloneEvent, ConnectEvent, DnsQueryEvent, ErrorEvent,
     Event, EventInfo, ExecveEvent, ExitEvent, FileEvent, FileRenameEvent, InitModuleEvent,
-    KillEvent, LogEvent, LossEvent, MmapExecEvent, MprotectEvent, PrctlEvent, PtraceEvent,
-    ScheduleEvent, SendEntropyEvent, SysCoreResumeEvent, Type, UnlinkEvent,
+    IoUringSqeEvent, KillEvent, LogEvent, LossEvent, MmapExecEvent, MprotectEvent, PrctlEvent,
+    PtraceEvent, ScheduleEvent, SendEntropyEvent, SysCoreResumeEvent, Type, UnlinkEvent,
 };
 
 unsafe impl Pod for Type {}
@@ -69,6 +69,7 @@ pub enum EbpfEvent {
     File(Box<FileEvent>),
     FileRename(Box<FileRenameEvent>),
     Unlink(Box<UnlinkEvent>),
+    IoUringSqe(Box<IoUringSqeEvent>),
     // not configurable but filterable
     Error(Box<ErrorEvent>),
     Loss(Box<LossEvent>),
@@ -155,6 +156,7 @@ impl EbpfEvent {
             | Type::FileCreate => Ok(Self::File(Box::new(decode!(FileEvent)))),
             Type::FileRename => Ok(Self::FileRename(Box::new(decode!(FileRenameEvent)))),
             Type::FileUnlink => Ok(Self::Unlink(Box::new(decode!(UnlinkEvent)))),
+            Type::IoUringSqe => Ok(Self::IoUringSqe(Box::new(decode!(IoUringSqeEvent)))),
             // not configurable events
             Type::TaskSched => Ok(Self::Schedule(Box::new(decode!(ScheduleEvent)))),
             Type::Correlation => Ok(Self::Correlation(Box::new(decode!(CorrelationEvent)))),
@@ -194,6 +196,7 @@ impl EbpfEvent {
             Self::File(e) => &e.info,
             Self::FileRename(e) => &e.info,
             Self::Unlink(e) => &e.info,
+            Self::IoUringSqe(e) => &e.info,
             Self::Error(e) => &e.info,
             Self::Loss(e) => &e.info,
             Self::Start(e) => &e.info,
@@ -225,6 +228,7 @@ impl EbpfEvent {
             Self::File(e) => &mut e.info,
             Self::FileRename(e) => &mut e.info,
             Self::Unlink(e) => &mut e.info,
+            Self::IoUringSqe(e) => &mut e.info,
             Self::Error(e) => &mut e.info,
             Self::Loss(e) => &mut e.info,
             Self::Start(e) => &mut e.info,

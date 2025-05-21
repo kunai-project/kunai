@@ -1952,3 +1952,45 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn shim_kernel_clone_args_flags_exists(kernel_clone_args: *mut kernel_clone_args) -> bool;
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sqe_submit {
+    pub sqe: *const io_uring_sqe,
+}
+unsafe extern "C" {
+    pub fn shim_sqe_submit_sqe(sqe_submit: *mut sqe_submit) -> *const io_uring_sqe;
+}
+unsafe extern "C" {
+    pub fn shim_sqe_submit_sqe_user(sqe_submit: *mut sqe_submit) -> *const io_uring_sqe;
+}
+unsafe extern "C" {
+    pub fn shim_sqe_submit_sqe_exists(sqe_submit: *mut sqe_submit) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct io_uring_sqe {
+    pub opcode: __u8,
+}
+unsafe extern "C" {
+    pub fn shim_io_uring_sqe_opcode(io_uring_sqe: *mut io_uring_sqe) -> ::core::ffi::c_uchar;
+}
+unsafe extern "C" {
+    pub fn shim_io_uring_sqe_opcode_user(io_uring_sqe: *mut io_uring_sqe) -> ::core::ffi::c_uchar;
+}
+unsafe extern "C" {
+    pub fn shim_io_uring_sqe_opcode_exists(io_uring_sqe: *mut io_uring_sqe) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct io_kiocb {
+    pub opcode: u8_,
+}
+unsafe extern "C" {
+    pub fn shim_io_kiocb_opcode(io_kiocb: *mut io_kiocb) -> ::core::ffi::c_uchar;
+}
+unsafe extern "C" {
+    pub fn shim_io_kiocb_opcode_user(io_kiocb: *mut io_kiocb) -> ::core::ffi::c_uchar;
+}
+unsafe extern "C" {
+    pub fn shim_io_kiocb_opcode_exists(io_kiocb: *mut io_kiocb) -> bool;
+}

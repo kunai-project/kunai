@@ -1116,6 +1116,27 @@ impl Scannable for ExitData {
 
 impl_std_iocs!(ExitData);
 
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize)]
+pub struct IoUringOp {
+    pub code: u8,
+    pub name: String,
+}
+
+def_user_data!(
+    pub struct IoUringSqeData {
+        pub op: IoUringOp,
+    }
+);
+
+impl Scannable for IoUringSqeData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.path)]
+    }
+}
+
+impl_std_iocs!(IoUringSqeData);
+
 def_user_data!(
     pub struct ErrorData {
         pub code: u64,

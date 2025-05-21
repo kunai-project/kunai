@@ -35,3 +35,5 @@ pub mod time;
 pub mod config;
 
 pub mod version;
+
+pub mod io_uring;
