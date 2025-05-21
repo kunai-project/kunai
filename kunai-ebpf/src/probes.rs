@@ -25,6 +25,7 @@ mod execve;
 mod exit;
 mod fs;
 mod init_module;
+mod io_uring;
 mod kill;
 mod lsm;
 mod mmap;

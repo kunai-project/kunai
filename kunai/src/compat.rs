@@ -39,6 +39,7 @@ impl Compatibility {
         self.max.as_ref().unwrap_or(&KernelVersion::MAX_VERSION)
     }
 
+    /// Returns true if `with` [`KernelVersion`] is within range `[ self.min ; self.max]`
     fn is_compatible(&self, with: &KernelVersion) -> bool {
         self.min.as_ref().unwrap_or(&KernelVersion::MIN_VERSION) <= with
             && with <= self.max.as_ref().unwrap_or(&KernelVersion::MAX_VERSION)
@@ -67,7 +68,9 @@ impl<'a> Programs<'a> {
         let elf_info = ElfInfo::from_raw_elf(data)?;
         // prog_name is an Elf symbol name
         for (prog_name, prog) in self.m.iter_mut() {
-            prog.info = elf_info.get_by_symbol_name(prog_name).cloned()
+            if let Some(sym_info) = elf_info.get_by_symbol_name(prog_name) {
+                prog.with_sym_info(sym_info.clone());
+            }
         }
         Ok(self)
     }
@@ -135,6 +138,7 @@ impl TryFrom<LinkId> for LsmLinkId {
 pub struct Program<'a> {
     pub prio: u8,
     pub name: String,
+    pub attach_point: Option<String>,
     pub info: Option<SymbolInfo>,
     pub compat: Compatibility,
     pub program: &'a mut programs::Program,
@@ -149,6 +153,7 @@ impl<'a> Program<'a> {
         Program {
             prio: 50,
             name,
+            attach_point: None,
             info: None,
             program: p,
             compat: Compatibility::default(),
@@ -159,6 +164,17 @@ impl<'a> Program<'a> {
         }
     }
 
+    pub fn with_sym_info(&mut self, info: SymbolInfo) -> &mut Self {
+        self.info = Some(info);
+
+        self.attach_point = self
+            .info
+            .as_ref()
+            .and_then(|i| i.section_name.split('/').last().map(|s| s.to_string()));
+
+        self
+    }
+
     /* naturally decrease priority of exit kind of probes to remove map operations errors at BPF load time */
     pub fn prio_by_prog(&self) -> u8 {
         let program = self.prog();
@@ -166,7 +182,8 @@ impl<'a> Program<'a> {
         match program {
             programs::Program::TracePoint(_) => {
                 let kernel_attach = self
-                    .attach_point()
+                    .attach_point
+                    .as_ref()
                     .ok_or(Error::NoAttachFn(self.name.clone()))
                     .unwrap();
                 if kernel_attach.starts_with("sys_exit") {
@@ -186,18 +203,11 @@ impl<'a> Program<'a> {
         }
     }
 
-    /// Returns the name of the attach point in kernel land
-    #[inline]
-    fn attach_point(&self) -> Option<String> {
-        self.info
-            .as_ref()
-            .and_then(|i| i.section_name.split('/').last().map(|s| s.to_string()))
-    }
-
     /// Returns true if the attach point of program is `name`
     #[inline]
     pub fn has_attach_point<S: AsRef<str>>(&self, name: S) -> bool {
-        self.attach_point()
+        self.attach_point
+            .as_ref()
             .map(|a| a.as_str() == name.as_ref())
             .unwrap_or_default()
     }
@@ -237,18 +247,21 @@ impl<'a> Program<'a> {
         self.program
     }
 
+    /// Returns true if `kernel` [`KernelVersion`] is in range
+    /// `[ min_kernel ; max_kernel ]` configured for this [`Program`]
     pub fn is_compatible(&self, kernel: &KernelVersion) -> bool {
         self.compat.is_compatible(kernel)
     }
 
-    pub fn rename<T: AsRef<str>>(&mut self, new: T) {
-        self.name = new.as_ref().to_string();
-    }
-
-    pub fn rename_if<T: AsRef<str>>(&mut self, cond: bool, new: T) {
-        if cond {
-            self.rename(new)
+    pub fn change_attach_point_if<T: AsRef<str>>(
+        &mut self,
+        condition: bool,
+        new_attach_point: T,
+    ) -> &mut Self {
+        if condition {
+            self.attach_point = Some(new_attach_point.as_ref().to_string());
         }
+        self
     }
 
     pub fn enable(&mut self) -> &mut Self {
@@ -269,7 +282,7 @@ impl<'a> Program<'a> {
     }
 
     pub fn load(&mut self, btf: &Btf) -> Result<(), Error> {
-        let hook = self.attach_point();
+        let hook = self.attach_point.clone();
         let prog_name = self.name.clone();
         let program = self.prog_mut();
 
@@ -316,7 +329,7 @@ impl<'a> Program<'a> {
 
     pub fn attach(&mut self) -> Result<(), Error> {
         let program_name = self.name.clone();
-        let kernel_attach_fn = self.attach_point();
+        let kernel_attach_fn = self.attach_point.clone();
         let tracepoint_category = self.tracepoint_category();
         let program = self.prog_mut();
 

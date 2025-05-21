@@ -44,6 +44,8 @@ mod loss;
 pub use loss::*;
 mod status;
 pub use status::*;
+mod io_uring;
+pub use io_uring::*;
 
 // prevent using correlation event in bpf code
 not_bpf_target_code! {
@@ -91,6 +93,7 @@ const fn max_bpf_event_size() -> usize {
             | Type::FileCreate => FileEvent::size_of(),
             Type::FileRename => FileRenameEvent::size_of(),
             Type::FileUnlink => UnlinkEvent::size_of(),
+            Type::IoUringSqe => IoUringSqeEvent::size_of(),
             Type::Log => LogEvent::size_of(),
             Type::Start => StatusEvent::size_of(),
             Type::Loss => LossEvent::size_of(),

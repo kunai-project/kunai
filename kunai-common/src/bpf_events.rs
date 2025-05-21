@@ -118,6 +118,9 @@ pub enum Type {
     #[str("file_create")]
     FileCreate,
 
+    #[str("io_uring_sqe")]
+    IoUringSqe = 100,
+
     // specific userland events
     // those should never be used in eBPF
     #[str("file_scan")]
