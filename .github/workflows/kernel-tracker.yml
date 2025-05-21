@@ -16,42 +16,29 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         path: kunai
 
-    - name: Define Variable
-      run: |
-        LATEST_LINUX_VERSION=$(git ls-remote --tags https://github.com/torvalds/linux.git | grep -P 'refs/tags/v\d+\.\d+$' | awk '{print$NF}' | awk -F'/' '{print$NF}' | sort -V | tail -1)
-        echo "latest-linux-version=$LATEST_LINUX_VERSION" >> $GITHUB_ENV
-        
-    - name: Cache
-      id: cache-linux
-      uses: actions/cache@v4
+    - name: Checkout Linux Protos
+      uses: actions/checkout@v4
       with:
-        # A list of files, directories, and wildcard patterns to cache and restore
-        path: ./linux/
-        # An explicit key for restoring and saving the cache
-        key: cache-linux-${{ env.latest-linux-version }}
+        repository: kunai-project/linux-protos
+        path: ./linux-protos
 
-    - name: Clone Kernel
-      # run the stuff only if we failed at retrieve from cache
-      if: steps.cache-linux.outputs.cache-hit != 'true'
-      uses: actions/checkout@v3
-      with:
-        repository: torvalds/linux
-        ref: ${{ env.latest-linux-version }}
-        path: ./linux
-        
     - name: Test Kunai Hooks
       run: |
         set -euxo pipefail
-        # we get kernel functions prototypes
-        grep -oPR --include='*.h' --include='*.c' '^(\w+\s+)+\w+\(' ./linux | awk '{print$NF}' | tr -d '(' | sort -u > linux.sym
-        # we get kunai hook points (only kprobes for the moment)
-        grep -iPR '#\[k(ret)?probe.*\]' ./kunai/kunai-ebpf | grep -oP 'function\s+=\s+"\w+?"' | cut -d '"' -f 2 | sort -u > probes.sym
-        # we check that every function hooked in Kunai still exists in the kernel
-        for p in $(cat probes.sym);do grep -P "^$p$" linux.sym ;done
+
+        while read mp 
+        do
+            version=$(cut -d ':' -f 1 <<<$mp)
+            linux_protos="./linux-protos/protos/$version.txt.gz"
+            if [ -f $linux_protos ]
+            then
+                zgrep -F "$mp" $linux_protos
+            fi
+        done < <(grep -oPR --include='*.rs' 'match-proto:.*$' ./kunai/kunai-ebpf | cut -d ':' -f 3- | sort -V)
         
         
         
