@@ -26,7 +26,7 @@ jobs:
         repository: kunai-project/linux-protos
         path: ./linux-protos
 
-    - name: Test Kunai Hooks
+    - name: Test Kunai Hooks Prototypes
       run: |
         set -euxo pipefail
 
@@ -34,9 +34,11 @@ jobs:
         do
             version=$(cut -d ':' -f 1 <<<$mp)
             linux_protos="./linux-protos/protos/$version.txt.gz"
+            match=$(cut -d ':' -f 2- <<<$mp)
+
             if [ -f $linux_protos ]
             then
-                zgrep -F "$mp" $linux_protos
+                zgrep -F "$match" $linux_protos
             fi
         done < <(grep -oPR --include='*.rs' 'match-proto:.*$' ./kunai/kunai-ebpf | cut -d ':' -f 3- | sort -V)
         
