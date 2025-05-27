@@ -52,6 +52,9 @@ pub use core_files_struct::*;
 mod core_page;
 pub use core_page::*;
 
+mod core_io_uring;
+pub use core_io_uring::*;
+
 #[derive(Clone, Copy)]
 pub struct CoRe<P> {
     ptr: *const P,

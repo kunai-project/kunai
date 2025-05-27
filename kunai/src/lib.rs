@@ -31,7 +31,7 @@ const BPF_ELF: &[u8] = {
     d
 };
 
-/// function that responsible of probe priorities and compatibily across kernels
+/// Function managing probe priorities and compatibilities with kernels
 ///
 /// # Panic
 ///
@@ -83,6 +83,17 @@ fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVersio
 
     // mmap probe
     programs.expect_mut("syscalls_sys_enter_mmap").prio(90);
+
+    // io_uring probes
+    programs
+        .expect_mut("enter_io_submit_sqe")
+        .min_kernel(kernel!(5, 1))
+        .max_kernel(kernel!(5, 4));
+
+    programs
+        .expect_mut("enter_io_issue_sqe")
+        .min_kernel(kernel!(5, 5))
+        .change_attach_point_if(target > kernel!(6, 14), "__io_issue_sqe");
 
     // syscore_resume may be missing if kernel is compiled without CONFIG_PM_SLEEP
     // see: https://github.com/kunai-project/kunai/issues/105
