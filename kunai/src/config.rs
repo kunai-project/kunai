@@ -72,6 +72,7 @@ pub struct Config {
     pub workers: Option<usize>,
     pub send_data_min_len: Option<u64>,
     pub harden: bool,
+    pub force_load: bool,
     pub output: Output,
     pub scanner: Scanner,
     pub events: BTreeMap<bpf_events::Type, Event>,
@@ -94,17 +95,13 @@ impl Default for Config {
 
         Self {
             host_uuid: None,
-            output: Output {
-                path: "/dev/stdout".into(),
-                max_size: None,
-                rotate_size: None,
-                buffered: false,
-            },
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
             // this x2 rule generally works for small values of max_buffered_events
             max_eps_fs: Some(DEFAULT_MAX_BUFFERED_EVENTS as u64 * 2),
             workers: None,
             send_data_min_len: None,
+            harden: false,
+            force_load: false,
             scanner: Scanner {
                 rules: vec![],
                 iocs: vec![],
@@ -112,7 +109,12 @@ impl Default for Config {
                 min_severity: 0,
                 show_positive_file_scan: true,
             },
-            harden: false,
+            output: Output {
+                path: "/dev/stdout".into(),
+                max_size: None,
+                rotate_size: None,
+                buffered: false,
+            },
             events,
         }
     }
