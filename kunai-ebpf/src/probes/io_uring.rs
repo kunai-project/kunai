@@ -13,8 +13,9 @@ use kunai_common::co_re::{io_kiocb, sqe_submit};
 // match-proto:v5.10:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, bool force_nonblock, struct io_comp_state *cs)
 // match-proto:v5.12:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
 // match-proto:v6.0:io_uring/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
-// match-proto:latest:io_uring/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
-// match-proto:v6.15:UNTESTED
+// match-proto:v6.15:io_uring/io_uring.c:static inline int __io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags, const struct io_issue_def *def)
+// match-proto:latest:io_uring/io_uring.c:static inline int __io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags, const struct io_issue_def *def)
+// match-proto:v6.16:UNTESTED
 #[kprobe(function = "io_issue_sqe")]
 pub fn enter_io_issue_sqe(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
