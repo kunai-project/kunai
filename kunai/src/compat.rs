@@ -93,7 +93,7 @@ impl<'a> Programs<'a> {
 
     pub fn sorted_by_prio(&mut self) -> Vec<(&String, &mut Program<'a>)> {
         let mut sorted = self.m.iter_mut().collect::<Vec<_>>();
-        sorted.sort_unstable_by_key(|(_, p)| p.prio_by_prog());
+        sorted.sort_unstable_by_key(|(_, p)| (p.prio_by_prog(), p.name.clone()));
         sorted
     }
 }
