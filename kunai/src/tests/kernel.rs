@@ -70,6 +70,7 @@ fn integration() -> anyhow::Result<()> {
     }
 
     // we have lsm loading failure under aarch64 for kernel < 6.4.x
+    // https://blog.exein.io/exploring-bpf-lsm-support-on-aarch64-with-ftrace/
     if cfg!(target_arch = "aarch64") && current_kernel < kernel!(6, 4, 0) {
         conf.harden = false
     }

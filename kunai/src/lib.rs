@@ -91,10 +91,13 @@ fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVersio
         .max_kernel(kernel!(5, 4));
 
     programs
-        .expect_mut("enter_io_issue_sqe")
-        .min_kernel(kernel!(5, 5))
-        // we need to hook another function to have all SQEs since v6.15: https://elixir.bootlin.com/linux/v6.15/source/io_uring/io_uring.c#L1717
-        .change_attach_point_if(target > kernel!(6, 14), "__io_issue_sqe");
+        .expect_mut("io_uring_enter_io_issue_sqe")
+        .min_kernel(kernel!(5, 5));
+
+    // we need to hook another function to have all SQEs since v6.15: https://elixir.bootlin.com/linux/v6.15/source/io_uring/io_uring.c#L1779
+    programs
+        .expect_mut("io_uring_enter_io_poll_issue")
+        .min_kernel(kernel!(6, 15));
 
     // syscore_resume may be missing if kernel is compiled without CONFIG_PM_SLEEP
     // see: https://github.com/kunai-project/kunai/issues/105
