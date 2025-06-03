@@ -9,7 +9,7 @@ use aya::{
 use compat::Programs;
 use config::Config;
 use kunai_common::{config::BpfConfig, kernel, version::KernelVersion};
-use log::{info, warn};
+use log::{debug, error, info, warn};
 use util::{page_shift, page_size};
 
 pub mod cache;
@@ -206,6 +206,20 @@ pub fn load_and_attach_bpf<'a>(
         {
             warn!("syscore_resume probe has failed to load, make sure your kernel is compiled without CONFIG_PM_SLEEP")
         }
+
+        let _ = r.inspect_err(|e| {
+            if let Some(a) = p.attach_point.as_ref() {
+                error!("failed to attach probe={} to function={}: verify function exists in your kernel", &p.name, &a)
+            } else {
+                error!("failed to attach probe={}", &p.name)
+            }
+
+            debug!("error for attach failure: {e}");
+
+            if !conf.force_load {
+                panic!("failed to attach probe={}: {e}", &p.name)
+            }
+        });
     }
 
     Ok(())

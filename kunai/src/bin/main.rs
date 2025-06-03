@@ -2853,6 +2853,10 @@ struct RunOpt {
     #[arg(long)]
     harden: bool,
 
+    /// Force Kunai eBPF probes loading by bypassing any panic due to load failure.
+    #[arg(long)]
+    force_load: bool,
+
     /// Exclude events by name (comma separated).
     #[arg(long)]
     exclude: Option<String>,
@@ -2923,6 +2927,11 @@ impl TryFrom<RunOpt> for Config {
         // supersedes configuration if true
         if opt.harden {
             conf.harden = opt.harden
+        }
+
+        // supersedes configuration if true
+        if opt.force_load {
+            conf.force_load = opt.force_load
         }
 
         // we want to increase max_buffered_events

@@ -55,7 +55,7 @@ fn integration() -> anyhow::Result<()> {
     info!("mounting securityfs");
     mount("none", "/sys/kernel/security", "securityfs")?;
 
-    let conf = Config::default_hardened();
+    let mut conf = Config::default_hardened();
 
     if conf.harden {
         if current_kernel < kernel!(5, 7, 0) {
@@ -67,6 +67,11 @@ fn integration() -> anyhow::Result<()> {
                 "trying to run in hardened mode but BPF LSM is not enabled"
             ));
         }
+    }
+
+    // we have lsm loading failure under aarch64 for kernel < 6.4.x
+    if cfg!(target_arch = "aarch64") && current_kernel < kernel!(6, 4, 0) {
+        conf.harden = false
     }
 
     info!("loading ebpf bytes");
