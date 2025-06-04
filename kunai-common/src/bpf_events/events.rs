@@ -71,7 +71,6 @@ const fn max_bpf_event_size() -> usize {
         }
         let size = match variants[i] {
             Type::Execve | Type::ExecveScript => ExecveEvent::size_of(),
-            Type::TaskSched => ScheduleEvent::size_of(),
             Type::Exit | Type::ExitGroup => ExitEvent::size_of(),
             Type::Clone => CloneEvent::size_of(),
             Type::Prctl => PrctlEvent::size_of(),

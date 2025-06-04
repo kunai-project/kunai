@@ -154,8 +154,6 @@ pub enum Type {
 
     // specific events which are never displayed
     // do not need a fixed identifier
-    #[str("task_sched")]
-    TaskSched,
     #[str("correlation")]
     Correlation,
     #[str("cache_hash")]
