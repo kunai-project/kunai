@@ -39,4 +39,5 @@
     "target_arch=bpf",
     "target_arch=x86_64",
   ],
+  "rust-analyzer.checkOnSave": true
 }
