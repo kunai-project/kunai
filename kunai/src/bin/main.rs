@@ -2207,7 +2207,6 @@ impl EventConsumer<'_> {
             }
 
             EbpfEvent::SysCoreResume(_) => { /*  just ignore it */ }
-            EbpfEvent::Schedule(_) => { /*  just ignore it */ }
         }
     }
 }
@@ -3223,7 +3222,6 @@ impl TryFrom<serde_json::Value> for ReplayEvent {
             | Type::Correlation
             | Type::Log
             | Type::EndConfigurable
-            | Type::TaskSched
             | Type::SyscoreResume
             | Type::Max => Err(anyhow!("event type={t} not handled")),
         }

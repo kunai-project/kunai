@@ -32,7 +32,6 @@ mod mmap;
 mod mprotect;
 mod prctl;
 mod ptrace;
-mod schedule;
 mod send_data;
 mod syscore_resume;
 
