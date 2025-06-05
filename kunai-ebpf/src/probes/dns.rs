@@ -100,6 +100,8 @@ unsafe fn is_dns_dst(sock: &co_re::sock) -> Result<bool, ProbeError> {
     Ok(dst.port() == 53)
 }
 
+/// match-proto:v5.0:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+/// match-proto:latest:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 #[kprobe(function = "vfs_read")]
 pub fn net_dns_enter_vfs_read(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -141,6 +143,8 @@ unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+/// match-proto:v5.0:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+/// match-proto:latest:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 #[kretprobe(function = "vfs_read")]
 pub fn net_dns_exit_vfs_read(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -195,6 +199,8 @@ unsafe fn try_exit_vfs_read(ctx: &RetProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+/// match-proto:v5.0:net/socket.c:int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags, struct sockaddr __user *addr, int __user *addr_len)
+/// match-proto:latest:net/socket.c:int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags, struct sockaddr __user *addr, int __user *addr_len)
 #[kprobe(function = "__sys_recvfrom")]
 pub fn net_dns_enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -243,6 +249,8 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+/// match-proto:v5.0:net/socket.c:int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags, struct sockaddr __user *addr, int __user *addr_len)
+/// match-proto:latest:net/socket.c:int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags, struct sockaddr __user *addr, int __user *addr_len)
 #[kretprobe(function = "__sys_recvfrom")]
 pub fn net_dns_exit_sys_recvfrom(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -307,6 +315,8 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+/// match-proto:v5.0:net/socket.c:long __sys_recvmsg(int fd, struct user_msghdr __user *msg, unsigned int flags, bool forbid_cmsg_compat)
+/// match-proto:latest:net/socket.c:long __sys_recvmsg(int fd, struct user_msghdr __user *msg, unsigned int flags, bool forbid_cmsg_compat)
 #[kprobe(function = "__sys_recvmsg")]
 pub fn net_dns_enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -354,6 +364,8 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+/// match-proto:v5.0:net/socket.c:long __sys_recvmsg(int fd, struct user_msghdr __user *msg, unsigned int flags, bool forbid_cmsg_compat)
+/// match-proto:latest:net/socket.c:long __sys_recvmsg(int fd, struct user_msghdr __user *msg, unsigned int flags, bool forbid_cmsg_compat)
 #[kretprobe(function = "__sys_recvmsg")]
 pub fn net_dns_exit_sys_recvmsg(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {

@@ -2,6 +2,8 @@ use aya_ebpf::{cty::c_uint, programs::ProbeContext};
 
 use super::*;
 
+/// match-proto:v5.0:security/security.c:int security_ptrace_access_check(struct task_struct *child, unsigned int mode)
+/// match-proto:latest:security/security.c:int security_ptrace_access_check(struct task_struct *child, unsigned int mode)
 #[kprobe(function = "security_ptrace_access_check")]
 pub fn kprobe_ptrace_access_check(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {

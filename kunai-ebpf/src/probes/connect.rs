@@ -10,6 +10,8 @@ use kunai_common::{
     net::{SockAddr, SocketInfo},
 };
 
+/// match-proto:v5.0:net/socket.c:int __sys_connect(int fd, struct sockaddr __user *uservaddr, int addrlen)
+/// match-proto:latest:net/socket.c:int __sys_connect(int fd, struct sockaddr __user *uservaddr, int addrlen)
 #[kprobe(function = "__sys_connect")]
 pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -20,6 +22,8 @@ pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
     0
 }
 
+/// match-proto:v5.0:net/socket.c:int __sys_connect(int fd, struct sockaddr __user *uservaddr, int addrlen)
+/// match-proto:latest:net/socket.c:int __sys_connect(int fd, struct sockaddr __user *uservaddr, int addrlen)
 #[kretprobe(function = "__sys_connect")]
 pub fn net_exit_sys_connect(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {

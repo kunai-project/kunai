@@ -160,6 +160,8 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
     Ok(false)
 }
 
+/// match-proto:v5.0:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+/// match-proto:latest:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 #[kprobe(function = "vfs_read")]
 pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -175,6 +177,9 @@ pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
     }
 }
 
+/// match-proto:v5.0:fs/read_write.c:ssize_t vfs_readv(struct file *file, const struct iovec __user *vec, unsigned long vlen, loff_t *pos, rwf_t flags)
+/// match-proto:v5.10:fs/read_write.c:static ssize_t vfs_readv(struct file *file, const struct iovec __user *vec, unsigned long vlen, loff_t *pos, rwf_t flags)
+/// match-proto:latest:fs/read_write.c:static ssize_t vfs_readv(struct file *file, const struct iovec __user *vec, unsigned long vlen, loff_t *pos, rwf_t flags)
 #[kprobe(function = "vfs_readv")]
 pub fn fs_vfs_readv(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -235,6 +240,8 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+/// match-proto:v5.0:fs/read_write.c:ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_t *pos)
+/// match-proto:latest:fs/read_write.c:ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_t *pos)
 #[kprobe(function = "vfs_write")]
 pub fn fs_vfs_write(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -250,6 +257,8 @@ pub fn fs_vfs_write(ctx: ProbeContext) -> u32 {
     }
 }
 
+/// match-proto:v5.0:fs/read_write.c:static ssize_t vfs_writev(struct file *file, const struct iovec __user *vec, unsigned long vlen, loff_t *pos, rwf_t flags)
+/// match-proto:latest:fs/read_write.c:static ssize_t vfs_writev(struct file *file, const struct iovec __user *vec, unsigned long vlen, loff_t *pos, rwf_t flags)
 #[kprobe(function = "vfs_writev")]
 pub fn fs_vfs_writev(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -311,6 +320,8 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
+/// match-proto:v5.0:security/security.c:int security_path_rename(const struct path *old_dir, struct dentry *old_dentry, const struct path *new_dir, struct dentry *new_dentry, unsigned int flags)
+/// match-proto:latest:security/security.c:int security_path_rename(const struct path *old_dir, struct dentry *old_dentry, const struct path *new_dir, struct dentry *new_dentry, unsigned int flags)
 #[kprobe(function = "security_path_rename")]
 pub fn fs_security_path_rename(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -380,6 +391,8 @@ unsafe fn try_security_path_rename(ctx: &ProbeContext) -> ProbeResult<()> {
 #[map]
 static mut PATHS: LruHashMap<u128, Path> = LruHashMap::with_max_entries(4096, 0);
 
+/// match-proto:v5.0:security/security.c:int security_path_unlink(const struct path *dir, struct dentry *dentry)
+/// match-proto:latest:security/security.c:int security_path_unlink(const struct path *dir, struct dentry *dentry)
 #[kprobe(function = "security_path_unlink")]
 pub fn fs_security_path_unlink(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -417,10 +430,15 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-// we have to hook into vfs_unlink (called by do_unlinkat) and recovering
-// path argument from the security_path_unlink call happening before.
-// do_unlinkat cannot be hooked at ret as path/dentry we wanna parse
-// seems to be cleaned up and cannot be parsed correctly.
+/// we have to hook into vfs_unlink (called by do_unlinkat) and recovering
+/// path argument from the security_path_unlink call happening before.
+/// do_unlinkat cannot be hooked at ret as path/dentry we wanna parse
+/// seems to be cleaned up and cannot be parsed correctly.
+///
+/// match-proto:v5.0:fs/namei.c:int vfs_unlink(struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
+/// match-proto:v5.12:fs/namei.c:int vfs_unlink(struct user_namespace *mnt_userns, struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
+/// match-proto:v6.3:fs/namei.c:int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
+/// match-proto:latest:fs/namei.c:int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
 #[kretprobe(function = "vfs_unlink")]
 pub fn fs_exit_vfs_unlink(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -479,6 +497,9 @@ unsafe fn try_vfs_unlink(ctx: &RetProbeContext) -> ProbeResult<()> {
 /// a case it is probable events generated appear after
 /// task has terminated. If that is the case there is
 /// not much we can do for event re-ordering.
+///
+/// match-proto:v5.0:fs/file_table.c:void fput(struct file *file)
+/// match-proto:latest:fs/file_table.c:void fput(struct file *file)
 #[kprobe(function = "fput")]
 pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -496,6 +517,9 @@ pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
 
 /// this is the synchronous version of fput. This
 /// function gets called by the close syscall
+///
+/// match-proto:v5.0:fs/file_table.c:void __fput_sync(struct file *file)
+/// match-proto:latest:fs/file_table.c:void __fput_sync(struct file *file)
 #[kprobe(function = "__fput_sync")]
 pub fn fs_enter_fput_sync(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -577,7 +601,10 @@ unsafe fn try_enter_fput(ctx: &ProbeContext) -> ProbeResult<()> {
 
 const FMODE_CREATED: u32 = 0x100000;
 
-// this probe aims at catching file creation event
+/// this probe aims at catching file creation event
+///
+/// match-proto:v5.0:security/security.c:int security_file_open(struct file *file)
+/// match-proto:latest:security/security.c:int security_file_open(struct file *file)
 #[kprobe(function = "security_file_open")]
 pub fn fs_security_file_open(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {

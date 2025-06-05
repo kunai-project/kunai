@@ -28,7 +28,7 @@ jobs:
 
     - name: Test Kunai Hooks Prototypes
       run: |
-        set -euxo pipefail
+        set -euo pipefail
 
         while read mp 
         do
@@ -37,7 +37,7 @@ jobs:
             match=$(cut -d ':' -f 2- <<<$mp)
 
             if [ -f $linux_protos ]
-            then
+            then 
                 zgrep -F "$match" $linux_protos
             fi
         done < <(grep -oPR --include='*.rs' 'match-proto:.*$' ./kunai/kunai-ebpf | cut -d ':' -f 3- | sort -V)

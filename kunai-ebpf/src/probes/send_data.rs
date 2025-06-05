@@ -1,3 +1,10 @@
+//! Experimental probe to detect encrypted trafic based
+//! on packet entropy. The idea is that hooking into SSL/TLS
+//! with uprobes requires a lot of effort and is not guaranteed to
+//! work all the time (static compilation for instance). So the
+//! idea came of a more generic event giving more high level information,
+//! such as the shannon entropy, of the data sent over the network.
+
 use super::*;
 use aya_ebpf::programs::ProbeContext;
 use kunai_common::{
@@ -5,15 +12,8 @@ use kunai_common::{
     net::{SaFamily, SockAddr, SocketInfo},
 };
 
-/*
-Experimental probe to detect encrypted trafic based
-on packet entropy. The idea is that hooking into SSL/TLS
-with uprobes requires a lot of effort and is not guaranteed to
-work all the time (static compilation for instance). So the
-idea came of a more generic event giving more high level information,
-such as the shannon entropy, of the data sent over the network.
- */
-
+/// match-proto:v5.0:security/security.c:int security_socket_sendmsg(struct socket *sock, struct msghdr *msg, int size)
+/// match-proto:latest:security/security.c:int security_socket_sendmsg(struct socket *sock, struct msghdr *msg, int size)
 #[kprobe(function = "security_socket_sendmsg")]
 pub fn net_security_socket_sendmsg(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
