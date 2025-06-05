@@ -170,7 +170,7 @@ impl<'a> Program<'a> {
         self.attach_point = self
             .info
             .as_ref()
-            .and_then(|i| i.section_name.split('/').last().map(|s| s.to_string()));
+            .and_then(|i| i.section_name.split('/').next_back().map(|s| s.to_string()));
 
         self
     }
