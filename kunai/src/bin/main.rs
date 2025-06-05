@@ -2954,7 +2954,7 @@ impl TryFrom<RunOpt> for Config {
         // we exclude events
         if let Some(exclude) = opt.exclude {
             let exclude: Vec<&str> = exclude.split(',').collect();
-            if exclude.iter().any(|&s| s == "all") {
+            if exclude.contains(&"all") {
                 conf.disable_all()
             } else {
                 for exc in exclude {
@@ -2969,7 +2969,7 @@ impl TryFrom<RunOpt> for Config {
         // we include events
         if let Some(include) = opt.include {
             let include: Vec<&str> = include.split(',').collect();
-            if include.iter().any(|&s| s == "all") {
+            if include.contains(&"all") {
                 conf.enable_all()
             } else {
                 for inc in include {
