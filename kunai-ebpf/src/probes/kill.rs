@@ -2,6 +2,8 @@ use aya_ebpf::{cty::c_int, programs::ProbeContext};
 
 use super::*;
 
+/// match-proto:v5.0:security/security.c:int security_task_kill(struct task_struct *p, struct kernel_siginfo *info, int sig, const struct cred *cred)
+/// match-proto:latest:security/security.c:int security_task_kill(struct task_struct *p, struct kernel_siginfo *info, int sig, const struct cred *cred)
 #[kprobe(function = "security_task_kill")]
 pub fn enter_security_task_kill(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {

@@ -12,10 +12,12 @@ const MAP_SIZE: u32 = 2048;
 static mut EXECVE_TRACKING: LruHashMap<u128, ExecveEvent> =
     LruHashMap::with_max_entries(MAP_SIZE, 0);
 
-// this guy gives us the real executable path (i.e. a script for instance)
-// we need to hook at another point in order to get the interpreter. For
-// instance at exit of bprm_execve.
-
+/// this guy gives us the real executable path (i.e. a script for instance)
+/// we need to hook at another point in order to get the interpreter. For
+/// instance at exit of bprm_execve.
+///
+/// match-proto:v5.0:security/security.c:int security_bprm_check(struct linux_binprm *bprm)
+/// match-proto:latest:security/security.c:int security_bprm_check(struct linux_binprm *bprm)
 #[kprobe(function = "security_bprm_check")]
 pub fn execve_security_bprm_check(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -75,9 +77,12 @@ unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
 static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
     LruHashMap::with_max_entries(MAP_SIZE, 0);
 
-// for kernel < 5.9 bprm_execve does not exists, we must replace the hook
-// by __do_execve_file (done in program loader)
-
+/// for kernel < 5.9 bprm_execve does not exists, we must replace the hook
+/// by __do_execve_file (done in program loader)
+///
+/// match-proto:v5.9:fs/exec.c:static int bprm_execve(struct linux_binprm *bprm, int fd, struct filename *filename, int flags)
+/// match-proto:v6.8:fs/exec.c:static int bprm_execve(struct linux_binprm *bprm)
+/// match-proto:latest:fs/exec.c:static int bprm_execve(struct linux_binprm *bprm)
 #[kretprobe(function = "bprm_execve")]
 pub fn execve_exit_bprm_execve(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {

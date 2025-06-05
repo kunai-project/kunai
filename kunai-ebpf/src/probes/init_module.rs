@@ -8,6 +8,9 @@ use kunai_common::syscalls::{SysEnterArgs, SysExitArgs};
 static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
     LruHashMap::with_max_entries(1024, 0);
 
+/// match-proto:v5.0:kernel/module.c:static int mod_sysfs_setup(struct module *mod, const struct load_info *info, struct kernel_param *kparam, unsigned int num_params)
+/// match-proto:v5.19:kernel/module/sysfs.c:int mod_sysfs_setup(struct module *mod, const struct load_info *info, struct kernel_param *kparam, unsigned int num_params)
+/// match-proto:latest:kernel/module/sysfs.c:int mod_sysfs_setup(struct module *mod, const struct load_info *info, struct kernel_param *kparam, unsigned int num_params)
 #[kprobe(function = "mod_sysfs_setup")]
 pub fn lkm_mod_sysfs_setup(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
