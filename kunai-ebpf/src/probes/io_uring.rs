@@ -5,7 +5,7 @@ use kunai_common::co_re::{io_kiocb, sqe_submit};
 /// In order to find the appropriate attach point for this
 /// probe search for the call to `audit_uring_entry` in kernel
 /// souce code and attach to the caller.
-
+///
 /// For kernels in [ 5.5; 6.14 ]
 /// match-proto:v5.5:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe, struct io_kiocb **nxt, bool force_nonblock)
 /// match-proto:v5.7:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe, bool force_nonblock)
@@ -62,7 +62,7 @@ unsafe fn try_io_issue_sqe(ctx: &ProbeContext) -> ProbeResult<()> {
 }
 
 /// For kernels in [5.1; 5.4]
-/// 
+///
 /// match-proto:v5.1:fs/io_uring.c:static int __io_submit_sqe(struct io_ring_ctx *ctx, struct io_kiocb *req, const struct sqe_submit *s, bool force_nonblock)
 #[kprobe(function = "__io_submit_sqe")]
 pub fn enter_io_submit_sqe(ctx: ProbeContext) -> u32 {
