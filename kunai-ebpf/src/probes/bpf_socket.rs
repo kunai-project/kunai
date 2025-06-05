@@ -3,6 +3,8 @@ use kunai_common::{co_re::sock_fprog_kern, kprobe::ProbeFn, net::SocketInfo};
 
 use super::*;
 
+/// match-proto:v5.0:net/core/filter.c:static int __sk_attach_prog(struct bpf_prog *prog, struct sock *sk)
+/// match-proto:latest:net/core/filter.c:static int __sk_attach_prog(struct bpf_prog *prog, struct sock *sk)
 #[kprobe(function = "__sk_attach_prog")]
 pub fn sk_enter_sk_attach_prog(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -13,6 +15,8 @@ pub fn sk_enter_sk_attach_prog(ctx: ProbeContext) -> u32 {
     0
 }
 
+/// match-proto:v5.0:net/core/filter.c:static int __sk_attach_prog(struct bpf_prog *prog, struct sock *sk)
+/// match-proto:latest:net/core/filter.c:static int __sk_attach_prog(struct bpf_prog *prog, struct sock *sk)
 #[kretprobe(function = "__sk_attach_prog")]
 pub fn sk_exit_sk_attach_prog(exit_ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -43,6 +47,8 @@ pub fn sk_exit_sk_attach_prog(exit_ctx: RetProbeContext) -> u32 {
     rc
 }
 
+/// match-proto:v5.0:net/core/sock_reuseport.c:int reuseport_attach_prog(struct sock *sk, struct bpf_prog *prog)
+/// match-proto:latest:net/core/sock_reuseport.c:int reuseport_attach_prog(struct sock *sk, struct bpf_prog *prog)
 #[kprobe(function = "reuseport_attach_prog")]
 pub fn sk_enter_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
@@ -53,6 +59,8 @@ pub fn sk_enter_reuseport_attach_prog(ctx: ProbeContext) -> u32 {
     0
 }
 
+/// match-proto:v5.0:net/core/sock_reuseport.c:int reuseport_attach_prog(struct sock *sk, struct bpf_prog *prog)
+/// match-proto:latest:net/core/sock_reuseport.c:int reuseport_attach_prog(struct sock *sk, struct bpf_prog *prog)
 #[kretprobe(function = "reuseport_attach_prog")]
 pub fn sk_exit_reuseport_attach_prog(exit_ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
