@@ -37,7 +37,8 @@ jobs:
             match=$(cut -d ':' -f 2- <<<$mp)
 
             if [ -f $linux_protos ]
-            then 
+            then
+                echo "searching: $mp" 
                 zgrep -F "$match" $linux_protos
             fi
         done < <(grep -oPR --include='*.rs' 'match-proto:.*$' ./kunai/kunai-ebpf | cut -d ':' -f 3- | sort -V)

@@ -1,12 +1,11 @@
 use super::*;
 use aya_ebpf::programs::ProbeContext;
 use kunai_common::co_re::{io_kiocb, sqe_submit};
-
 /// In order to find the appropriate attach point for this
 /// probe search for the call to `audit_uring_entry` in kernel
 /// souce code and attach to the caller.
 ///
-/// For kernels in [ 5.5; 6.14 ]
+/// For kernels in >= 5.5
 /// match-proto:v5.5:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe, struct io_kiocb **nxt, bool force_nonblock)
 /// match-proto:v5.7:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe, bool force_nonblock)
 /// match-proto:v5.9:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe, bool force_nonblock, struct io_comp_state *cs)
@@ -14,18 +13,20 @@ use kunai_common::co_re::{io_kiocb, sqe_submit};
 /// match-proto:v5.12:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
 /// match-proto:v6.0:io_uring/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
 /// match-proto:latest:io_uring/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
-/// match-proto:v6.16:UNTESTED
+/// match-proto:v6.17:UNTESTED
 #[kprobe(function = "io_issue_sqe")]
 pub fn io_uring_enter_io_issue_sqe(ctx: ProbeContext) -> u32 {
     handle_issue_sqe(ctx)
 }
 
-/// This probe must be used only from v6.15 and must
-/// be disabled prior to this version.
+/// Since v6.15 io_uring audit is done in an inline function __io_issue_sqe.
+/// This function is used in two places io_issue_sqe and io_poll_issue.
+/// io_poll_issue probe must be disabled prior to v6.15.
 ///
 /// match-proto:v6.15:io_uring/io_uring.c:int io_poll_issue(struct io_kiocb *req, io_tw_token_t tw)
+/// match-proto:v6.16:io_uring/io_uring.c:int io_poll_issue(struct io_kiocb *req, io_tw_token_t tw)
 /// match-proto:latest:io_uring/io_uring.c:int io_poll_issue(struct io_kiocb *req, io_tw_token_t tw)
-/// match-proto:v6.16:UNTESTED
+/// match-proto:v6.17:UNTESTED
 #[kprobe(function = "io_poll_issue")]
 pub fn io_uring_enter_io_poll_issue(ctx: ProbeContext) -> u32 {
     handle_issue_sqe(ctx)
