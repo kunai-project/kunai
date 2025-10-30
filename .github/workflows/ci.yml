@@ -83,16 +83,6 @@ jobs:
         sudo apt update
         sudo apt install -y ${{ matrix.packages }} libbpf-dev
     
-    - name: Build tools versions
-      run: |
-        echo "Clang version"
-        clang --version
-        echo 
-
-        echo "bpf-linker version"
-        bpf-linker -V
-
-        
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
       uses: actions/cache@v4
@@ -102,6 +92,15 @@ jobs:
           ~/.rustup
           target
         key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+
+    - name: Build tools versions
+      run: |
+        echo "Clang version"
+        clang --version
+        echo 
+
+        echo "bpf-linker version"
+        bpf-linker -V
       
     - name: Set kernel cache key
       run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
