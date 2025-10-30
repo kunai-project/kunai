@@ -1790,9 +1790,10 @@ impl EventConsumer<'_> {
         if !self.engine.is_empty() {
             opt_scan_result = match self.engine.scan(event) {
                 Ok(sr) => sr.map(ScanResult::from),
-                Err((sr, e)) => {
+                Err(b) => {
+                    let (sr, e) = b.as_ref();
                     error!("event scanning error: {e}");
-                    sr.map(ScanResult::from)
+                    sr.clone().map(ScanResult::from)
                 }
             };
         }

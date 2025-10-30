@@ -1093,9 +1093,9 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "gene"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01519044cb865394dbd034af582e499650983f2a1a7ae16efa219e40a952d952"
+checksum = "e5258f7530cef14f51ab6b5fbb34b4db54a129ac1f93d9169c6d8150408a1c8b"
 dependencies = [
  "gene_derive",
  "lazy_static",
