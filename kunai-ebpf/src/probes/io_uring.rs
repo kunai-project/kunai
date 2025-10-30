@@ -13,7 +13,7 @@ use kunai_common::co_re::{io_kiocb, sqe_submit};
 /// match-proto:v5.12:fs/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
 /// match-proto:v6.0:io_uring/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
 /// match-proto:latest:io_uring/io_uring.c:static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
-/// match-proto:v6.17:UNTESTED
+/// match-proto:v6.18:UNTESTED
 #[kprobe(function = "io_issue_sqe")]
 pub fn io_uring_enter_io_issue_sqe(ctx: ProbeContext) -> u32 {
     handle_issue_sqe(ctx)
@@ -24,9 +24,8 @@ pub fn io_uring_enter_io_issue_sqe(ctx: ProbeContext) -> u32 {
 /// io_poll_issue probe must be disabled prior to v6.15.
 ///
 /// match-proto:v6.15:io_uring/io_uring.c:int io_poll_issue(struct io_kiocb *req, io_tw_token_t tw)
-/// match-proto:v6.16:io_uring/io_uring.c:int io_poll_issue(struct io_kiocb *req, io_tw_token_t tw)
 /// match-proto:latest:io_uring/io_uring.c:int io_poll_issue(struct io_kiocb *req, io_tw_token_t tw)
-/// match-proto:v6.17:UNTESTED
+/// match-proto:v6.18:UNTESTED
 #[kprobe(function = "io_poll_issue")]
 pub fn io_uring_enter_io_poll_issue(ctx: ProbeContext) -> u32 {
     handle_issue_sqe(ctx)
