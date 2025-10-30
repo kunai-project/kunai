@@ -50,7 +50,7 @@ jobs:
       run: cargo xtask clippy -- --workspace -- -D warnings
 
     - name: Install bpf-linker
-      run: cargo install bpf-linker
+      run: cargo install --version 0.9.14 bpf-linker
 
     - name: Build (eBPF and userland)
       env: 
@@ -82,6 +82,16 @@ jobs:
       run: |
         sudo apt update
         sudo apt install -y ${{ matrix.packages }} libbpf-dev
+    
+    - name: Build tools versions
+      run: |
+        echo "Clang version"
+        clang --version
+        echo 
+
+        echo "bpf-linker version"
+        bpf-linker -V
+
         
     # we need to fetch rust deps first to speed up cargo xtask
     - name: Cache Rust dependencies
