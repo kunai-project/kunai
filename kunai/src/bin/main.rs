@@ -3374,11 +3374,17 @@ impl Command {
 
             let mut de = serde_json::Deserializer::from_reader(reader);
 
-            while let Ok(v) = serde_json::Value::deserialize(&mut de) {
+            while let Ok(mut v) = serde_json::Value::deserialize(&mut de) {
                 // we need to know the size of the data we scan to compute throughput
                 if bench {
                     data_size += ByteSize::from_bytes(serde_json::to_string(&v)?.len() as u64);
                 }
+
+                // we remove any prior filter/detection sections
+                if let serde_json::Value::Object(map) = &mut v {
+                    map.remove("filter");
+                    map.remove("detection");
+                };
 
                 let mut e = ReplayEvent::try_from(v.clone())?;
                 if bench {
