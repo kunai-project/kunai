@@ -278,10 +278,18 @@ impl Path {
             }
         };
 
-        // bound checking
-        if i < self.buffer.len() {
-            return Ok(unsafe { *self.buffer.get_unchecked(i) });
-        }
+        bpf_target_code! {
+            let i = i as i64;
+            if aya_ebpf::check_bounds_signed(i, 0, self.buffer.len() as i64) {
+                return Ok(unsafe { *self.buffer.get_unchecked(i as usize) });
+            }
+        };
+
+        not_bpf_target_code! {
+            if i < self.buffer.len(){
+                return Ok(unsafe { *self.buffer.get_unchecked(i) });
+            }
+        };
 
         Err(Error::OutOfBound)
     }
