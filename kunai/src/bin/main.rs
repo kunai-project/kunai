@@ -1376,7 +1376,7 @@ impl EventConsumer<'_> {
             }
 
             // we trigger some very specific cleanup
-            if self.exited_tasks % 1000 == 0 {
+            if self.exited_tasks.is_multiple_of(1000) {
                 let shadow_proc = self.find_shadow_procs();
                 // we remove shadow processes
                 self.processes.retain(|pk, _| !shadow_proc.contains(pk));

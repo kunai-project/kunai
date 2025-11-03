@@ -44,7 +44,7 @@ impl<const N: usize> Display for String<N> {
 }
 
 impl<const N: usize> String<N> {
-    pub fn to_string_lossy(&self) -> Cow<str> {
+    pub fn to_string_lossy(&'_ self) -> Cow<'_, str> {
         Cow::from(self.as_str())
     }
 

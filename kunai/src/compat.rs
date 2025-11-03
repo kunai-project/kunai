@@ -75,7 +75,7 @@ impl<'a> Programs<'a> {
         Ok(self)
     }
 
-    pub fn programs(&self) -> Vec<&Program> {
+    pub fn programs(&'_ self) -> Vec<&'_ Program<'_>> {
         self.m.values().collect()
     }
 
