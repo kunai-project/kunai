@@ -778,6 +778,11 @@ impl EventConsumer<'_> {
 
     #[inline(always)]
     fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
+        // updating loopback resolution is not good
+        if ip.is_loopback() {
+            return;
+        }
+
         let ck = i.process_key();
 
         // update local resolve table
