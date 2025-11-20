@@ -55,7 +55,7 @@ uuid = { version = "1.6.1", features = ["serde", "v4", "v5"] }
 object = { version = "0.34.0", features = ["elf"] }
 huby = { version = "0.2", features = ["serde"] }
 firo = { version = "0.2" }
-yara-x = { version = "1.0" }
+yara-x = { version = "1.10.0" }
 fs-walk = { version = "0.1.0" }
 communityid = { version = "0.1", features = ["serde"] }
 serde_yaml = "0.9"

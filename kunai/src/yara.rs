@@ -41,7 +41,7 @@ impl SourceCode {
     }
 
     pub fn to_native(&self) -> yara_x::SourceCode<'_> {
-        yara_x::SourceCode::from(self.content.as_str()).with_origin(&self.path.to_string_lossy())
+        yara_x::SourceCode::from(self.content.as_str()).with_origin(self.path.to_string_lossy())
     }
 }
 
