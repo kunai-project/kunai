@@ -4,7 +4,8 @@ use kunai_common::{buffer, co_re::task_struct, kprobe::ProbeFn};
 use super::*;
 
 /// match-proto:v5.0:security/security.c:int security_task_alloc(struct task_struct *task, unsigned long clone_flags)
-/// match-proto:latest:security/security.c:int security_task_alloc(struct task_struct *task, unsigned long clone_flags)
+/// match-proto:v6.17:security/security.c:int security_task_alloc(struct task_struct *task, unsigned long clone_flags)
+/// match-proto:latest:security/security.c:int security_task_alloc(struct task_struct *task, u64 clone_flags)
 #[kprobe(function = "security_task_alloc")]
 pub fn clone_enter_security_task_alloc(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
