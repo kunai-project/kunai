@@ -4,13 +4,15 @@ use gene_derive::FieldGetter;
 use kunai_common::time::Time;
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};
+use pure_magic::MagicDb;
+
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
     fs::File,
-    io::{self, BufReader, Read},
+    io::{self, Read},
     os::unix::prelude::MetadataExt,
     path::PathBuf,
     time::SystemTime,
@@ -49,6 +51,7 @@ impl Error {
 
 #[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct FileMeta {
+    pub magic: String,
     pub md5: String,
     pub sha1: String,
     pub sha256: String,
@@ -60,6 +63,7 @@ pub struct FileMeta {
 impl From<Hashes> for FileMeta {
     fn from(value: Hashes) -> Self {
         Self {
+            magic: value.magic,
             md5: value.md5,
             sha1: value.sha1,
             sha256: value.sha256,
@@ -85,6 +89,7 @@ impl FileMeta {
 #[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct Hashes {
     pub path: PathBuf,
+    pub magic: String,
     pub md5: String,
     pub sha1: String,
     pub sha256: String,
@@ -97,6 +102,7 @@ impl Hashes {
     pub fn with_meta(p: PathBuf, meta: FileMeta) -> Self {
         Self {
             path: p,
+            magic: meta.magic,
             md5: meta.md5,
             sha1: meta.sha1,
             sha256: meta.sha256,
@@ -107,7 +113,7 @@ impl Hashes {
     }
 
     #[inline(always)]
-    pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T) -> Self {
+    pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T, magic_db: &MagicDb) -> Self {
         let path = p.as_ref();
         let mut h = Hashes {
             path: path.to_path_buf(),
@@ -118,10 +124,19 @@ impl Hashes {
         let mut sha256 = Sha256::new();
         let mut sha512 = Sha512::new();
 
-        if let Ok(f) = File::open(path) {
-            let mut reader = BufReader::new(f);
+        if let Ok(mut f) = File::open(path)
+            .inspect_err(|e| {
+                h.error = Some(format!("failed to open file: {e}",));
+            })
+            .and_then(MagicDb::optimal_lazy_cache)
+            .inspect_err(|e| {
+                h.error = Some(format!("failed to create lazy cache: {e}",));
+            })
+        {
             let mut buf = [0; 4096];
-            while let Ok(n) = reader.read(&mut buf[..]) {
+            while let Ok(n) = f.read(&mut buf[..]).inspect_err(|e| {
+                h.error = Some(format!("failed to read: {e}",));
+            }) {
                 if n == 0 {
                     break;
                 }
@@ -136,6 +151,14 @@ impl Hashes {
             h.sha1 = hex::encode(sha1.finalize());
             h.sha256 = hex::encode(sha256.finalize());
             h.sha512 = hex::encode(sha512.finalize());
+
+            h.magic = magic_db
+                .first_magic_with_lazy_cache(&mut f, None)
+                .inspect_err(|e| {
+                    h.error = Some(format!("failed to find magic: {e}",));
+                })
+                .map(|m| m.message())
+                .unwrap_or("?".into());
         }
 
         h
@@ -418,7 +441,12 @@ impl Cache {
     }
 
     #[inline(always)]
-    pub fn get_hashes_in_ns(&mut self, ns: Mnt, path: &Path) -> Result<Hashes, Error> {
+    pub fn get_hashes_in_ns(
+        &mut self,
+        ns: Mnt,
+        path: &Path,
+        magic_db: &MagicDb,
+    ) -> Result<Hashes, Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
@@ -429,7 +457,7 @@ impl Cache {
             let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 
             if !self.hashes.contains_key(&key) {
-                let h = Hashes::from_path_ref(pb);
+                let h = Hashes::from_path_ref(pb, magic_db);
                 self.hashes.insert(key.clone(), h);
             }
 
