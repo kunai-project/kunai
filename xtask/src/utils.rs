@@ -9,3 +9,8 @@ pub(crate) fn vec_rustflags() -> Result<Vec<String>, anyhow::Error> {
         },
     }
 }
+
+#[inline(always)]
+pub(crate) fn default_target() -> String {
+    format!("{}-unknown-linux-gnu", std::env::consts::ARCH)
+}

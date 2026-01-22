@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use clap::Parser;
 
 use crate::ebpf::{self, BpfTarget};
-use crate::utils::vec_rustflags;
+use crate::utils::{default_target, vec_rustflags};
 
 #[derive(Debug, Parser, Clone)]
 pub struct RunOptions {
@@ -15,8 +15,8 @@ pub struct RunOptions {
     #[clap(long)]
     pub profile: Option<String>,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
-    pub target: String,
+    #[clap(long)]
+    pub target: Option<String>,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub bpf_target: BpfTarget,
@@ -77,8 +77,8 @@ pub struct BuildOptions {
     #[clap(long)]
     pub profile: Option<String>,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
-    pub target: String,
+    #[clap(long)]
+    pub target: Option<String>,
     /// Set the linker to use to when building userland application
     /// this option is useful when cross-compiling
     #[clap(long)]
@@ -114,8 +114,10 @@ impl From<&BuildOptions> for ebpf::BuildOptions {
         Self {
             target_arch: value
                 .target
+                .as_ref()
+                .unwrap_or(&default_target())
                 .split_once('-')
-                .map_or(&*value.target, |x| x.0)
+                .map_or(std::env::consts::ARCH, |x| x.0)
                 .into(),
             target: value.bpf_target,
             release,
@@ -154,7 +156,10 @@ fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
         rustflags.push(format!("-C linker={linker}"))
     }
 
-    args.push(format!("--target={}", opts.target));
+    args.push(format!(
+        "--target={}",
+        opts.target.as_ref().unwrap_or(&default_target())
+    ));
 
     opts.build_args.iter().for_each(|ba| args.push(ba.clone()));
 
@@ -192,7 +197,7 @@ pub fn run(ebpf_dir: &str, opts: &RunOptions) -> Result<(), anyhow::Error> {
     // we get the binary path
     let bin_path = format!(
         "target/{}/{}/kunai",
-        opts.target,
+        opts.target.as_ref().unwrap_or(&default_target()),
         opts.profile().unwrap_or("debug")
     );
 
