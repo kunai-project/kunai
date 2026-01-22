@@ -14,19 +14,15 @@ env:
 jobs:
   build:
     name: Build ${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            packages: ""
-          - arch: aarch64
-            runner: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            packages: gcc-aarch64-linux-gnu
+          - runner: ubuntu-latest
+            target: x86_64
+          - runner: ubuntu-latest
+            target: aarch64
 
     steps:
       - name: Checkout
@@ -35,7 +31,7 @@ jobs:
       - name: Install system tools
         run: |
           sudo apt update
-          sudo apt install -y clang lld libbpf-dev ${{ matrix.packages }}
+          sudo apt install -y clang lld libbpf-dev
 
       # we need to fetch rust deps first to speed up cargo xtask
       - name: Cache Rust dependencies
@@ -54,11 +50,7 @@ jobs:
         run: cargo install bpf-linker
 
       - name: Build (eBPF and userland)
-        env:
-          CC: ${{ matrix.arch == 'aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_ARCH: ${{ matrix.target }}
-        run: cargo xtask build --release --target=${{ matrix.target }} -- -vv
+        run: cargo xtask build --release -- -vv
 
   tests:
     needs: build
