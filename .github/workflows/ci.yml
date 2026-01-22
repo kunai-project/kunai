@@ -41,7 +41,7 @@ jobs:
             ~/.cargo
             ~/.rustup
             target
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+          key: ${{ runner.os }}-${{ matrix.platform.target }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
       - name: Run clippy on full project
         run: cargo xtask clippy -- --workspace -- -D warnings
@@ -55,8 +55,8 @@ jobs:
   tests:
     needs: build
 
-    name: Testing on ${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
+    name: Testing on ${{ matrix.platform.arch }}
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
