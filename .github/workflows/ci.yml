@@ -57,6 +57,7 @@ jobs:
         env:
           CC: ${{ matrix.arch == 'aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_ARCH: ${{ matrix.target }}
         run: cargo xtask build --release --target=${{ matrix.target }} -- -vv
 
   tests:
