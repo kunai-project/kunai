@@ -13,7 +13,7 @@ env:
 
 jobs:
   build:
-    name: Build ${{ matrix.arch }}
+    name: Build ${{ matrix.platform.target }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -21,7 +21,7 @@ jobs:
         platform:
           - runner: ubuntu-latest
             target: x86_64
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
             target: aarch64
 
     steps:
@@ -98,25 +98,25 @@ jobs:
 
       - name: Linux Kernel LTS 5.4
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.platform.target }}
         run: ./scripts/ci/test_kernel.sh 5.4
 
       - name: Linux Kernel LTS 5.10
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.platform.target }}
         run: ./scripts/ci/test_kernel.sh 5.10
 
       - name: Linux Kernel LTS 5.15
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.platform.target }}
         run: ./scripts/ci/test_kernel.sh 5.15
 
       - name: Linux Kernel LTS 6.1
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.platform.target }}
         run: ./scripts/ci/test_kernel.sh 6.1
 
       - name: Linux Kernel LTS 6.6
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.platform.target }}
         run: ./scripts/ci/test_kernel.sh 6.6
