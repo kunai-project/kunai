@@ -14,11 +14,11 @@ env:
 jobs:
   build:
     name: Build ${{ matrix.arch }}
-    runs-on: ${{ matrix.arch.runner }}
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
+        platform:
           - runner: ubuntu-latest
             target: x86_64
           - runner: ubuntu-latest
