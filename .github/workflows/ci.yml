@@ -60,13 +60,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
+        platform:
+          - runner: ubuntu-latest
+            target: x86_64
             packages: qemu-system-x86
-            runner: ubuntu-latest
-          - arch: aarch64
-            runner: ubuntu-latest
-            packages: qemu-system-arm gcc-aarch64-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64
+            packages: qemu-system-arm
 
     steps:
       - name: Checkout
@@ -75,7 +75,7 @@ jobs:
       - name: Install system tools
         run: |
           sudo apt update
-          sudo apt install -y ${{ matrix.packages }} libbpf-dev
+          sudo apt install -y ${{ matrix.platform.packages }} libbpf-dev
 
       # we need to fetch rust deps first to speed up cargo xtask
       - name: Cache Rust dependencies
