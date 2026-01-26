@@ -71,16 +71,13 @@ jobs:
           release="target/${{ matrix.target }}/release"
           tmp_release="target.tmp/${{ matrix.target }}/release/"
           mkdir -p $tmp_release
-          find $release -maxdepth 1 -type f -executable | xargs -I '{}' mv '{}' $tmp_release
-
-          cargo clean
-          mv target.tmp target
+          find $release -maxdepth 1 -type f -executable | xargs -I '{}' cp '{}' $tmp_release
 
       - name: Upload target
         uses: actions/upload-artifact@v6
         with:
           name: target-${{ matrix.arch }}
-          path: target
+          path: target.tmp
 
   tests:
     needs: build
