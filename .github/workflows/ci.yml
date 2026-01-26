@@ -49,7 +49,7 @@ jobs:
           cont_name=jap_knife
           # building target directory
           chmod -R 777 ./
-          docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
+          docker run --name=$cont_name -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
           exit_code=$(docker inspect --format='{{.State.ExitCode}}' $cont_name)
           docker rm $cont_name
           exit $exit_code
