@@ -1,18 +1,17 @@
 name: CI
 
-on: 
+on:
   schedule:
-  - cron: '37 13 * * *'
+    - cron: "37 13 * * *"
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
-jobs:    
-    
+jobs:
   build:
     name: Build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -22,47 +21,40 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            packages: ''
+            target: x86_64-unknown-linux-musl
           - arch: aarch64
             runner: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            packages: gcc-aarch64-linux-gnu
+            target: aarch64-unknown-linux-musl
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    - name: Install system tools
-      run: |
-        sudo apt update
-        sudo apt install -y clang lld libbpf-dev ${{ matrix.packages }}
+      # we need to fetch rust deps first to speed up cargo xtask
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            ~/.rustup
+            target
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
-    # we need to fetch rust deps first to speed up cargo xtask
-    - name: Cache Rust dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo
-          ~/.rustup
-          target
-        key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
+      - name: Run clippy on full project
+        run: cargo xtask clippy -- --workspace -- -D warnings
 
-    - name: Run clippy on full project
-      run: cargo xtask clippy -- --workspace -- -D warnings
+      - name: Build (eBPF and userland)
+        run: docker run -it --rm -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --target ${{ matrix.target }} --linker /usr/bin/lld
 
-    - name: Install bpf-linker
-      run: cargo install bpf-linker
-
-    - name: Build (eBPF and userland)
-      env: 
-        CC: ${{ matrix.arch == 'aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-      run: cargo xtask build --release --target=${{ matrix.target }}
+      - name: Upload target
+        uses: actions/upload-artifact@v6
+        with:
+          name: target-${{ matrix.target }}
+          path: target
 
   tests:
     needs: build
-    
+
     name: Testing on ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -70,62 +62,45 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            packages: qemu-system-x86
             runner: ubuntu-latest
+            packages: qemu-system-x86
           - arch: aarch64
             runner: ubuntu-latest
-            packages: qemu-system-arm gcc-aarch64-linux-gnu
+            packages: qemu-system-arm
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-      
-    - name: Install system tools
-      run: |
-        sudo apt update
-        sudo apt install -y ${{ matrix.packages }} libbpf-dev
-        
-    # we need to fetch rust deps first to speed up cargo xtask
-    - name: Cache Rust dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo
-          ~/.rustup
-          target
-        key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
-      
-    - name: Set kernel cache key
-      run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
+      - uses: actions/download-artifact@v6
 
-    - name: Cache Linux Kernels
-      uses: actions/cache@v4
-      with:
-        path: cache
-        key: ${{ env.KERNEL_CACHE_KEY }}
+      - name: Set kernel cache key
+        run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
 
-    - name: Linux Kernel LTS 5.4
-      env:
-        ARCH: ${{ matrix.arch }}
-      run: ./scripts/ci/test_kernel.sh 5.4
-      
-    - name: Linux Kernel LTS 5.10
-      env:
-        ARCH: ${{ matrix.arch }}
-      run: ./scripts/ci/test_kernel.sh 5.10
+      - name: Cache Linux Kernels
+        uses: actions/cache@v4
+        with:
+          path: cache
+          key: ${{ env.KERNEL_CACHE_KEY }}
 
-    - name: Linux Kernel LTS 5.15
-      env:
-        ARCH: ${{ matrix.arch }}
-      run: ./scripts/ci/test_kernel.sh 5.15
+      - name: Linux Kernel LTS 5.4
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 5.4
 
-    - name: Linux Kernel LTS 6.1
-      env:
-        ARCH: ${{ matrix.arch }}
-      run: ./scripts/ci/test_kernel.sh 6.1
+      - name: Linux Kernel LTS 5.10
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 5.10
 
-    - name: Linux Kernel LTS 6.6
-      env:
-        ARCH: ${{ matrix.arch }}
-      run: ./scripts/ci/test_kernel.sh 6.6
+      - name: Linux Kernel LTS 5.15
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 5.15
 
+      - name: Linux Kernel LTS 6.1
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 6.1
+
+      - name: Linux Kernel LTS 6.6
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 6.6
