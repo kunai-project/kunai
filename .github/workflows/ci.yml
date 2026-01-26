@@ -59,12 +59,14 @@ jobs:
           sudo chmod -R 777 ./target
           rm -rf ./target/${{ matrix.target }}/release/deps
           rm -rf ./target/${{ matrix.target }}/release/build
+          # debug
+          find ./target/${{ matrix.target }}
 
       - name: Upload target
         uses: actions/upload-artifact@v6
         with:
           name: target-${{ matrix.target }}
-          path: target ./target/${{ matrix.target }}/release
+          path: target ./target/${{ matrix.target }}
 
   tests:
     needs: build
@@ -85,7 +87,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-        
+
       - uses: actions/download-artifact@v6
 
       - name: Set kernel cache key
