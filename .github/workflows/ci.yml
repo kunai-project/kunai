@@ -109,13 +109,8 @@ jobs:
           name: target-${{ matrix.arch }}
           path: target
 
-      - name: Debug Download
-        run: |
-          set -x
-          find target*
-          file target/*/release/tests
-          ls -hail target/*/release/tests
-          chmod +x target/*/release/tests
+      - name: Make exec
+        run: chmod +x target/*/release/*
 
       - name: Set kernel cache key
         run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
