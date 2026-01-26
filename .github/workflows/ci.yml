@@ -59,8 +59,6 @@ jobs:
           sudo chmod -R 777 ./target
           rm -rf ./target/${{ matrix.target }}/release/deps
           rm -rf ./target/${{ matrix.target }}/release/build
-          # debug
-          find ./target/${{ matrix.target }}
 
       - name: Upload target
         uses: actions/upload-artifact@v6
