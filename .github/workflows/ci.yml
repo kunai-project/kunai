@@ -62,14 +62,14 @@ jobs:
           tmp_release="target.tmp/${{ matrix.target }}/release/"
           mkdir -p $tmp_release
           find $release -maxdepth 1 -type f -executable | xargs -I '{}' mv '{}' $tmp_release
-          
+
           cargo clean
           mv target.tmp target
 
       - name: Upload target
         uses: actions/upload-artifact@v6
         with:
-          name: target-${{ matrix.target }}
+          name: target-${{ matrix.arch }}
           path: target
 
   tests:
@@ -94,7 +94,10 @@ jobs:
 
       - uses: actions/download-artifact@v7
         with:
-          path: target
+          name: target-${{ matrix.arch }}
+
+      - name: Rename Download
+        run: mv target-${{matrix.arch}} target
 
       - name: Set kernel cache key
         run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
