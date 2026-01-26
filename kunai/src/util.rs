@@ -14,6 +14,14 @@ pub mod namespace;
 pub mod uname;
 pub mod uptime;
 
+#[allow(non_camel_case_types)]
+#[cfg(target_env = "musl")]
+type rlimit_resource_t = i32;
+
+#[allow(non_camel_case_types)]
+#[cfg(not(target_env = "musl"))]
+type rlimit_resource_t = u32;
+
 #[inline]
 pub fn is_public_ip(ip: IpAddr) -> bool {
     let ip_network: IpNetwork = ip.into();
@@ -102,7 +110,7 @@ pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
 }
 
 #[inline(always)]
-pub fn getrlimit(resource: u32) -> Result<rlimit, io::Error> {
+pub fn getrlimit(resource: rlimit_resource_t) -> Result<rlimit, io::Error> {
     let mut rlim: rlimit = rlimit {
         rlim_cur: 0, // Set the soft limit to 0 initially
         rlim_max: 0, // Set the hard limit to 0 initially
@@ -117,7 +125,7 @@ pub fn getrlimit(resource: u32) -> Result<rlimit, io::Error> {
 }
 
 #[inline(always)]
-pub fn setrlimit(resource: u32, rlimit: rlimit) -> Result<(), io::Error> {
+pub fn setrlimit(resource: rlimit_resource_t, rlimit: rlimit) -> Result<(), io::Error> {
     // Set the new limit
     if unsafe { libc::setrlimit(resource, &rlimit) } != 0 {
         return Err(io::Error::last_os_error());
