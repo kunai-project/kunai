@@ -46,8 +46,7 @@ jobs:
       - name: Run clippy on full project
         run: |
           # building target directory
-          mkdir target
-          chmod 777 target
+          chmod -R 777 ./
           docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
 
       - name: Build (eBPF and userland)
