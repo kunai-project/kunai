@@ -46,12 +46,22 @@ jobs:
       - name: Run clippy on full project
         run: |
           set -eux
+          cont_name=jap_knife
           # building target directory
           chmod -R 777 ./
           docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
+          exit_code=$(docker inspect --format='{{.State.ExitCode}}' $cont_name)
+          docker rm $cont_name
+          exit $exit_code
 
       - name: Build (eBPF and userland)
-        run: docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --release --target ${{ matrix.target }} --linker /usr/bin/lld
+        run: |
+          set -eux
+          cont_name=jap_knife
+          docker run --name=$cont_name -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --release --target ${{ matrix.target }} --linker /usr/bin/lld
+          exit_code=$(docker inspect --format='{{.State.ExitCode}}' $cont_name)
+          docker rm $cont_name
+          exit $exit_code
 
       - name: Preparing files for upload
         run: |
@@ -95,9 +105,10 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: target-${{ matrix.arch }}
+          path: target
 
-      - name: Rename Download
-        run: mv target-${{matrix.arch}} target
+      - name: Debug Download
+        run: find target*
 
       - name: Set kernel cache key
         run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
