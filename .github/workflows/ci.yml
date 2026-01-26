@@ -99,6 +99,11 @@ jobs:
             packages: qemu-system-arm
 
     steps:
+      - name: Install system tools
+        run: |
+          sudo apt update
+          sudo apt install -y clang lld libbpf-dev ${{ matrix.packages }}
+
       - name: Checkout
         uses: actions/checkout@v3
 
