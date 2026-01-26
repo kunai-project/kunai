@@ -56,7 +56,7 @@ jobs:
       - name: Cleanup files for upload
         run: |
           set -eux
-          chmod -R 777 ./target
+          sudo chmod -R 777 ./target
           rm -rf ./target/${{ matrix.target }}/release/deps
           rm -rf ./target/${{ matrix.target }}/release/build
 
