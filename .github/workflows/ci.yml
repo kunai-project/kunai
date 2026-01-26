@@ -117,6 +117,8 @@ jobs:
           set -x
           find target*
           file target/*/release/tests
+          ls -hail target/*/release/tests
+          chmod +x target/*/release/tests
 
       - name: Set kernel cache key
         run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
