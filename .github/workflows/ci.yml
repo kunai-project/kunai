@@ -45,18 +45,26 @@ jobs:
 
       - name: Run clippy on full project
         run: |
+          set -eux
           # building target directory
           chmod -R 777 ./
           docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
 
       - name: Build (eBPF and userland)
-        run: docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --target ${{ matrix.target }} --linker /usr/bin/lld
+        run: docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --release --target ${{ matrix.target }} --linker /usr/bin/lld
+
+      - name: Cleanup files for upload
+        run: |
+          set -eux
+          rm -rf ./target/${{ matrix.target }}/release/deps
+          rm -rf ./target/${{ matrix.target }}/release/build
+          chmod -R 777 ./target
 
       - name: Upload target
         uses: actions/upload-artifact@v6
         with:
           name: target-${{ matrix.target }}
-          path: target
+          path: target ./target/${{ matrix.target }}/release
 
   tests:
     needs: build
