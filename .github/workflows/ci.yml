@@ -44,7 +44,7 @@ jobs:
         run: docker pull ghcr.io/kunai-project/kunai-builder:latest
 
       - name: Run clippy on full project
-        run: 
+        run: |
           # building target directory
           mkdir target
           chmod 777 target
