@@ -40,8 +40,15 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
+      - name: Pull docker
+        run: docker pull ghcr.io/kunai-project/kunai-builder:latest
+
       - name: Run clippy on full project
-        run: docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
+        run: 
+          # building target directory
+          mkdir target
+          chmod 777 target
+          docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
 
       - name: Build (eBPF and userland)
         run: docker run -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --target ${{ matrix.target }} --linker /usr/bin/lld
