@@ -92,7 +92,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
+        with:
+          path: target
 
       - name: Set kernel cache key
         run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
