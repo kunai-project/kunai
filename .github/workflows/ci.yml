@@ -41,10 +41,10 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
       - name: Run clippy on full project
-        run: cargo xtask clippy -- --workspace -- -D warnings
+        run: docker run -it -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
 
       - name: Build (eBPF and userland)
-        run: docker run -it --rm -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --target ${{ matrix.target }} --linker /usr/bin/lld
+        run: docker run -it -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xbuild --target ${{ matrix.target }} --linker /usr/bin/lld
 
       - name: Upload target
         uses: actions/upload-artifact@v6
