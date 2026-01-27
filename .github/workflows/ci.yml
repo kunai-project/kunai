@@ -109,7 +109,7 @@ jobs:
           name: target-${{ matrix.arch }}
           path: target
 
-      - name: Make exec
+      - name: Make target bin exec
         run: chmod +x target/*/release/*
 
       - name: Set kernel cache key
