@@ -17,12 +17,9 @@ else
     exit 1
 fi
 
-if [[ "$arch" == "amd64" ]]; then
-    cargo xtask build --release -- --bin tests
-elif [[ "$arch" == "arm64" ]]; then
-    CC=aarch64-linux-gnu-gcc CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo xtask build --release --target aarch64-unknown-linux-gnu -- --bin tests
-else
-    echo "cannot compile"
+test_bin=target/${qemu_arch}-unknown-linux-musl/release/tests
+if [[ ! -f ${test_bin} ]]; then
+    echo "test binary ${test_bin} is missing compile program first"
     exit 1
 fi
 
@@ -32,7 +29,7 @@ initramfs=${tmp_dir}/initramfs.img
 
 
 # building initramfs with our test binary as init
-cp target/${qemu_arch}-unknown-linux-gnu/release/tests $tmp_dir/init
+cp target/${qemu_arch}-unknown-linux-musl/release/tests $tmp_dir/init
 echo "init" | cpio -D $tmp_dir -o -H newc > $initramfs
 
 distro="ubuntu"
@@ -45,7 +42,7 @@ do
         break
     fi
 done < <(curl https://kernel.ubuntu.com/mainline/ | grep -oP 'href="v\d+\.\d+(\.\d+)?/"' | cut -d '"' -f 2 | tr -d '/' | sort -rV | grep -E "v${kernel}($|\.)")
-        
+
 # no kernel found
 if [[ ! $image ]]
 then
