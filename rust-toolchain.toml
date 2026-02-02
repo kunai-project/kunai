@@ -1,6 +1,9 @@
 [toolchain]
 channel = "1.90"
-targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+# supported cross-compilation targets
+# NB: one can compile to x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu but
+# those do not produce statically linked binaries.
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
 
 # to have the necessary for code analysis
 components = ["rust-src", "clippy"]
