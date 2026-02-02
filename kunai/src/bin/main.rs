@@ -40,6 +40,7 @@ use libc::{RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::LevelFilter;
 use lru_st::collections::LruHashSet;
 use namespace::{Mnt, Namespace};
+use pure_magic::MagicDb;
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
@@ -275,6 +276,7 @@ struct EventConsumer<'s> {
     exited_tasks: u64,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
+    magic_db: MagicDb,
     // used to check if we must generate FileScan events
     scan_events_enabled: bool,
 }
@@ -352,6 +354,7 @@ impl EventConsumer<'_> {
             resolved: HashMap::new(),
             output,
             file_scanner: None,
+            magic_db: magic_db::load().map_err(|e| anyhow!("failed to open magic-db: {e}"))?,
             scan_events_enabled,
         };
 
@@ -825,7 +828,7 @@ impl EventConsumer<'_> {
     #[inline(always)]
     fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Hashes {
         if let Some(ns) = ns {
-            match self.cache.get_hashes_in_ns(ns, p) {
+            match self.cache.get_hashes_in_ns(ns, p, &self.magic_db) {
                 Ok(h) => h,
                 Err(e) => {
                     let meta = FileMeta {
@@ -1457,7 +1460,10 @@ impl EventConsumer<'_> {
         // setting kunai related info
         data.kunai.version = env!("CARGO_PKG_VERSION").into();
         let self_exe = PathBuf::from("/proc/self/exe");
-        data.kunai.exe = Hashes::from_path_ref(self_exe.clone().canonicalize().unwrap_or(self_exe));
+        data.kunai.exe = Hashes::from_path_ref(
+            self_exe.clone().canonicalize().unwrap_or(self_exe),
+            &self.magic_db,
+        );
 
         data.kunai.config.sha256 = self.config.sha256().ok().unwrap_or("?".into());
 

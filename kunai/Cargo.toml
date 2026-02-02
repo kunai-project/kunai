@@ -28,6 +28,9 @@ thiserror = "1.0"
 procfs = "0.16"
 ip_network = "0.4"
 lru-st = { version = "0.2", features = ["sync"] }
+lazy-cache = "0.1"
+pure-magic = "0.2"
+magic-db = "0.4"
 
 # detection engine for events
 gene = { version = "0.6" }
