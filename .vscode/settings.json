@@ -7,12 +7,9 @@
     "--",
     "--workspace",
     "--quiet",
-    "--message-format=json"
+    "--message-format=json",
   ],
-  "rust-analyzer.linkedProjects": [
-    "Cargo.toml",
-    "kunai-ebpf/Cargo.toml"
-  ],
+  "rust-analyzer.linkedProjects": ["Cargo.toml", "kunai-ebpf/Cargo.toml"],
   // no need to cargo check in every workspace member
   // cargo xtask check does it for us
   "rust-analyzer.check.invocationStrategy": "once",
@@ -27,17 +24,15 @@
     "--message-format=json",
   ],
   // if set to workspace it tries to run cargo xtask inside
-  // kunai-ebpf which is problematic as xtask doesnt exists in there 
+  // kunai-ebpf which is problematic as xtask doesnt exists in there
   "rust-analyzer.cargo.buildScripts.invocationStrategy": "once",
   "rust-analyzer.cargo.features": "all",
-  "rust-analyzer.runnables.extraArgs": [
-    "--target=x86_64-unknown-linux-gnu"
-  ],
+  "rust-analyzer.runnables.extraArgs": ["--target=x86_64-unknown-linux-gnu"],
   "rust-analyzer.procMacro.enable": false,
   "rust-analyzer.cargo.cfgs": [
     "debug_assertions",
     "target_arch=bpf",
     "target_arch=x86_64",
   ],
-  "rust-analyzer.checkOnSave": true
+  "rust-analyzer.checkOnSave": true,
 }
