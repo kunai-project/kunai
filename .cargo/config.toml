@@ -1,7 +1,3 @@
-[build]
-# make final binary statically linked against libc
-rustflags = ["-Ctarget-feature=+crt-static"]
-
 [alias]
 # xlaunch is a cross platform xtask launcher this way we don't
 # have to hardcode target in this alias
