@@ -51,9 +51,10 @@ impl From<Error> for ProbeError {
 }
 
 #[repr(u32)]
-#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Type {
     #[str("unknown")]
+    #[default]
     Unknown = 0,
 
     // process events
@@ -166,12 +167,6 @@ pub enum Type {
     // !!! all new event types must be put before max
     #[str("max")]
     Max,
-}
-
-impl Default for Type {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl Type {

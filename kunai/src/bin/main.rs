@@ -3848,17 +3848,14 @@ WantedBy=sysinit.target"#,
     }
 
     fn logs(o: LogsOpt) -> anyhow::Result<()> {
-        let output = if o.log_file.is_none() {
+        let output = o.log_file.unwrap_or({
             let config: Config = serde_yaml::from_reader(
                 File::open(o.config).map_err(|e| anyhow!("failed to read config file: {e}"))?,
             )
             .map_err(|e| anyhow!("failed to parse config file: {e}"))?;
 
             PathBuf::from(config.output.path)
-        } else {
-            // cannot panic as it is Some
-            o.log_file.unwrap()
-        };
+        });
 
         if !output.is_file() {
             return Err(anyhow!(
