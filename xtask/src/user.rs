@@ -15,7 +15,7 @@ pub struct RunOptions {
     #[clap(long)]
     pub profile: Option<String>,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
+    #[clap(long, default_value_t = format!("{}-unknown-linux-musl", std::env::consts::ARCH))]
     pub target: String,
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
@@ -77,7 +77,7 @@ pub struct BuildOptions {
     #[clap(long)]
     pub profile: Option<String>,
     /// Specify the building target for userland
-    #[clap(default_value = "x86_64-unknown-linux-gnu", long)]
+    #[clap(long, default_value_t = format!("{}-unknown-linux-musl", std::env::consts::ARCH))]
     pub target: String,
     /// Set the linker to use to when building userland application
     /// this option is useful when cross-compiling
