@@ -1265,9 +1265,9 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "gene"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5258f7530cef14f51ab6b5fbb34b4db54a129ac1f93d9169c6d8150408a1c8b"
+checksum = "547f4f7843047492243ee62584c0cd4877838a1a2d362e1f8690f38a07de6707"
 dependencies = [
  "gene_derive",
  "lazy_static",
@@ -1281,9 +1281,9 @@ dependencies = [
 
 [[package]]
 name = "gene_derive"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a56eb99b816511ec5bb464197f756246ca771c3afc7e5e2eed898de947d52496"
+checksum = "1ddfa0eca810b02b29af5cd34c5ccc5c59df67684def639f96535fe701edc6e3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1699,6 +1699,7 @@ version = "0.6.2"
 dependencies = [
  "aya",
  "aya-ebpf",
+ "base64ct",
  "bindgen",
  "bytes",
  "cfg-if",

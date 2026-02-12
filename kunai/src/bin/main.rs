@@ -1070,15 +1070,17 @@ impl EventConsumer<'_> {
         .community_id_v1(0)
         .base64();
 
-        let responses = bpf_data.answers().unwrap_or_default();
+        let responses = bpf_data.domain_responses().unwrap_or_default();
         let ancestors = self.get_ancestors_string(&info);
 
         for r in responses {
-            let mut data = DnsQueryData::new().with_responses(r.answers);
+            let mut data = DnsQueryData::new();
             data.ancestors = ancestors.clone();
             data.command_line = command_line.clone();
             data.exe = exe.clone().into();
-            data.query = r.question.clone();
+            data.query = r.qname.clone();
+            data.query_type = r.qtype;
+            data.response = r.records;
             data.socket = si.clone();
             data.src = src;
             data.dns_server = NetworkInfo {
@@ -1091,10 +1093,10 @@ impl EventConsumer<'_> {
             data.community_id = community_id.clone();
 
             // update the resolution map
-            data.responses().iter().for_each(|a| {
+            data.response.iter().for_each(|a| {
                 // if we manage to parse IpAddr
                 if let Ok(ip) = a.parse::<IpAddr>() {
-                    self.update_resolved(ip, &r.question, &info);
+                    self.update_resolved(ip, &r.qname, &info);
                 }
             });
 
