@@ -438,7 +438,8 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 /// match-proto:v5.0:fs/namei.c:int vfs_unlink(struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
 /// match-proto:v5.12:fs/namei.c:int vfs_unlink(struct user_namespace *mnt_userns, struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
 /// match-proto:v6.3:fs/namei.c:int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
-/// match-proto:latest:fs/namei.c:int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, struct inode **delegated_inode)
+/// match-proto:v6.19:fs/namei.c:int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, struct delegated_inode *delegated_inode)
+/// match-proto:latest:fs/namei.c:int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, struct delegated_inode *delegated_inode)
 #[kretprobe(function = "vfs_unlink")]
 pub fn fs_exit_vfs_unlink(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
