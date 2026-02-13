@@ -22,7 +22,6 @@
         },
         "cargo": {
           "features": "all",
-          "cfgs": ["debug_assertions", "target_arch=bpf", "target_arch=x86_64"],
           "buildScripts": {
             "enable": true,
             "invocationStrategy": "once",
@@ -34,6 +33,7 @@
               "--workspace",
               "--quiet",
               "--message-format=json",
+              "--keep-going",
             ],
           },
         },
