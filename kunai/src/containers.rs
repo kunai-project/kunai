@@ -68,7 +68,7 @@ impl<'f> FieldGetter<'f> for Container {
 }
 
 impl Container {
-    fn from_split_cgroup<S: AsRef<str>>(cgroup: Vec<S>) -> Option<Container> {
+    fn from_split_cgroup<S: AsRef<str>>(cgroup: &[S]) -> Option<Container> {
         if let Some(last) = cgroup.last() {
             if last.as_ref().starts_with("docker-") {
                 return Some(Container::Docker);
@@ -86,13 +86,13 @@ impl Container {
 
     #[inline]
     pub fn from_cgroup(cgrp: &Cgroup) -> Option<Container> {
-        Self::from_split_cgroup(cgrp.to_vec())
+        Self::from_split_cgroup(&cgrp.to_vec())
     }
 
     #[inline]
-    pub fn from_cgroups(cgroups: &Vec<String>) -> Option<Container> {
+    pub fn from_cgroups(cgroups: &[String]) -> Option<Container> {
         for c in cgroups {
-            if let Some(c) = Self::from_split_cgroup(c.split(path::MAIN_SEPARATOR).collect()) {
+            if let Some(c) = Self::from_split_cgroup(c.split(path::MAIN_SEPARATOR).collect::<Vec<&str>>().as_slice()) {
                 return Some(c);
             }
         }
@@ -100,7 +100,7 @@ impl Container {
     }
 
     #[inline]
-    pub fn from_ancestors(ancestors: &Vec<String>) -> Option<Container> {
+    pub fn from_ancestors(ancestors: &[String]) -> Option<Container> {
         for a in ancestors {
             match a.as_str() {
                 "/usr/bin/firejail" => return Some(Container::Firejail),
