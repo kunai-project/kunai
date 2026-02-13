@@ -2719,10 +2719,10 @@ impl EventProducer {
 
 const ABOUT_KUNAI: &str = r#"
      ▲
-    / \    
-   / | \   
+    / \
+   / | \
   /  |  \   Kunai is a multi-purpose security monitoring tool for Linux systems.
- / _ | _ \ 
+ / _ | _ \
  \   |   /
   \  |  /  This software is licensed under the GNU General Public License version 3.0 (GPL-3.0).
    \   /   You are free to use, modify, and distribute this software under the terms of
@@ -3711,11 +3711,11 @@ impl Command {
         let unit = format!(
             r#"[Unit]
 Description=Kunai Service
-            
+
 # Documentation
 Documentation=https://why.kunai.rocks
 Documentation=https://github.com/kunai-project/kunai
-            
+
 # This is needed to start before sysinit.target
 DefaultDependencies=no
 Before=sysinit.target
@@ -3725,13 +3725,13 @@ After=systemd-journald-audit.socket
 # prevent systemd attempting to stop kunai, which would
 # fail.
 RefuseManualStop={harden}
-            
+
 [Service]
 Type=exec
 ExecStart={install_bin} run -c {config_path}
 StandardOutput=journal
 StandardError=journal
-            
+
 [Install]
 Alias=kunai.service
 WantedBy=sysinit.target"#,
@@ -3901,7 +3901,7 @@ fn main() -> Result<(), anyhow::Error> {
             r#"{about-with-newline}
 {author-with-newline}
 {usage-heading} {usage}
-            
+
 {all-args}"#,
         )
     };
