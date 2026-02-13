@@ -283,9 +283,9 @@ diana:x:1622:1718:Charles White:/home/charles:/bin/bash"#,
             )
             .unwrap();
 
-        assert_eq!(users.get_by_uid(&1386).unwrap().name.as_str(), "john");
+        assert_eq!(users.get_by_uid(1386).unwrap().name.as_str(), "john");
         assert_eq!(users.get_by_name("john").unwrap().name.as_str(), "john");
-        assert_eq!(users.get_by_uid(&1622).unwrap().name.as_str(), "diana");
+        assert_eq!(users.get_by_uid(1622).unwrap().name.as_str(), "diana");
         assert_eq!(users.get_by_name("diana").unwrap().name.as_str(), "diana");
     }
 
@@ -306,9 +306,9 @@ operations:x:612:chris,kate,adam"#,
         )
         .unwrap();
 
-        assert_eq!(db.get_by_gid(&371).unwrap().name.as_str(), "wheel");
+        assert_eq!(db.get_by_gid(371).unwrap().name.as_str(), "wheel");
         assert_eq!(db.get_by_name("wheel").unwrap().name.as_str(), "wheel");
-        assert_eq!(db.get_by_gid(&612).unwrap().name.as_str(), "operations");
+        assert_eq!(db.get_by_gid(612).unwrap().name.as_str(), "operations");
         assert_eq!(
             db.get_by_name("operations").unwrap().name.as_str(),
             "operations"

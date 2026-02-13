@@ -331,34 +331,22 @@ impl<T> Event<T> {
 mod test {
     use super::*;
 
-    #[repr(C)]
-    pub struct ExecveData {
-        pub foo: u32,
-        pub bar: u32,
-    }
-
-    pub type ExecveEvent = Event<ExecveData>;
-
     #[test]
     fn test_encode_decode() {
-        let mut execve = unsafe { std::mem::zeroed::<ExecveEvent>() };
-        execve.data.foo = 42;
-        execve.data.bar = 4242;
-        execve.info.etype = Type::Execve;
-        let b = execve.encode();
+        let mut exit = unsafe { std::mem::zeroed::<ExitEvent>() };
+        exit.data.error_code = 42;
+        exit.info.etype = Type::Exit;
+
+        let b = exit.encode();
         println!("b.len()={}", b.len());
 
-        let mut d = EncodedEvent::from_bytes(b);
-        let info = unsafe { d.info() }.unwrap();
-        assert!(matches!(info.etype, Type::Execve));
+        let EbpfEvent::Exit(d) = EbpfEvent::from_bytes(b).unwrap() else {
+            panic!("wrong event deseriablized")
+        };
 
-        let dec_execve = unsafe { d.as_mut_event_with_data::<ExecveData>() }.unwrap();
+        let info = &d.info;
+        assert!(matches!(info.etype, Type::Exit));
 
-        assert_eq!(dec_execve.data.foo, 42);
-        assert_eq!(dec_execve.data.bar, 4242);
-        dec_execve.data.foo = 342;
-        // we check that modifying the event also modified the bytes in the vector
-        let mod_execve = unsafe { d.as_event_with_data::<ExecveData>() }.unwrap();
-        assert_eq!(mod_execve.data.foo, 342);
+        assert_eq!(d.data.error_code, 42);
     }
 }
