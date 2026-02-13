@@ -341,7 +341,7 @@ mod test {
         println!("b.len()={}", b.len());
 
         let EbpfEvent::Exit(d) = EbpfEvent::from_bytes(b).unwrap() else {
-            panic!("wrong event deseriablized")
+            panic!("wrong event deserialized")
         };
 
         let info = &d.info;
