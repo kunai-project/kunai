@@ -154,7 +154,16 @@ fn cargo(command: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
         rustflags.push(format!("-C linker={linker}"))
     }
 
-    args.push(format!("--target={}", opts.target));
+    match command {
+        // enables checking tests
+        "clippy" => {
+            args.push("--all-targets".to_string());
+            args.push("--all-features".to_string());
+        }
+        _ => {
+            args.push(format!("--target={}", opts.target));
+        }
+    }
 
     opts.build_args.iter().for_each(|ba| args.push(ba.clone()));
 
