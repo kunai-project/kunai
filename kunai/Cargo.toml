@@ -33,8 +33,8 @@ pure-magic = "0.2"
 magic-db = "0.4"
 
 # detection engine for events
-gene = { version = "0.6" }
-gene_derive = { version = "0.6" }
+gene = { version = "0.6.2" }
+gene_derive = { version = "0.6.2" }
 
 anyhow = "1.0.68"
 env_logger = "0.10"

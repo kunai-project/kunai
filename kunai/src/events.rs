@@ -819,40 +819,16 @@ def_user_data!(
         pub socket: SocketInfo,
         pub src: SockAddr,
         pub query: String,
-        pub response: String,
+        pub query_type: Cow<'static, str>,
+        pub response: Vec<String>,
         pub dns_server: NetworkInfo,
         pub community_id: String,
-        #[serde(skip)]
-        #[getter(skip)]
-        responses: Vec<String>,
     }
 );
 
 impl DnsQueryData {
-    const SEP: &'static str = ";";
-
     pub fn new() -> Self {
         Default::default()
-    }
-
-    #[inline]
-    pub fn with_responses(mut self, responses: Vec<String>) -> Self {
-        self.response = responses.join(Self::SEP);
-        self.responses = responses;
-        self
-    }
-
-    #[inline]
-    fn cache_responses(&mut self) {
-        if !self.response.is_empty() && self.responses.is_empty() {
-            self.responses = self.response.split(Self::SEP).map(|s| s.into()).collect();
-        }
-    }
-
-    #[inline]
-    pub fn responses(&mut self) -> &Vec<String> {
-        self.cache_responses();
-        &self.responses
     }
 }
 
@@ -865,16 +841,13 @@ impl Scannable for DnsQueryData {
 
 impl IocGetter for DnsQueryData {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        // we build up responses if needed
-        self.cache_responses();
-
         // set executable
         let mut v = vec![self.exe.path.to_string_lossy()];
         // the ip addresses in the response
         v.extend(
-            self.responses
+            self.response
                 .iter()
-                .map(|ioc| ioc.into())
+                .map(|ioc| Cow::Borrowed(ioc.as_str()))
                 .collect::<Vec<Cow<'_, str>>>(),
         );
         // the domain queried

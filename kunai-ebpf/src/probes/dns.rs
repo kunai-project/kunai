@@ -394,7 +394,7 @@ unsafe fn try_exit_recvmsg(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
 
     let rc = exit_ctx.ret().unwrap_or(-1);
 
-    // rc is also the size of the data read so we don't irrelevant cases
+    // rc is also the size of the data read so we don't handle irrelevant cases
     if rc < DNS_HEADER_SIZE as i32 {
         return Ok(());
     }
