@@ -129,7 +129,7 @@ pub struct MapKey {
     hash: u64,
     // depth is a u32 to force structure alignment
     // without this kernel 5.4 fails at using this
-    // struct on the eBPF stack
+    // struct on the eBPF stack
     depth: u32,
     len: u32,
     ino: u64,
