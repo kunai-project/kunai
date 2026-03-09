@@ -1,4 +1,4 @@
-use gene::{FieldGetter, FieldValue};
+use gene::{FieldGetter, FieldValue, FieldNameIterator};
 use gene_derive::FieldGetter;
 
 use kunai_common::time::Time;

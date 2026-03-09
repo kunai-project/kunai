@@ -6,7 +6,7 @@ use std::{
 };
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
-use gene::{rules::MAX_SEVERITY, Event, FieldGetter, FieldValue};
+use gene::{rules::MAX_SEVERITY, Event, FieldGetter, FieldNameIterator, FieldValue};
 use gene_derive::{Event, FieldGetter};
 
 use kunai_common::{
@@ -180,11 +180,8 @@ impl<'de> Deserialize<'de> for UtcDateTime {
 }
 
 impl<'f> FieldGetter<'f> for UtcDateTime {
-    fn get_from_iter(
-        &'f self,
-        i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<FieldValue<'f>> {
-        if i.len() > 0 {
+    fn get_from_iter(&'f self, i: FieldNameIterator) -> Option<FieldValue<'f>> {
+        if !i.is_terminal() {
             return None;
         }
         // currently return timestamp as millisecond, it might not be optimal
@@ -334,8 +331,8 @@ pub struct ScanResult {
 impl From<gene::ScanResult<'_>> for ScanResult {
     fn from(value: gene::ScanResult) -> Self {
         Self {
-            detection: value.detection.map(Detection::from),
-            filter: value.filter.map(Filter::from),
+            detection: value.detection.take_include().map(Detection::from),
+            filter: value.filter.take_include().map(Filter::from),
         }
     }
 }

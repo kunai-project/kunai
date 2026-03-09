@@ -1794,22 +1794,22 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn scan<T>(&mut self, event: &mut T) -> Option<ScanResult>
+    fn scan<T>(&mut self, event: &mut T) -> ScanResult
     where
         T: for<'e> KunaiEvent<'e>,
     {
-        let mut opt_scan_result: Option<ScanResult> = None;
-
-        if !self.engine.is_empty() {
-            opt_scan_result = match self.engine.scan(event) {
-                Ok(sr) => sr.map(ScanResult::from),
+        let mut scan_result = if !self.engine.is_empty() {
+            match self.engine.scan(event) {
+                Ok(sr) => ScanResult::from(sr),
                 Err(b) => {
-                    let (sr, e) = b.as_ref();
+                    let (sr, e) = *b;
                     error!("event scanning error: {e}");
-                    sr.clone().map(ScanResult::from)
+                    ScanResult::from(sr)
                 }
-            };
-        }
+            }
+        } else {
+            ScanResult::default()
+        };
 
         // no need to scan for IoC if not necessary
         if !self.iocs.is_empty() {
@@ -1825,14 +1825,12 @@ impl EventConsumer<'_> {
                 .peekable();
 
             if matching_iocs.peek().is_some() {
-                let scan_result = opt_scan_result.get_or_insert_default();
-
                 // we add ioc matching to the list of matching rules
                 scan_result.update_iocs(matching_iocs);
             }
         }
 
-        opt_scan_result
+        scan_result
     }
 
     #[inline(always)]
@@ -1992,29 +1990,28 @@ impl EventConsumer<'_> {
         }
 
         // scan for iocs and filter/matching rules
-        if let Some(sr) = self.scan(event) {
-            if let Some(d) = sr.detection {
-                let severity = d.severity;
-                event.set_detection(d);
+        let sr = self.scan(event);
+        if let Some(d) = sr.detection {
+            let severity = d.severity;
+            event.set_detection(d);
 
-                // we print event only if needed
-                printed = if severity >= self.config.scanner.min_severity {
-                    self.serialize_print(event)
-                } else {
-                    false
-                };
+            // we print event only if needed
+            printed = if severity >= self.config.scanner.min_severity {
+                self.serialize_print(event)
+            } else {
+                false
+            };
 
-                // get_detection will always be false for filters
-                if let Some(d) = event.get_detection() {
-                    self.handle_actions(event, &d.actions, true)
-                }
+            // get_detection will always be false for filters
+            if let Some(d) = event.get_detection() {
+                self.handle_actions(event, &d.actions, true)
             }
-            if let Some(f) = sr.filter {
-                event.set_filter(f);
-                printed = self.serialize_print(event);
-                if let Some(f) = event.get_filter() {
-                    self.handle_actions(event, &f.actions, false)
-                }
+        }
+        if let Some(f) = sr.filter {
+            event.set_filter(f);
+            printed = self.serialize_print(event);
+            if let Some(f) = event.get_filter() {
+                self.handle_actions(event, &f.actions, false)
             }
         }
 
@@ -3117,7 +3114,7 @@ enum ReplayEvent {
 
 impl ReplayEvent {
     #[inline]
-    fn scan(&mut self, c: &mut EventConsumer) -> Option<ScanResult> {
+    fn scan(&mut self, c: &mut EventConsumer) -> ScanResult {
         match self {
             Self::Execve(u) => c.scan(u),
             Self::Clone(u) => c.scan(u),
@@ -3140,7 +3137,7 @@ impl ReplayEvent {
             Self::FileScan(u) => c.scan(u),
             Self::Error(u) => c.scan(u),
             // not scannable events
-            Self::Start(_) | Self::Loss(_) => None,
+            Self::Start(_) | Self::Loss(_) => ScanResult::default(),
         }
     }
 
@@ -3289,18 +3286,17 @@ impl Command {
 
                     while let Ok(v) = serde_json::Value::deserialize(&mut de) {
                         let mut e = ReplayEvent::try_from(v.clone())?;
-                        if let Some(sr) = e.scan(&mut c) {
-                            if rule.is_detection() && !sr.contains_detection(rule_name) {
-                                debug!(
-                                    "false negative for detection rule={} on event={v}",
-                                    rule_name
-                                );
-                                *rule_res = Err(anyhow!("detection rule has false negatives"));
-                            }
-                            if rule.is_filter() && !sr.contains_filter(rule.name()) {
-                                debug!("false negative for filter rule={} on event={v}", rule_name);
-                                *rule_res = Err(anyhow!("filter rule has false negatives"));
-                            }
+                        let sr = e.scan(&mut c);
+                        if rule.is_detection() && !sr.contains_detection(rule_name) {
+                            debug!(
+                                "false negative for detection rule={} on event={v}",
+                                rule_name
+                            );
+                            *rule_res = Err(anyhow!("detection rule has false negatives"));
+                        }
+                        if rule.is_filter() && !sr.contains_filter(rule.name()) {
+                            debug!("false negative for filter rule={} on event={v}", rule_name);
+                            *rule_res = Err(anyhow!("filter rule has false negatives"));
                         }
                     }
                 } else {
@@ -3335,14 +3331,12 @@ impl Command {
                 while let Ok(v) = serde_json::Value::deserialize(&mut de) {
                     let mut e = ReplayEvent::try_from(v.clone())?;
 
-                    if let Some(sr) = e.scan(&mut c) {
-                        for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
-                            if rule.severity() >= o.min_severity_fp
-                                && sr.contains_detection(rule_name)
-                            {
-                                debug!("false positive for rule={} on event={v}", rule_name);
-                                *rule_res = Err(anyhow!("rule has false positives"));
-                            }
+                    let sr = e.scan(&mut c);
+                    for (rule_name, (rule, rule_res)) in rule_names.iter_mut() {
+                        if rule.severity() >= o.min_severity_fp && sr.contains_detection(rule_name)
+                        {
+                            debug!("false positive for rule={} on event={v}", rule_name);
+                            *rule_res = Err(anyhow!("rule has false positives"));
                         }
                     }
                 }

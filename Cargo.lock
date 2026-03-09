@@ -1265,9 +1265,9 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "gene"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "547f4f7843047492243ee62584c0cd4877838a1a2d362e1f8690f38a07de6707"
+checksum = "199381fbb052a1ddc0cb5953fe5664a762c6a1d31fbb94e7ad52d22d9fa84503"
 dependencies = [
  "gene_derive",
  "lazy_static",
@@ -1281,9 +1281,9 @@ dependencies = [
 
 [[package]]
 name = "gene_derive"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ddfa0eca810b02b29af5cd34c5ccc5c59df67684def639f96535fe701edc6e3"
+checksum = "30e7af09d7f1b0504d0c96c70228e470f1adfd0547e79fe5f9bb04fb82df2eec"
 dependencies = [
  "proc-macro2",
  "quote",
