@@ -1,5 +1,5 @@
 use core::str::FromStr;
-use gene::FieldGetter;
+use gene::{FieldGetter, FieldNameIterator};
 use kunai_common::cgroup::Cgroup;
 use kunai_macros::StrEnum;
 use serde::{Deserialize, Serialize};
@@ -56,11 +56,8 @@ impl<'de> Deserialize<'de> for Container {
 }
 
 impl<'f> FieldGetter<'f> for Container {
-    fn get_from_iter(
-        &'f self,
-        i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<gene::FieldValue<'f>> {
-        if i.len() > 0 {
+    fn get_from_iter(&'f self, i: FieldNameIterator) -> Option<gene::FieldValue<'f>> {
+        if !i.is_terminal() {
             return None;
         }
         Some(self.as_str().into())
@@ -92,7 +89,11 @@ impl Container {
     #[inline]
     pub fn from_cgroups(cgroups: &[String]) -> Option<Container> {
         for c in cgroups {
-            if let Some(c) = Self::from_split_cgroup(c.split(path::MAIN_SEPARATOR).collect::<Vec<&str>>().as_slice()) {
+            if let Some(c) = Self::from_split_cgroup(
+                c.split(path::MAIN_SEPARATOR)
+                    .collect::<Vec<&str>>()
+                    .as_slice(),
+            ) {
                 return Some(c);
             }
         }
