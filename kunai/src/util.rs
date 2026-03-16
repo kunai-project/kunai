@@ -4,7 +4,11 @@ use libc::{clock_gettime, rlimit, timespec, CLOCK_MONOTONIC};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
-use std::{fs, io, net::IpAddr};
+use std::{
+    fs,
+    io::{self, Write},
+    net::IpAddr,
+};
 use thiserror::Error;
 
 pub mod account;
@@ -166,6 +170,21 @@ pub fn is_bpf_lsm_enabled() -> Result<bool, io::Error> {
     Ok(fs::read_to_string("/sys/kernel/security/lsm")?
         .split(',')
         .any(|s| s == "bpf"))
+}
+
+pub fn ask_yes_no(question: &str, def: bool) -> Result<bool, io::Error> {
+    let mut input = String::new();
+
+    let yn = if def { "[Y/n]" } else { "[y/N]" };
+    print!("{question} {yn}: ");
+    io::stdout().flush()?;
+    io::stdin().read_line(&mut input)?;
+
+    if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes") {
+        return Ok(true);
+    }
+
+    Ok(def)
 }
 
 #[cfg(test)]

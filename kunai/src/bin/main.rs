@@ -2730,6 +2730,15 @@ const ABOUT_KUNAI: &str = r#"
     |-|
    /   \
    \___/"#;
+const DEFAULT_FILENAME: &str = "kunai";
+const DEFAULT_CONFIG_DIR: &str = "/etc/kunai/";
+const DEFAULT_INSTALL_DIR: &str = "/usr/bin";
+const DEFAULT_LOG_DIR: &str = "/var/log/kunai";
+const DEFAULT_UNIT_NAME: &str = "00-kunai";
+
+fn default_unit_path() -> PathBuf {
+    PathBuf::from("/lib/systemd/system").join(format!("{DEFAULT_UNIT_NAME}.service"))
+}
 
 #[derive(Parser)]
 #[command(author, version, about = ABOUT_KUNAI, long_about = None)]
@@ -3022,29 +3031,60 @@ struct InstallOpt {
     harden: bool,
 
     /// Set a custom installation directory
-    #[arg(long, default_value_t = String::from("/usr/bin/"))]
-    install_dir: String,
+    #[arg(long, default_value_os_t = PathBuf::from(DEFAULT_INSTALL_DIR))]
+    install_dir: PathBuf,
 
     /// Log file where kunai logs will be written
-    #[arg(long, default_value_t = String::from("/var/log/kunai/events.log"))]
-    log_file: String,
+    #[arg(long, default_value_os_t = PathBuf::from(DEFAULT_LOG_DIR).join("events.log"))]
+    log_file: PathBuf,
 
     /// Where to write the configuration file. Any intermediate directory
     /// will be created if needed.
-    #[arg(long, default_value_t = String::from("/etc/kunai/config.yaml"))]
-    config: String,
+    #[arg(long, default_value_os_t = PathBuf::from(DEFAULT_CONFIG_DIR).join("config.yaml"))]
+    config: PathBuf,
 
     /// Make a systemd unit installation
     #[arg(long)]
     systemd: bool,
 
     /// Install a systemd unit but do not enable it
-    #[arg(short, long = "systemd-unit", default_value_t = String::from("/lib/systemd/system/00-kunai.service"))]
-    unit: String,
+    #[arg(short, long = "systemd-unit", default_value_os_t = default_unit_path())]
+    unit: PathBuf,
 
     /// Enable Kunai unit (kunai will start at boot)
     #[arg(long)]
     enable_unit: bool,
+
+    /// Overwrite existing files
+    #[arg(short, long)]
+    force: bool,
+}
+
+#[derive(Debug, Args)]
+struct UninstallOpt {
+    /// Path to the installed kunai binary
+    #[arg(long, default_value_os_t = PathBuf::from(DEFAULT_INSTALL_DIR).join(DEFAULT_FILENAME))]
+    bin: PathBuf,
+
+    /// Directory containing kunai configuration files
+    #[arg(long, default_value_os_t = PathBuf::from(DEFAULT_CONFIG_DIR))]
+    config_dir: PathBuf,
+
+    /// Directory containing kunai log files
+    #[arg(long, default_value_os_t = PathBuf::from(DEFAULT_LOG_DIR))]
+    log_dir: PathBuf,
+
+    /// Path to the installed systemd service unit file
+    #[arg(short, long = "systemd-unit", default_value_os_t = default_unit_path())]
+    unit: PathBuf,
+
+    /// Remove all kunai files including configuration and logs
+    #[arg(long)]
+    all: bool,
+
+    /// Skip confirmation prompt before uninstallation
+    #[arg(short, long)]
+    force: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3061,8 +3101,11 @@ struct LogsOpt {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Install Kunai on the system
+    /// Install Kunai on the system
     Install(InstallOpt),
+    /// Uninstall Kunai from the system
+    /// Note: Default behaviour only removes the binary and service. Logs and configuration files are preserved.
+    Uninstall(UninstallOpt),
     /// Run kunai with custom options
     Run(RunOpt),
     /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
@@ -3696,12 +3739,19 @@ impl Command {
     }
 
     fn systemd_install(
-        co: &InstallOpt,
+        o: &InstallOpt,
         install_bin: &Path,
         config_path: &Path,
     ) -> anyhow::Result<()> {
         // we proceed with systemd installation
-        let unit_path = PathBuf::from(&co.unit);
+        let unit_path = &o.unit;
+        let unit_name = unit_path
+            .file_name()
+            .ok_or(anyhow!(
+                "unknown unit name: {}",
+                unit_path.to_string_lossy()
+            ))?
+            .to_string_lossy();
         let unit = format!(
             r#"[Unit]
 Description=Kunai Service
@@ -3729,19 +3779,37 @@ StandardError=journal
 [Install]
 Alias=kunai.service
 WantedBy=sysinit.target"#,
-            harden = co.harden,
+            harden = o.harden,
             install_bin = install_bin.to_string_lossy(),
             config_path = config_path.to_string_lossy(),
         );
 
-        println!(
-            "Writing systemd unit file to: {}",
-            unit_path.to_string_lossy()
-        );
-        fs::write(&unit_path, unit)?;
+        let mut overwrite_unit = !unit_path.exists();
+
+        if unit_path.exists() && !o.force {
+            overwrite_unit = ask_yes_no(
+                "Systemd unit file already exists, do you want to overwrite it?",
+                false,
+            )?;
+        }
+
+        if unit_path.exists() {
+            println!("Stopping existing kunai service");
+            Self::run_command("systemctl", &["stop", &unit_name])?;
+        }
+
+        if overwrite_unit || o.force {
+            println!(
+                "Writing systemd unit file to: {}",
+                unit_path.to_string_lossy()
+            );
+            fs::write(unit_path, unit)?;
+        } else {
+            return Ok(());
+        }
 
         // we want to enable systemd unit
-        if co.enable_unit {
+        if o.enable_unit {
             let unit_name = unit_path
                 .file_name()
                 .ok_or(anyhow!(
@@ -3759,17 +3827,17 @@ WantedBy=sysinit.target"#,
         Ok(())
     }
 
-    fn install(co: InstallOpt) -> anyhow::Result<()> {
+    fn install(o: InstallOpt) -> anyhow::Result<()> {
         let current_kernel = Utsname::kernel_version()
             .map_err(|e| anyhow!("cannot retrieve kernel version: {e}"))?;
-        let log_path = PathBuf::from(&co.log_file);
+        let log_path = &o.log_file;
         let log_dir = log_path.parent().ok_or(anyhow!(
             "cannot find dirname for log path: {}",
             log_path.to_string_lossy()
         ))?;
 
         // checks on harden mode
-        if co.harden {
+        if o.harden {
             if current_kernel < kernel!(5, 7, 0) {
                 return Err(anyhow!(
                     "harden mode is not supported for kernels below 5.7.0"
@@ -3790,7 +3858,7 @@ WantedBy=sysinit.target"#,
             .mode(0o700)
             .create(log_dir)?;
 
-        let config_path = PathBuf::from(&co.config);
+        let config_path = &o.config;
         let config_dir = config_path.parent().ok_or(anyhow!(
             "cannot find dirname for config path: {}",
             config_path.to_string_lossy()
@@ -3804,7 +3872,7 @@ WantedBy=sysinit.target"#,
 
         // create configuration for installation
         let conf = Config::default()
-            .harden(co.harden)
+            .harden(o.harden)
             .generate_host_uuid()
             .output(config::Output {
                 path: log_path.to_string_lossy().to_string(),
@@ -3812,16 +3880,27 @@ WantedBy=sysinit.target"#,
                 max_size: Some(huby::ByteSize::from_gb(1)),
                 buffered: false,
             });
-        println!(
-            "Writing configuration file: {}",
-            config_path.to_string_lossy()
-        );
+
+        let mut overwrite_config = !config_path.exists();
         // we write configuration file
-        fs::write(&config_path, serde_yaml::to_string(&conf)?)?;
+        if config_path.exists() && !o.force {
+            overwrite_config = ask_yes_no(
+                "Configuration file already exists, do you want to overwrite it?",
+                false,
+            )?;
+        }
+
+        if overwrite_config || o.force {
+            println!(
+                "Writing configuration file: {}",
+                config_path.to_string_lossy()
+            );
+            fs::write(config_path, serde_yaml::to_string(&conf)?)?;
+        }
 
         // we read our own binary
         let self_bin = fs::read("/proc/self/exe")?;
-        let install_bin = PathBuf::from(&co.install_dir).join("kunai");
+        let install_bin = PathBuf::from(&o.install_dir).join(DEFAULT_FILENAME);
         println!("Writing kunai binary to: {}", install_bin.to_string_lossy());
         // we write kunai bin
         fs::write(&install_bin, self_bin)?;
@@ -3836,11 +3915,89 @@ WantedBy=sysinit.target"#,
         // make the binary executable
         fs::set_permissions(&install_bin, PermissionsExt::from_mode(mode | 0o111))?;
 
-        if !co.systemd {
+        if !o.systemd {
             return Ok(());
         }
 
-        Self::systemd_install(&co, &install_bin, &config_path)
+        Self::systemd_install(&o, &install_bin, config_path)
+    }
+
+    fn uninstall(o: UninstallOpt) -> anyhow::Result<()> {
+        let mut to_rm = vec![&o.bin];
+        let unit_name = o
+            .unit
+            .file_name()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
+
+        if o.all {
+            to_rm.push(&o.config_dir);
+            to_rm.push(&o.log_dir);
+        }
+
+        to_rm.push(&o.unit);
+
+        println!("Following files and directory will be deleted: ");
+        for p in to_rm.iter() {
+            if p.exists() {
+                println!("\t{}", p.to_string_lossy())
+            }
+        }
+
+        if o.unit.exists() {
+            println!(
+                "Following service will be stopped and uninstalled: {} -> {}",
+                &unit_name,
+                o.unit.to_string_lossy()
+            );
+        }
+
+        if !o.force {
+            println!("\nThis action cannot be undone.");
+            print!("Do you want to continue? [y/N] ");
+            std::io::stdout().flush()?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("Uninstall cancelled.");
+                return Ok(());
+            }
+        }
+
+        // if any we must stop service first
+        if o.unit.exists() {
+            println!("Uninstall systemd service: {}", &unit_name);
+
+            // stop and disable unit
+            Self::run_command("systemctl", &["stop", &unit_name])?;
+            Self::run_command("systemctl", &["disable", &unit_name])?;
+
+            // delete unit file
+            let _ =
+                fs::remove_file(&o.unit).inspect_err(|e| error!("failed to remove unit file: {e}"));
+
+            // leave systemd in a consistent state
+            // Note: error does not abort uninstall process
+            let _ =
+                Self::run_command("systemctl", &["daemon-reload"]).inspect_err(|e| error!("{e}"));
+        }
+
+        // we finally delete files / directories
+        for p in to_rm.iter() {
+            println!("removing: {}", p.to_string_lossy());
+            if p.is_dir() {
+                fs::remove_dir_all(p).map_err(|e| {
+                    anyhow!("failed to delete directory {}: {e}", p.to_string_lossy())
+                })?;
+            } else if p.is_file() {
+                fs::remove_file(p)
+                    .map_err(|e| anyhow!("failed to delete file {}: {e}", p.to_string_lossy()))?;
+            }
+        }
+
+        Ok(())
     }
 
     fn logs(o: LogsOpt) -> anyhow::Result<()> {
@@ -3938,6 +4095,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     match cli.command {
         Some(Command::Install(o)) => Command::install(o),
+        Some(Command::Uninstall(o)) => Command::uninstall(o),
         Some(Command::Config(o)) => Command::config(o),
         Some(Command::Replay(o)) => Command::replay(o),
         Some(Command::Test(o)) => Command::test(o),
