@@ -3468,8 +3468,7 @@ impl Command {
 
         // we set RLIMIT_MEMLOCK programmatically otherwise kunai fails at starting
         // as a service on old kernels, even though securityfs has been set properly.
-        // This is very likely because securityfs isn't mounted when kunai starts
-        // mounted yet
+        // This is very likely because securityfs isn't mounted yet when kunai starts
         let mut rlimit =
             getrlimit(RLIMIT_MEMLOCK).map_err(|e| anyhow!("failed to get RLIMIT_MEMLOCK: {e}"))?;
         rlimit.rlim_cur = RLIM_INFINITY;
