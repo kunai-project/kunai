@@ -8,6 +8,7 @@ use std::{
     collections::BTreeMap,
     fs,
     ops::{Div, Mul},
+    path::PathBuf,
 };
 use thiserror::Error;
 
@@ -56,9 +57,9 @@ pub struct Output {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Scanner {
-    pub rules: Vec<String>,
-    pub iocs: Vec<String>,
-    pub yara: Vec<String>,
+    pub rules: Vec<PathBuf>,
+    pub iocs: Vec<PathBuf>,
+    pub yara: Vec<PathBuf>,
     pub min_severity: u8,
     pub show_positive_file_scan: bool,
 }

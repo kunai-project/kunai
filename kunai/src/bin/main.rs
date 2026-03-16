@@ -392,7 +392,7 @@ impl EventConsumer<'_> {
 
         let mut files_loaded = 0;
         for p in self.config.scanner.yara.iter() {
-            debug!("looking for yara rules in: {}", p);
+            debug!("looking for yara rules in: {}", p.to_string_lossy());
             let w = wo.clone().walk(p);
             for r in w {
                 let rule_file = r?;
@@ -507,7 +507,7 @@ impl EventConsumer<'_> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.scanner.rules.clone().iter().map(PathBuf::from) {
+        for p in self.config.scanner.rules.clone().iter() {
             if !p.exists() {
                 error!(
                     "kunai rule loader: no such file or directory {}",
@@ -518,7 +518,7 @@ impl EventConsumer<'_> {
                 self.load_kunai_rule_file(&mut compiler, p)?;
             } else if p.is_dir() {
                 // loading rule templates located in directory
-                for t in tpl_wo.clone().walk(&p) {
+                for t in tpl_wo.clone().walk(p) {
                     let p = t?;
                     info!("loading template: {}", p.to_string_lossy());
                     let reader = File::open(p)?;
@@ -526,7 +526,7 @@ impl EventConsumer<'_> {
                 }
 
                 // load rule files
-                for r in rules_wo.clone().walk(&p) {
+                for r in rules_wo.clone().walk(p) {
                     self.load_kunai_rule_file(&mut compiler, r?)?;
                 }
             }
@@ -556,14 +556,14 @@ impl EventConsumer<'_> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.scanner.iocs.clone().iter().map(PathBuf::from) {
+        for p in self.config.scanner.iocs.clone().iter() {
             if !p.exists() {
                 error!(
                     "ioc file loader: no such file or directory {}",
                     p.to_string_lossy()
                 )
             } else if p.is_file() {
-                self.load_iocs(&p)
+                self.load_iocs(p)
                     .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
             } else if p.is_dir() {
                 let w = wo.clone().walk(p);
@@ -2776,11 +2776,11 @@ struct ReplayOpt {
 
     /// Detection/filtering rule file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
-    rule_file: Option<Vec<String>>,
+    rule_file: Option<Vec<PathBuf>>,
 
     /// File containing IoCs (json line).
     #[arg(short, long, value_name = "FILE")]
-    ioc_file: Option<Vec<String>>,
+    ioc_file: Option<Vec<PathBuf>>,
 
     /// Minimal severity required to show detection
     #[arg(long, short = 's')]
@@ -2823,7 +2823,7 @@ impl TryFrom<ReplayOpt> for Config {
 struct TestOpt {
     /// Paths to the rules we want to test
     #[arg(short, long, value_name = "PATH")]
-    rule_path: Option<Vec<String>>,
+    rule_path: Option<Vec<PathBuf>>,
 
     /// Paths to a test directory
     #[arg(short, long, value_name = "DIR")]
@@ -2899,15 +2899,15 @@ struct RunOpt {
 
     /// Detection/filtering rule file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
-    rule_file: Option<Vec<String>>,
+    rule_file: Option<Vec<PathBuf>>,
 
     /// File containing IoCs (json line).
     #[arg(short, long, value_name = "FILE")]
-    ioc_file: Option<Vec<String>>,
+    ioc_file: Option<Vec<PathBuf>>,
 
     /// Yara rules dir/file. Supersedes configuration file.
     #[arg(short, long, value_name = "FILE")]
-    yara_rules: Option<Vec<String>>,
+    yara_rules: Option<Vec<PathBuf>>,
 
     /// Minimal severity required to show detection
     #[arg(long)]
