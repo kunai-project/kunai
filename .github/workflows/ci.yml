@@ -51,6 +51,7 @@ jobs:
           chmod -R 777 ./
           docker run --name=$cont_name -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo xtask clippy -- --workspace -- -D warnings
           exit_code=$(docker inspect --format='{{.State.ExitCode}}' $cont_name)
+          cat ./kunai-common/src/co_re/gen.rs
           docker rm $cont_name
           exit $exit_code
 
