@@ -1,8 +1,10 @@
 use bindgen::builder;
 use std::{path::Path, process::Command};
 
+const DEFAULT_GEN_FILENAME: &str = "gen.rs";
+
 fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q) {
-    let out_file = out_dir.as_ref().join("gen.rs");
+    let out_file = out_dir.as_ref().join(DEFAULT_GEN_FILENAME);
 
     let bindings = builder()
         .header(file.as_ref().to_string_lossy())
@@ -25,9 +27,14 @@ fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q) {
 
 fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
+    let core_dir = Path::new("src/co_re");
     let shim_dir = Path::new("src/co_re/c");
     let shim_file = shim_dir.join("shim.c");
-    bindgen(&shim_file, "src/co_re");
+
+    // no need to run bindgen if gen.rs file already exists
+    if core_dir.join(DEFAULT_GEN_FILENAME).exists() {
+        bindgen(&shim_file, core_dir);
+    }
 
     // compile this only when the target is bpf
     if std::env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "bpf" {
