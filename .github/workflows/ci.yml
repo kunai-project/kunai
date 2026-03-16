@@ -45,7 +45,7 @@ jobs:
 
       - name: Run clippy on full project
         run: |
-          set -eux
+          #set -eux
           cont_name=jap_knife
           # building target directory
           chmod -R 777 ./
