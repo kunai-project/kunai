@@ -607,7 +607,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_mnt_namespace_mounts_user(mnt_namespace: *mut mnt_namespace)
-        -> ::core::ffi::c_uint;
+    -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
     pub fn shim_mnt_namespace_mounts_exists(mnt_namespace: *mut mnt_namespace) -> bool;
@@ -627,7 +627,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_sysname_user(new_utsname: *mut new_utsname)
-        -> *mut ::core::ffi::c_char;
+    -> *mut ::core::ffi::c_char;
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_sysname_exists(new_utsname: *mut new_utsname) -> bool;
@@ -648,7 +648,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_release_user(new_utsname: *mut new_utsname)
-        -> *mut ::core::ffi::c_char;
+    -> *mut ::core::ffi::c_char;
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_release_exists(new_utsname: *mut new_utsname) -> bool;
@@ -658,7 +658,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_version_user(new_utsname: *mut new_utsname)
-        -> *mut ::core::ffi::c_char;
+    -> *mut ::core::ffi::c_char;
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_version_exists(new_utsname: *mut new_utsname) -> bool;
@@ -668,7 +668,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_machine_user(new_utsname: *mut new_utsname)
-        -> *mut ::core::ffi::c_char;
+    -> *mut ::core::ffi::c_char;
 }
 unsafe extern "C" {
     pub fn shim_new_utsname_machine_exists(new_utsname: *mut new_utsname) -> bool;
@@ -1007,7 +1007,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_task_struct_sched_task_group_user(task_struct: *mut task_struct)
-        -> *mut task_group;
+    -> *mut task_group;
 }
 unsafe extern "C" {
     pub fn shim_task_struct_sched_task_group_exists(task_struct: *mut task_struct) -> bool;
@@ -1070,7 +1070,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_bpf_prog_aux_verified_insns(bpf_prog_aux: *mut bpf_prog_aux)
-        -> ::core::ffi::c_uint;
+    -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
     pub fn shim_bpf_prog_aux_verified_insns_user(
@@ -1233,7 +1233,7 @@ pub struct sock_fprog_kern {
 }
 unsafe extern "C" {
     pub fn shim_sock_fprog_kern_len(sock_fprog_kern: *mut sock_fprog_kern)
-        -> ::core::ffi::c_ushort;
+    -> ::core::ffi::c_ushort;
 }
 unsafe extern "C" {
     pub fn shim_sock_fprog_kern_len_user(
@@ -1358,7 +1358,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_sockaddr_in_sin_family_user(sockaddr_in: *mut sockaddr_in)
-        -> ::core::ffi::c_ushort;
+    -> ::core::ffi::c_ushort;
 }
 unsafe extern "C" {
     pub fn shim_sockaddr_in_sin_family_exists(sockaddr_in: *mut sockaddr_in) -> bool;
@@ -1445,14 +1445,14 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_sock_common_skc_family_user(sock_common: *mut sock_common)
-        -> ::core::ffi::c_ushort;
+    -> ::core::ffi::c_ushort;
 }
 unsafe extern "C" {
     pub fn shim_sock_common_skc_family_exists(sock_common: *mut sock_common) -> bool;
 }
 unsafe extern "C" {
     pub fn shim_sock_common_skc_addrpair(sock_common: *mut sock_common)
-        -> ::core::ffi::c_ulonglong;
+    -> ::core::ffi::c_ulonglong;
 }
 unsafe extern "C" {
     pub fn shim_sock_common_skc_addrpair_user(
@@ -1467,7 +1467,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_sock_common_skc_portpair_user(sock_common: *mut sock_common)
-        -> ::core::ffi::c_uint;
+    -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
     pub fn shim_sock_common_skc_portpair_exists(sock_common: *mut sock_common) -> bool;
