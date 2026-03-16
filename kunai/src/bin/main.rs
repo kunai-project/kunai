@@ -3732,7 +3732,10 @@ impl Command {
         if !output.status.success() {
             std::io::stdout().write_all(&output.stderr)?;
             std::io::stderr().write_all(&output.stderr)?;
-            return Err(anyhow::format_err!("systemctl daemon-reload failed"));
+            return Err(anyhow::format_err!(
+                "command failed: {cmd} {}",
+                args.join(" ")
+            ));
         }
 
         Ok(())
