@@ -121,7 +121,7 @@ pub fn prepare_bpf(
     vll: VerifierLogLevel,
 ) -> anyhow::Result<Ebpf> {
     let page_size = page_size()? as u64;
-    let page_shift = page_shift()? as u64;
+    let page_shift = page_shift()?;
 
     let mut bpf = EbpfLoader::new()
         .verifier_log_level(vll)
