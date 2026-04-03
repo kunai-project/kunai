@@ -9,10 +9,14 @@ use std::{
     fs,
     ops::{Div, Mul},
     path::PathBuf,
+    time::Duration,
 };
 use thiserror::Error;
 
-use crate::util::sha256_data;
+use crate::util::{
+    serde::{deserialize_opt_duration, serialize_opt_duration},
+    sha256_data,
+};
 
 pub const DEFAULT_SEND_DATA_MIN_LEN: u64 = 256;
 pub const DEFAULT_MAX_BUFFERED_EVENTS: u16 = 1024;
@@ -51,6 +55,11 @@ impl Event {
 pub struct Output {
     pub path: String,
     pub rotate_size: Option<ByteSize>,
+    #[serde(
+        serialize_with = "serialize_opt_duration",
+        deserialize_with = "deserialize_opt_duration"
+    )]
+    pub rotate_interval: Option<Duration>,
     pub max_size: Option<ByteSize>,
     pub buffered: bool,
 }
@@ -114,6 +123,7 @@ impl Default for Config {
                 path: "/dev/stdout".into(),
                 max_size: None,
                 rotate_size: None,
+                rotate_interval: None,
                 buffered: false,
             },
             events,
@@ -167,6 +177,7 @@ impl Config {
             path: "stdout".into(),
             max_size: None,
             rotate_size: None,
+            rotate_interval: None,
             buffered: false,
         };
         self
@@ -271,5 +282,18 @@ mod test {
         let uuid = host_uuid();
         assert!(uuid.is_some());
         println!("machine uuid: {}", uuid.unwrap())
+    }
+
+    #[test]
+    fn test_duration_in_config() {
+        let mut config = Config {
+            ..Default::default()
+        };
+
+        config.output.rotate_interval = Some(Duration::from_mins(15));
+        let yaml_config = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml_config.contains("rotate_time: 15m"));
+        config = serde_yaml::from_str(&yaml_config).unwrap();
+        assert_eq!(config.output.rotate_interval, Some(Duration::from_mins(15)));
     }
 }

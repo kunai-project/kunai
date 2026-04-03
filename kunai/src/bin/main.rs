@@ -8,6 +8,7 @@ use bytes::BytesMut;
 use clap::builder::styling;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::Builder;
+use firo::Trigger;
 use flate2::bufread::GzDecoder;
 use fs_walk::WalkOptions;
 use gene::rules::CompiledRule;
@@ -25,6 +26,11 @@ use kunai::events::{IoUringOp, IoUringSqeData, StartData};
 use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo};
 use kunai::ioc::IoC;
 use kunai::util::uname::Utsname;
+use kunai::util::uptime::Uptime;
+use kunai::util::{
+    ask_yes_no, get_current_uid, getrlimit, is_bpf_lsm_enabled, is_public_ip, kill, md5_data,
+    setrlimit, sha1_data, sha256_data, sha512_data,
+};
 
 use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
@@ -35,17 +41,16 @@ use kunai_common::config::Filter;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::{inspect_err, kernel};
 
+use kunai::util::namespace::{Mnt, Namespace};
 use kunai_macros::StrEnum;
 use libc::{RLIMIT_MEMLOCK, RLIM_INFINITY};
 use log::LevelFilter;
 use lru_st::collections::LruHashSet;
-use namespace::{Mnt, Namespace};
 use pure_magic::MagicDb;
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::timeout;
-use uptime::Uptime;
 
 use std::borrow::Cow;
 use std::cmp::max;
@@ -79,7 +84,6 @@ use kunai::cache::*;
 
 use kunai::config::{self, Config};
 use kunai::util::namespace::unshare;
-use kunai::util::*;
 
 use communityid::{Flow, Protocol};
 
@@ -312,12 +316,15 @@ impl EventConsumer<'_> {
                     opts.max_size(max_size);
                 }
 
-                if let Some(rotate_size) = config.output.rotate_size {
-                    opts.trigger(rotate_size.into());
-                    opts.compression(firo::Compression::Gzip);
-                }
+                // we create optimal trigger and set it for the file rotation
+                opts.opt_trigger(Trigger::from_options(
+                    config.output.rotate_interval,
+                    config.output.rotate_size,
+                ));
 
-                opts.create_append(v)?.into()
+                opts.compression(firo::Compression::Gzip)
+                    .create_append(v)?
+                    .into()
             }
         };
         Ok(out)
@@ -3879,6 +3886,7 @@ WantedBy=sysinit.target"#,
             .output(config::Output {
                 path: log_path.to_string_lossy().to_string(),
                 rotate_size: Some(huby::ByteSize::from_mb(10)),
+                rotate_interval: Some(Duration::from_mins(15)),
                 max_size: Some(huby::ByteSize::from_gb(1)),
                 buffered: false,
             });
