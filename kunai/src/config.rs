@@ -59,7 +59,7 @@ pub struct Output {
         serialize_with = "serialize_opt_duration",
         deserialize_with = "deserialize_opt_duration"
     )]
-    pub rotate_time: Option<Duration>,
+    pub rotate_interval: Option<Duration>,
     pub max_size: Option<ByteSize>,
     pub buffered: bool,
 }
@@ -123,7 +123,7 @@ impl Default for Config {
                 path: "/dev/stdout".into(),
                 max_size: None,
                 rotate_size: None,
-                rotate_time: None,
+                rotate_interval: None,
                 buffered: false,
             },
             events,
@@ -177,7 +177,7 @@ impl Config {
             path: "stdout".into(),
             max_size: None,
             rotate_size: None,
-            rotate_time: None,
+            rotate_interval: None,
             buffered: false,
         };
         self
@@ -290,10 +290,10 @@ mod test {
             ..Default::default()
         };
 
-        config.output.rotate_time = Some(Duration::from_mins(15));
+        config.output.rotate_interval = Some(Duration::from_mins(15));
         let yaml_config = serde_yaml::to_string(&config).unwrap();
         assert!(yaml_config.contains("rotate_time: 15m"));
         config = serde_yaml::from_str(&yaml_config).unwrap();
-        assert_eq!(config.output.rotate_time, Some(Duration::from_mins(15)));
+        assert_eq!(config.output.rotate_interval, Some(Duration::from_mins(15)));
     }
 }

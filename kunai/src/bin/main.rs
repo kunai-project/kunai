@@ -318,7 +318,7 @@ impl EventConsumer<'_> {
 
                 // we create optimal trigger and set it for the file rotation
                 opts.opt_trigger(Trigger::from_options(
-                    config.output.rotate_time,
+                    config.output.rotate_interval,
                     config.output.rotate_size,
                 ));
 
@@ -3886,7 +3886,7 @@ WantedBy=sysinit.target"#,
             .output(config::Output {
                 path: log_path.to_string_lossy().to_string(),
                 rotate_size: Some(huby::ByteSize::from_mb(10)),
-                rotate_time: Some(Duration::from_mins(15)),
+                rotate_interval: Some(Duration::from_mins(15)),
                 max_size: Some(huby::ByteSize::from_gb(1)),
                 buffered: false,
             });
