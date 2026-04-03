@@ -1628,6 +1628,7 @@ dependencies = [
  "gene_derive",
  "hex",
  "huby",
+ "humantime",
  "ip_network",
  "kunai-common",
  "kunai-macros",

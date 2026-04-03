@@ -17,6 +17,7 @@ pub mod elf;
 pub mod namespace;
 pub mod uname;
 pub mod uptime;
+pub mod serde;
 
 #[allow(non_camel_case_types)]
 #[cfg(target_env = "musl")]
