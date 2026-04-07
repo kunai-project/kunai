@@ -456,12 +456,21 @@ impl EventConsumer<'_> {
                     if let Some(event_name) = v.as_str() {
                         let id = if event_name.starts_with('-') {
                             let event_name = event_name.trim_start_matches('-');
-                            let ty = Type::from_str(event_name)
-                            .map_err(|_| {anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())})?;
+                            let ty = Type::from_str(event_name).map_err(|_| {
+                                anyhow!(
+                                    "file={} rule={rule_name} parse error: unknown event name \
+                                     {event_name}",
+                                    rule_file.to_string_lossy()
+                                )
+                            })?;
                             -i64::from(ty as u32)
                         } else {
                             let ty = Type::from_str(event_name).map_err(|_| {
-                                anyhow!("file={} rule={rule_name} parse error: unknown event name {event_name}",rule_file.to_string_lossy())
+                                anyhow!(
+                                    "file={} rule={rule_name} parse error: unknown event name \
+                                     {event_name}",
+                                    rule_file.to_string_lossy()
+                                )
                             })?;
                             i64::from(ty as u32)
                         };
@@ -2412,7 +2421,11 @@ impl EventProducer {
                             // It may happen that we do not manage to get program's metadata. This happens
                             // when programs gets loaded and very quickly unloaded. It seems a common
                             // practice to load a few eBPF instructions (Aya, Docker ...) to test eBPF features.
-                            warn!("couldn't retrieve bpf program's metadata for event={}, it probably got unloaded too quickly", e.info.uuid.into_uuid().as_hyphenated());
+                            warn!(
+                                "couldn't retrieve bpf program's metadata for event={}, it \
+                                 probably got unloaded too quickly",
+                                e.info.uuid.into_uuid().as_hyphenated()
+                            );
                         } else {
                             error!(
                                 "failed to retrieve bpf_prog instructions for event={}: {}",
@@ -2577,8 +2590,16 @@ impl EventProducer {
                                     .join(", ");
 
                                 error!(
-                                    "some events have been lost in the way from kernel read={} lost={} loss-ratio={:.2}% eps={:.2}: consider event filtering out and/or increase the number of buffered events in configuration. Filtering hints, most frequent events: {top} ",
-                                    stats.read, stats.lost, stats.percent_loss(), stats.eps());
+                                    "some events have been lost in the way from kernel read={} \
+                                     lost={} loss-ratio={:.2}% eps={:.2}: consider event \
+                                     filtering out and/or increase the number of buffered events \
+                                     in configuration. Filtering hints, most frequent events: \
+                                     {top} ",
+                                    stats.read,
+                                    stats.lost,
+                                    stats.percent_loss(),
+                                    stats.eps()
+                                );
 
                                 // used to prevent borrow checker to
                                 // kick in in next block
@@ -3552,7 +3573,9 @@ impl Command {
                         let batch = info.batch;
                         debug_assert!(
                             evt_ts >= last_ts,
-                            "last={last_ts} (batch={last_batch}) > current={evt_ts} (batch={batch}"
+                            "last={last_ts} (batch={last_batch}) > current={evt_ts} \
+                             (batch={batch}) event={}",
+                            info.etype.as_str()
                         );
                         // all historical ts must be smaller than current
                         debug_assert!(hist.iter().all(|&ts| ts <= evt_ts));
