@@ -90,7 +90,7 @@ impl<P> CoRe<P> {
     }
 
     pub fn as_ptr(&self) -> *const P {
-        self.ptr as *mut _
+        self.ptr
     }
 
     fn as_ptr_mut(&self) -> *mut P {
