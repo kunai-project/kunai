@@ -24,10 +24,7 @@ pub mod yara;
 
 /// Holds the binary data of all the eBPF programs
 const BPF_ELF: &[u8] = {
-    #[cfg(debug_assertions)]
-    let d = include_bytes_aligned!("../../target/bpfel-unknown-none/debug/kunai-ebpf");
-    #[cfg(not(debug_assertions))]
-    let d = include_bytes_aligned!("../../target/bpfel-unknown-none/release/kunai-ebpf");
+    let d = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/kunai-ebpf"));
     d
 };
 
@@ -107,7 +104,10 @@ fn configure_probes(conf: &Config, programs: &mut Programs, target: KernelVersio
         // we know that until v6.12 the function is there so print warning
         // only if kernel is more recent.
         if target > kernel!(6, 12) {
-            warn!("syscore_resume probe has been disabled: make sure your kernel has been built without CONFIG_PM_SLEEP")
+            warn!(
+                "syscore_resume probe has been disabled: make sure your kernel has been built \
+                 without CONFIG_PM_SLEEP"
+            )
         }
     }
 }
@@ -207,12 +207,19 @@ pub fn load_and_attach_bpf<'a>(
                 Err(crate::compat::Error::Program(ProgramError::SyscallError(_)))
             )
         {
-            warn!("syscore_resume probe has failed to load, make sure your kernel is compiled without CONFIG_PM_SLEEP")
+            warn!(
+                "syscore_resume probe has failed to load, make sure your kernel is compiled \
+                 without CONFIG_PM_SLEEP"
+            )
         }
 
         let _ = r.inspect_err(|e| {
             if let Some(a) = p.attach_point.as_ref() {
-                error!("failed to attach probe={} to function={}: verify function exists in your kernel", &p.name, &a)
+                error!(
+                    "failed to attach probe={} to function={}: verify function exists in your \
+                     kernel",
+                    &p.name, &a
+                )
             } else {
                 error!("failed to attach probe={}", &p.name)
             }

@@ -52,7 +52,7 @@ mod test {
 
     #[test]
     fn parse() {
-        let data = include_bytes!("../../../target/bpfel-unknown-none/debug/kunai-ebpf");
-        println!("{:#?}", ElfInfo::from_raw_elf(data.as_slice()).unwrap())
+        let data = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/kunai-ebpf"));
+        println!("{:#?}", ElfInfo::from_raw_elf(data).unwrap())
     }
 }
