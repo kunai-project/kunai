@@ -1,72 +1,12 @@
 [package]
 name = "kunai"
-edition = "2021"
-description = "Kunai userland crate"
 version.workspace = true
 authors.workspace = true
-license.workspace = true
+edition = "2021"
+description = "Kunai userland crate"
 repository.workspace = true
+license.workspace = true
 publish = false
-
-[dependencies]
-# Aya deps
-aya = { version = "0.13.0", features = ["async_tokio"] }
-aya-obj = { version = "0.1.0" }
-
-# Kunai deps
-kunai-common = { path = "../kunai-common", features = ["user"] }
-kunai-macros = { path = "../kunai-common/src/kunai-macros" }
-
-# Non aya deps
-hex = "0.4.3"
-md-5 = "0.10.5"
-sha1 = "0.10.5"
-sha2 = "0.10.6"
-chrono = { version = "0.4.24", features = ["clock", "serde"] }
-libc = "0.2"
-thiserror = "1.0"
-procfs = "0.16"
-ip_network = "0.4"
-lru-st = { version = "0.2", features = ["sync"] }
-lazy-cache = "0.1"
-pure-magic = "0.2"
-magic-db = "0.4"
-
-# detection engine for events
-gene = { version = ">=0.7.2" }
-gene_derive = { version = ">=0.7.2" }
-
-anyhow = "1.0.68"
-env_logger = "0.10"
-log = "0.4"
-tokio = { version = "1.43", features = [
-    "macros",
-    "rt",
-    "rt-multi-thread",
-    "net",
-    "signal",
-    "fs",
-    "io-util",
-    "time",
-    "sync",
-] }
-bytes = "1"
-serde = { version = "1.0.164", features = ["derive"] }
-clap = { version = "4.3.4", features = ["derive"] }
-serde_json = "1.0.108"
-uuid = { version = "1.6.1", features = ["serde", "v4", "v5"] }
-object = { version = "0.34.0", features = ["elf"] }
-huby = { version = "0.2", features = ["serde"] }
-firo = { version = "0.3" }
-yara-x = { version = "1.14.0" }
-fs-walk = { version = "0.1.0" }
-communityid = { version = "0.1", features = ["serde"] }
-serde_yaml = "0.9"
-flate2 = "1.0"
-humantime = "2.3.0"
-
-[dev-dependencies]
-tempfile = "3.12.0"
 
 [[bin]]
 name = "kunai"
@@ -75,3 +15,82 @@ path = "src/bin/main.rs"
 [[bin]]
 name = "tests"
 path = "src/tests/kernel.rs"
+
+[dependencies]
+# Aya deps
+aya = { workspace = true, features = ["async_tokio"] }
+aya-obj = { workspace = true }
+
+# Kunai deps
+kunai-common = { workspace = true, features = ["user"] }
+kunai-macros = { workspace = true }
+
+# Non aya deps
+anyhow = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+clap = { workspace = true, features = ["derive"] }
+communityid = { workspace = true, features = ["serde"] }
+env_logger = { workspace = true }
+firo = { workspace = true }
+flate2 = { workspace = true }
+fs-walk = { workspace = true }
+hex = { workspace = true }
+huby = { workspace = true, features = ["serde"] }
+humantime = { workspace = true }
+ip_network = { workspace = true }
+lazy-cache = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+lru-st = { workspace = true, features = ["sync"] }
+magic-db = { workspace = true }
+object = { workspace = true, features = ["elf"] }
+procfs = { workspace = true }
+pure-magic = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+  "fs",
+  "io-util",
+  "macros",
+  "net",
+  "rt",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
+uuid = { workspace = true, features = ["serde", "v4", "v5"] }
+yara-x = { workspace = true }
+
+# crypto
+md-5 = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+
+# detection engine for events
+gene = { workspace = true }
+gene_derive = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.12.0"
+
+[build-dependencies]
+anyhow = { workspace = true }
+aya-build = { workspace = true }
+cargo_metadata = { workspace = true }
+# TODO(https://github.com/rust-lang/cargo/issues/12375): this should be an artifact dependency, but
+# it's not possible to tell cargo to use `-Z build-std` to build it. We cargo-in-cargo in the build
+# script to build this, but we want to teach cargo about the dependency so that cache invalidation
+# works properly.
+#
+# Note also that https://github.com/rust-lang/cargo/issues/10593 occurs when `target = ...` is added
+# to an artifact dependency; it seems possible to work around that by setting `resolver = "1"` in
+# Cargo.toml in the workspace root.
+#
+# Finally note that *any* usage of `artifact = ...` in *any* Cargo.toml in the workspace breaks
+# workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
+# features.
+kunai-ebpf = { path = "../kunai-ebpf" }
