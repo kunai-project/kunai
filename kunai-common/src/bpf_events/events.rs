@@ -1,5 +1,4 @@
 use super::Type;
-use crate::macros::not_bpf_target_code;
 
 // events we want to be accesible
 mod connect;
@@ -48,10 +47,10 @@ mod io_uring;
 pub use io_uring::*;
 
 // prevent using correlation event in bpf code
-not_bpf_target_code! {
-    mod correlation;
-    pub use correlation::*;
-}
+#[cfg(feature = "user")]
+mod correlation;
+#[cfg(feature = "user")]
+pub use correlation::*;
 
 // used to pipe events to userland
 mod perfs;

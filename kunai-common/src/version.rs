@@ -1,12 +1,12 @@
-not_bpf_target_code! {
-    mod user;
-    pub use user::*;
-}
+#[cfg(feature = "user")]
+mod user;
+#[cfg(feature = "user")]
+pub use user::*;
 
-bpf_target_code! {
-    mod bpf;
-    pub use bpf::*;
-}
+#[cfg(feature = "bpf")]
+mod bpf;
+#[cfg(feature = "bpf")]
+pub use bpf::*;
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -28,8 +28,6 @@ macro_rules! kernel {
         $crate::version::KernelVersion::new($major, $minor, $patch)
     };
 }
-
-use crate::macros::{bpf_target_code, not_bpf_target_code};
 
 impl KernelVersion {
     pub const MAX_VERSION: KernelVersion = KernelVersion {

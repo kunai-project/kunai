@@ -1,8 +1,6 @@
 #![deny(unused_imports)]
 #![cfg_attr(target_arch = "bpf", no_std)]
-#![cfg_attr(target_arch = "bpf", allow(static_mut_refs))]
-
-use macros::bpf_target_code;
+#![cfg_attr(feature = "bpf", allow(static_mut_refs, clippy::missing_safety_doc))]
 
 pub mod macros;
 
@@ -15,9 +13,8 @@ pub mod errors;
 pub mod kprobe;
 pub mod syscalls;
 
-bpf_target_code! {
-    pub mod co_re;
-}
+#[cfg(feature = "bpf")]
+pub mod co_re;
 
 pub mod bpf_events;
 pub mod net;

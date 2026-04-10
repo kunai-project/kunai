@@ -1,9 +1,6 @@
 use kunai_macros::StrEnum;
 
-use crate::{
-    bpf_events::{Event, TaskInfo},
-    macros::not_bpf_target_code,
-};
+use crate::bpf_events::{Event, TaskInfo};
 
 pub type KillEvent = Event<KillData>;
 
@@ -85,13 +82,16 @@ pub enum Signal {
     SIGRT30 = 64,
 }
 
-not_bpf_target_code! {
-    impl Signal{
-        pub fn from_uint_to_string<T:Into<u64>>(u: T) -> String{
-            let u:u64 = u.into();
+#[cfg(feature = "user")]
+mod user {
+    use super::*;
+
+    impl Signal {
+        pub fn from_uint_to_string<T: Into<u64>>(u: T) -> String {
+            let u: u64 = u.into();
             Signal::try_from_uint(u)
-            .map(|o| o.as_str().into())
-            .unwrap_or(format!("SIG({})", u))
+                .map(|o| o.as_str().into())
+                .unwrap_or(format!("SIG({})", u))
         }
     }
 }

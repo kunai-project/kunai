@@ -1,18 +1,16 @@
 use crate::buffer::Buffer;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
-use crate::macros::{bpf_target_code, not_bpf_target_code};
 use crate::uuid::{ProcUuid, Uuid};
 use kunai_macros::{BpfError, StrEnum};
 
-not_bpf_target_code! {
-    mod user;
-    pub use user::*;
-}
+#[cfg(feature = "user")]
+mod user;
+#[cfg(feature = "user")]
+pub use user::*;
 
-bpf_target_code! {
-    mod bpf;
-}
+#[cfg(feature = "bpf")]
+mod bpf;
 
 mod events;
 pub use events::*;
@@ -225,11 +223,10 @@ impl TaskInfo {
         self.tg_uuid.random = rand;
     }
 
-    not_bpf_target_code! {
-        #[inline(always)]
-        pub fn comm_string(&self) -> std::string::String {
-            self.comm_str().into()
-        }
+    #[cfg(feature = "user")]
+    #[inline(always)]
+    pub fn comm_string(&self) -> std::string::String {
+        self.comm_str().into()
     }
 }
 

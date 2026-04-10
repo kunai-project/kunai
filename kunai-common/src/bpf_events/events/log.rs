@@ -1,9 +1,4 @@
-use crate::{
-    bpf_events::Event,
-    errors::ProbeError,
-    macros::{bpf_target_code, not_bpf_target_code},
-    string::String,
-};
+use crate::{bpf_events::Event, errors::ProbeError, string::String};
 
 pub type LogEvent = Event<LogData>;
 
@@ -24,17 +19,21 @@ pub struct LogData {
     pub message: Option<String<64>>,
 }
 
-bpf_target_code! {
+#[cfg(feature = "bpf")]
+mod bpf {
+
+    use super::*;
     use crate::string;
-    use aya_ebpf::helpers::{bpf_get_current_pid_tgid, bpf_get_current_comm};
+    use crate::string::String;
+    use aya_ebpf::helpers::{bpf_get_current_comm, bpf_get_current_pid_tgid};
 
     const DEFAULT_COMM: String<16> = string::from_static("?");
 
     impl LogEvent {
         #[inline(always)]
-        pub fn init_with_level(&mut self, level: Level){
+        pub fn init_with_level(&mut self, level: Level) {
             let pid_tgid = bpf_get_current_pid_tgid();
-            self.data.level=level;
+            self.data.level = level;
             self.info.process.pid = pid_tgid as i32;
             self.info.process.tgid = (pid_tgid >> 32) as i32;
             self.info.process.comm = bpf_get_current_comm().unwrap_or(DEFAULT_COMM.s);
@@ -42,7 +41,10 @@ bpf_target_code! {
     }
 }
 
-not_bpf_target_code! {
+#[cfg(feature = "user")]
+mod user {
+    use super::*;
+    
     impl core::fmt::Display for LogEvent {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(
@@ -55,22 +57,12 @@ not_bpf_target_code! {
                 self.info.process.comm_str(),
             )?;
 
-            if let Some(msg) = self.data.message.as_ref(){
-                write!(
-                    f,
-                    " {}",
-                    msg,
-                )?;
-
+            if let Some(msg) = self.data.message.as_ref() {
+                write!(f, " {}", msg,)?;
             }
 
-            if let Some(e) = self.data.error.as_ref(){
-                write!(
-                    f,
-                    " {}: {}",
-                    e.name(),
-                    e.description()
-                )?;
+            if let Some(e) = self.data.error.as_ref() {
+                write!(f, " {}: {}", e.name(), e.description())?;
             }
             Ok(())
         }

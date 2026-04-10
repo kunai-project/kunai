@@ -1,13 +1,8 @@
-use crate::macros::{bpf_target_code, not_bpf_target_code};
+#[cfg(feature = "user")]
+mod user;
 
-not_bpf_target_code! {
-    mod user;
-
-}
-
-bpf_target_code! {
-    mod bpf;
-}
+#[cfg(feature = "bpf")]
+mod bpf;
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]

@@ -1,11 +1,11 @@
 use kunai_macros::BpfError;
 
-use crate::{errors::ProbeError, macros::bpf_target_code};
+use crate::{errors::ProbeError};
 
-bpf_target_code! {
-    mod bpf;
-    pub use bpf::*;
-}
+#[cfg(feature = "bpf")]
+mod bpf;
+#[cfg(feature = "bpf")]
+pub use bpf::*;
 
 #[derive(BpfError, Clone, Copy)]
 pub enum Error {

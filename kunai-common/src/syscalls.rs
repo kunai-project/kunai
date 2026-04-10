@@ -1,9 +1,7 @@
-use crate::macros::bpf_target_code;
-
-bpf_target_code! {
-    mod bpf;
-    pub use bpf::*;
-}
+#[cfg(feature = "bpf")]
+mod bpf;
+#[cfg(feature = "bpf")]
+pub use bpf::*;
 
 use kunai_macros::BpfError;
 

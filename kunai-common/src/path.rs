@@ -1,4 +1,4 @@
-use crate::{errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code};
+use crate::errors::ProbeError;
 
 use super::time::Time;
 
@@ -7,13 +7,11 @@ use kunai_macros::BpfError;
 #[allow(unused_imports)]
 use core::{cmp::min, ffi::c_long};
 
-not_bpf_target_code! {
-    mod user;
-}
+#[cfg(feature = "user")]
+mod user;
 
-bpf_target_code! {
-    mod bpf;
-}
+#[cfg(feature = "bpf")]
+mod bpf;
 
 // for path resolution
 pub const MAX_PATH_DEPTH: u16 = 128;
@@ -278,17 +276,17 @@ impl Path {
             }
         };
 
-        bpf_target_code! {
+        #[cfg(feature = "bpf")]
+        {
             let i = i as i64;
             if aya_ebpf::check_bounds_signed(i, 0, self.buffer.len() as i64) {
                 return Ok(unsafe { *self.buffer.get_unchecked(i as usize) });
             }
         };
 
-        not_bpf_target_code! {
-            if i < self.buffer.len(){
-                return Ok(unsafe { *self.buffer.get_unchecked(i) });
-            }
+        #[cfg(feature = "user")]
+        if i < self.buffer.len() {
+            return Ok(unsafe { *self.buffer.get_unchecked(i) });
         };
 
         Err(Error::OutOfBound)
@@ -343,6 +341,7 @@ impl Path {
 }
 
 #[cfg(test)]
+#[cfg(feature = "user")]
 mod test {
 
     use super::*;
