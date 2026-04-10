@@ -21,13 +21,14 @@ impl in6_addr {
     #[inline(always)]
     pub unsafe fn addr16(&self) -> Option<[u16; 8]> {
         let addr = self.addr8()?;
-        Some(core::mem::transmute(addr))
+        Some(core::mem::transmute::<[u8; 16], [u16; 8]>(addr))
     }
 
     #[inline(always)]
     pub unsafe fn addr32(&self) -> Option<[u32; 4]> {
         let addr = self.addr8()?;
-        Some(core::mem::transmute(addr))
+        let o = core::mem::transmute::<[u8; 16], [u32; 4]>(addr);
+        Some(o)
     }
 
     #[inline(always)]
@@ -40,13 +41,13 @@ impl in6_addr {
     #[inline(always)]
     pub unsafe fn addr16_user(&self) -> Option<[u16; 8]> {
         let addr = self.addr8_user()?;
-        Some(core::mem::transmute(addr))
+        Some(core::mem::transmute::<[u8; 16], [u16; 8]>(addr))
     }
 
     #[inline(always)]
     pub unsafe fn addr32_user(&self) -> Option<[u32; 4]> {
         let addr = self.addr8_user()?;
-        Some(core::mem::transmute(addr))
+        Some(core::mem::transmute::<[u8; 16], [u32; 4]>(addr))
     }
 }
 
@@ -192,7 +193,7 @@ impl sk_buff_head {
         if let Some(list) = self._list() {
             return list.next();
         }
-        return None;
+        None
     }
 }
 

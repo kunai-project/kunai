@@ -11,7 +11,7 @@ fn xor_shift_star(a: u64, b: u64) -> u64 {
     x ^= x >> 12;
     x ^= x << 25;
     x ^= x >> 27;
-    return x * 0x2545F4914F6CDD1D;
+    x * 0x2545F4914F6CDD1D
 }
 
 impl Path {

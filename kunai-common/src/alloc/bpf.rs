@@ -112,7 +112,7 @@ impl Allocator {
     fn zero_alloc<T>(&mut self) -> Result<&'static mut T> {
         unsafe {
             let alloc = self.alloc_slice::<T>()?;
-            Ok(core::mem::transmute(alloc.as_mut_ptr()))
+            Ok(&mut *(alloc.as_mut_ptr() as *mut T))
         }
     }
 }
