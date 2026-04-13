@@ -17,62 +17,54 @@ pub static EMPTY_LOG: [u8; SIZE] = [0; SIZE];
 #[macro_export]
 macro_rules! probe_name {
     () => {{
-        const fn index(skip: &'static str, st: &'static str) -> usize {
-            let mut i = 0;
-            let skip = skip.as_bytes();
-            let st = st.as_bytes();
+        const fn index_rev_search(needle: &'static str, haystack: &'static str) -> usize {
+            let needle = needle.as_bytes();
+            let haystack = haystack.as_bytes();
+            let mut i = haystack.len() - needle.len() - 1;
 
-            // we cannot skip something larger than string
-            if skip.len() > st.len() {
-                return i;
-            }
+            while i > 0 {
+                let mut k = 0;
+                while k < needle.len() {
+                    if haystack[i + k] != needle[k] {
+                        break;
+                    }
 
-            loop {
-                if i == skip.len() || i == st.len() || skip[i] != st[i] {
-                    break;
+                    if k == needle.len() - 1 {
+                        return i;
+                    }
+                    k += 1
                 }
-
-                i += 1
+                i -= 1
             }
 
             i
         }
 
         const fn string_loc<const N: usize>(st: &'static str) -> $crate::string::String<N> {
-            let mut s = $crate::string::String { s: [0; N], len: 0 };
-            let mut i = 0;
-            let i_src = index("src/", st);
+            let src = "src/";
             let ext = ".rs";
+            let mut s = $crate::string::String::new();
+            let i_src = index_rev_search(src, st) + src.len();
+
             let bytes = st.as_bytes();
 
-            loop {
-                let i_bytes = i_src + i;
-
-                // we leave a 0 to terminate the string if string
-                // larger than capacity
-                if i == s.cap() - 1 || i_bytes >= (st.len() - ext.len()) {
-                    break;
-                }
-
+            let mut i = i_src;
+            'outer: while i < i_src + s.cap() && i < bytes.len() - ext.len() {
+                let b = bytes[i];
                 // if it is path separator we replace by ::
-                if bytes[i_bytes] == b'/' {
+                if b == b'/' {
                     let mut k = 0;
-                    loop {
-                        if k == 2 {
-                            break;
+                    while k < 2 {
+                        if s.push_byte(b':').is_err() {
+                            break 'outer;
                         }
-
-                        if s.len < N {
-                            s.s[s.len] = b':';
-                            s.len += 1;
-                        }
-
-                        k += 1;
+                        k += 1
                     }
                 } else {
                     // we just copy other characters
-                    s.s[s.len] = bytes[i_src + i];
-                    s.len += 1;
+                    if s.push_byte(b).is_err() {
+                        break;
+                    }
                 }
 
                 i += 1
