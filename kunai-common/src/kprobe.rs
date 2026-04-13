@@ -1,6 +1,6 @@
 use kunai_macros::BpfError;
 
-use crate::{errors::ProbeError};
+use crate::errors::ProbeError;
 
 #[cfg(feature = "bpf")]
 mod bpf;
