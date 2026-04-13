@@ -18,7 +18,7 @@ aya-build = { git = "https://github.com/aya-rs/aya", rev = "215048bf9078af298072
 aya-ebpf = "0.1.1"
 aya-ebpf-macros = "0.1.1"
 aya-obj = "0.1.0"
-base64ct = "1.8.3"
+base64ct = { version = "1.8.3", default-features = false }
 bytes = "1.11.1"
 cargo_metadata = { version = "0.23.0", default-features = false }
 chrono = "0.4.24"

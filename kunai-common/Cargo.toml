@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 # optional deps (only for userland)
-base64ct = { workspace = true, optional = true }
+base64ct = { workspace = true, optional = true , features=["alloc"]}
 serde = { workspace = true, features = ["derive"], optional = true }
 simple-dns = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
