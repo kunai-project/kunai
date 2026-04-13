@@ -1,7 +1,7 @@
-[target."cfg(not(target_arch = \"bpf\"))"]
-runner = "sudo -E"
+[alias]
+# throw kunai ;)
+tk = "run --config .cargo/sudo-runner.toml --bin kunai"
+
+[target."cfg(target_env = \"musl\")"]
 # to cross compile without having to pass linker via RUSTFLAGS variable
-rustflags = [
-  "-C",
-  "linker=lld",
-]
+linker = "lld"
