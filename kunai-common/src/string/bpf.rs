@@ -48,11 +48,4 @@ impl<const N: usize> String<N> {
         }
         Ok(())
     }
-
-    #[inline(always)]
-    pub unsafe fn as_bpf_str(&self) -> &str {
-        // all bytes are supposed to be valid utf8 code points
-        // verifier does not like reading until self.len
-        core::str::from_utf8_unchecked(self.s.as_ref())
-    }
 }
