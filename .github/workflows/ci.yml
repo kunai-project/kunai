@@ -23,7 +23,7 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
           - arch: aarch64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
 
     steps:
@@ -40,34 +40,28 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/.github/workflows/ci.yml') }}
 
-      - name: Pull docker
-        run: docker pull ghcr.io/kunai-project/kunai-builder:latest
+      - name: Install System Tools
+        run: |
+          set -euxo pipefail
+          sudo apt update -y
+          sudo apt install -y musl-tools libbpf-dev clang lld
+          
+      - name: Install Rust Tools
+        run: |
+          cargo install bpf-linker
+
+          rustup toolchain install nightly-${{ matrix.arch }}-unknown-linux-gnu
+          rustup component add rust-src --toolchain nightly-${{ matrix.arch }}-unknown-linux-gnu
 
       - name: Run clippy on full project
-        run: |
-          set -eux
-          cont_name=jap_knife
-          # building target directory
-          chmod -R 777 ./
-          docker run --name=$cont_name -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo clippy -- -D warnings
-          exit_code=$(docker inspect --format='{{.State.ExitCode}}' $cont_name)
-          docker rm $cont_name
-          exit $exit_code
+        run: cargo clippy -v -- -D warnings
 
       - name: Build (eBPF and userland)
-        run: |
-          set -eux
-          cont_name=jap_knife
-          docker run --name=$cont_name -v $PWD:/kunai-src -w /kunai-src ghcr.io/kunai-project/kunai-builder:latest cargo build --release --target ${{ matrix.target }}
-          exit_code=$(docker inspect --format='{{.State.ExitCode}}' $cont_name)
-          docker rm $cont_name
-          exit $exit_code
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Preparing files for upload
         run: |
           set -eux
-          sudo chmod -R 777 ./target
-
           release="target/${{ matrix.target }}/release"
           tmp_release="target.tmp/${{ matrix.target }}/release/"
           mkdir -p $tmp_release
