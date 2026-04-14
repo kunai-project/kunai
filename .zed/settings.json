@@ -1,0 +1,11 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          "cfgs": ["debug_assertions", "target_arch=bpf"],
+        },
+      },
+    },
+  },
+}
