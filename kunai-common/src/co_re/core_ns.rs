@@ -1,6 +1,7 @@
+use aya_ebpf::cty::c_char;
+
 use super::gen::{self, *};
 use super::{mount, rust_shim_kernel_impl, CoRe};
-use core::ffi::c_char;
 
 #[allow(non_camel_case_types)]
 pub type nsproxy = CoRe<gen::nsproxy>;

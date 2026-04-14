@@ -1,4 +1,4 @@
-use core::ffi::c_char;
+use aya_ebpf::cty::c_char;
 
 use super::gen::{self, *};
 use super::{rust_shim_kernel_impl, CoRe};
