@@ -1,5 +1,6 @@
 use super::gen::{self, *};
 use super::{mount, rust_shim_kernel_impl, CoRe};
+use core::ffi::c_char;
 
 #[allow(non_camel_case_types)]
 pub type nsproxy = CoRe<gen::nsproxy>;
@@ -37,10 +38,10 @@ impl uts_namespace {
 pub type new_utsname = CoRe<gen::new_utsname>;
 
 impl new_utsname {
-    rust_shim_kernel_impl!(new_utsname, sysname, *mut i8);
-    rust_shim_kernel_impl!(new_utsname, nodename, *mut i8);
-    rust_shim_kernel_impl!(new_utsname, release, *mut i8);
-    rust_shim_kernel_impl!(new_utsname, version, *mut i8);
-    rust_shim_kernel_impl!(new_utsname, machine, *mut i8);
-    rust_shim_kernel_impl!(new_utsname, domainname, *mut i8);
+    rust_shim_kernel_impl!(new_utsname, sysname, *mut c_char);
+    rust_shim_kernel_impl!(new_utsname, nodename, *mut c_char);
+    rust_shim_kernel_impl!(new_utsname, release, *mut c_char);
+    rust_shim_kernel_impl!(new_utsname, version, *mut c_char);
+    rust_shim_kernel_impl!(new_utsname, machine, *mut c_char);
+    rust_shim_kernel_impl!(new_utsname, domainname, *mut c_char);
 }
