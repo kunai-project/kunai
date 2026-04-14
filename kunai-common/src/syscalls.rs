@@ -1,6 +1,6 @@
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf;
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 pub use bpf::*;
 
 use kunai_macros::BpfError;

@@ -10,7 +10,7 @@ use core::{cmp::min, ffi::c_long};
 #[cfg(feature = "user")]
 mod user;
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf;
 
 // for path resolution
@@ -276,7 +276,7 @@ impl Path {
             }
         };
 
-        #[cfg(feature = "bpf")]
+        #[cfg(target_arch = "bpf")]
         {
             let i = i as i64;
             if aya_ebpf::check_bounds_signed(i, 0, self.buffer.len() as i64) {
@@ -284,7 +284,7 @@ impl Path {
             }
         };
 
-        #[cfg(feature = "user")]
+        #[cfg(not(target_arch = "bpf"))]
         if i < self.buffer.len() {
             return Ok(unsafe { *self.buffer.get_unchecked(i) });
         };

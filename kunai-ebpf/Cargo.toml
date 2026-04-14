@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 aya-ebpf = { workspace = true }
 aya-ebpf-macros = { workspace = true }
-kunai-common = { workspace = true, features = ["bpf"] }
+kunai-common = { workspace = true }
 kunai-macros = { workspace = true }
 paste = { workspace = true }
 

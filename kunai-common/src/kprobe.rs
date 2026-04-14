@@ -2,9 +2,9 @@ use kunai_macros::BpfError;
 
 use crate::errors::ProbeError;
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf;
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 pub use bpf::*;
 
 #[derive(BpfError, Clone, Copy)]

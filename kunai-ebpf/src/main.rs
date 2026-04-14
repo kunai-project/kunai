@@ -4,6 +4,7 @@
 #![no_main]
 
 // bringing probes into main
+#[cfg(target_arch = "bpf")]
 mod probes;
 
 #[cfg(target_arch = "bpf")]

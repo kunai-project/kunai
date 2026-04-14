@@ -9,7 +9,7 @@ mod user;
 #[cfg(feature = "user")]
 pub use user::*;
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf;
 
 mod events;

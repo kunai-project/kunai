@@ -1,7 +1,7 @@
 pub const KUNAI_EVENTS_MAP: &str = "KUNAI_EVENTS";
 pub const KUNAI_STATS_MAP: &str = "KUNAI_STATS";
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf {
     use crate::bpf_events::{Event, LogEvent, Type};
     use aya_ebpf::{
@@ -33,5 +33,5 @@ mod bpf {
     }
 }
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 pub use bpf::*;

@@ -31,7 +31,7 @@ mod user {
     }
 }
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf {
     use super::*;
     use crate::co_re::timespec64;

@@ -19,7 +19,7 @@ pub struct LogData {
     pub message: Option<String<64>>,
 }
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf {
 
     use super::*;

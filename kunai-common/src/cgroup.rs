@@ -4,7 +4,7 @@ use kunai_macros::BpfError;
 #[cfg(feature = "user")]
 mod user;
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf;
 
 const CGROUP_PATH_MAX: usize = 128;

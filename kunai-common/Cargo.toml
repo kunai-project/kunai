@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 # optional deps (only for userland)
-base64ct = { workspace = true, optional = true , features=["alloc"]}
+base64ct = { workspace = true, features = ["alloc"], optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 simple-dns = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
@@ -35,7 +35,5 @@ bindgen = "0.72"
 
 [features]
 default = []
-# to enable only when using this crate in BPF code
-bpf = []
 # to enable only when using this crate in userland code
 user = ["aya", "base64ct", "serde", "simple-dns", "thiserror", "uuid"]

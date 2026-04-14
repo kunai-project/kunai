@@ -3,9 +3,9 @@ use crate::bpf_events;
 #[cfg(feature = "user")]
 mod user;
 
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 mod bpf;
-#[cfg(feature = "bpf")]
+#[cfg(target_arch = "bpf")]
 pub use bpf::*;
 
 // analyzer does not see both target so we can allow dead code
