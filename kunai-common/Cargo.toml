@@ -1,43 +1,39 @@
 [package]
 name = "kunai-common"
-edition = "2021"
-description = "Package providing shared structures between eBPF and userland"
 version.workspace = true
 authors.workspace = true
-license.workspace = true
+edition = "2021"
+description = "Package providing shared structures between eBPF and userland"
 repository.workspace = true
+license.workspace = true
 publish = false
 
-[features]
-default = []
-user = ["aya", "simple-dns", "uuid", "thiserror", "serde", "base64ct"]
+[dependencies]
+# optional deps (only for userland)
+base64ct = { workspace = true, features = ["alloc"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+simple-dns = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v4"], optional = true }
+
+kunai-macros = { workspace = true }
+# Non Aya deps
+paste = { workspace = true }
+
+# Aya deps
+aya = { workspace = true, optional = true }
+aya-ebpf = { workspace = true }
+
+[dev-dependencies]
+# Aya deps
+aya = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
 
 [build-dependencies]
 bindgen = "0.72"
 
-[dependencies]
-# optional deps (only for userland)
-base64ct = {version = "1.8.3", optional = true}
-thiserror = { version = "1.0", optional = true }
-uuid = { version = "1.3.0", optional = true, features = ["v4"] }
-simple-dns = { version="0.11.2", optional=true }
-serde = { version = "1.0.164", features = ["derive"], optional = true }
-
-# Non Aya deps
-cfg-if = "1.0.0"
-paste = "1.0"
-kunai-macros = { path = "src/kunai-macros" }
-
-# Aya deps
-aya = { version = "0.13.0", optional = true }
-aya-ebpf = { version = "0.1.1" }
-
-[dev-dependencies]
-# Non Aya deps
-dns-parser = { version = "0.8.0" }
-cfg-if = "1.0.0"
-uuid = "1.3.0"
-bytes = { version = "1" }
-thiserror = { version = "1.0" }
-# Aya deps
-aya = { version = "0.13.0" }
+[features]
+default = []
+# to enable only when using this crate in userland code
+user = ["aya", "base64ct", "serde", "simple-dns", "thiserror", "uuid"]

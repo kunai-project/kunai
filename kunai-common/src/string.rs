@@ -1,15 +1,14 @@
-use crate::{errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code};
+use crate::errors::ProbeError;
 use core::mem;
 use kunai_macros::BpfError;
 
-not_bpf_target_code! {
-    mod user;
-    pub use user::*;
-}
+#[cfg(feature = "user")]
+mod user;
+#[cfg(feature = "user")]
+pub use user::*;
 
-bpf_target_code! {
-    mod bpf;
-}
+#[cfg(target_arch = "bpf")]
+mod bpf;
 
 #[repr(C)]
 #[derive(BpfError, Clone, Copy)]
@@ -20,6 +19,8 @@ pub enum Error {
     StringIsFull,
     #[error("reached append limit")]
     AppendLimit,
+    #[error("index out of bounds")]
+    OutOfBounds,
 }
 
 impl From<Error> for ProbeError {
@@ -37,7 +38,7 @@ pub struct String<const N: usize> {
 
 impl<const N: usize> Default for String<N> {
     fn default() -> Self {
-        String { s: [0; N], len: 0 }
+        String::new()
     }
 }
 
@@ -72,7 +73,7 @@ pub const fn concat_static<const N: usize>(st1: &'static str, st2: &'static str)
 }
 
 pub const fn from_static<const N: usize>(st: &'static str) -> String<N> {
-    let mut s = String { s: [0; N], len: 0 };
+    let mut s = String::new();
     let mut i = 0;
     let bytes = st.as_bytes();
 
@@ -88,32 +89,34 @@ pub const fn from_static<const N: usize>(st: &'static str) -> String<N> {
         s.len += 1;
         i += 1
     }
+
     s
 }
 
 impl<const N: usize> String<N> {
     #[inline(always)]
-    pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
+    pub const fn new() -> Self {
+        String { s: [0; N], len: 0 }
     }
 
     #[inline(always)]
-    fn push_byte_at(&mut self, b: u8, at: usize) -> Result<(), Error> {
+    pub const fn push_byte_at(&mut self, b: u8, at: usize) -> Result<(), Error> {
         if self.is_full() {
             return Err(Error::StringIsFull);
         }
-        if let Some(at) = self.s.get_mut(at) {
-            *at = b;
+
+        if at < self.s.len() {
+            self.s[at] = b;
             self.len += 1;
+        } else {
+            return Err(Error::OutOfBounds);
         }
 
         Ok(())
     }
 
     #[inline(always)]
-    pub fn push_byte(&mut self, b: u8) -> Result<(), Error> {
+    pub const fn push_byte(&mut self, b: u8) -> Result<(), Error> {
         self.push_byte_at(b, self.len)
     }
 
@@ -134,8 +137,8 @@ impl<const N: usize> String<N> {
     }
 
     #[inline(always)]
-    pub fn is_full(&self) -> bool {
-        self.len() == self.cap() - 1
+    pub const fn is_full(&self) -> bool {
+        self.len() == self.cap()
     }
 
     #[inline(always)]
@@ -144,7 +147,7 @@ impl<const N: usize> String<N> {
     }
 
     #[inline(always)]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 
@@ -163,7 +166,6 @@ impl<const N: usize> String<N> {
 
 #[cfg(test)]
 mod test {
-
     use super::*;
     #[test]
     fn test_sized() {

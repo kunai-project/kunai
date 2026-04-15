@@ -57,7 +57,7 @@ Example of commands to install requirements on Ubuntu/Debian:
 
 ```bash
 sudo apt update
-sudo apt install -y clang libbpf-dev
+sudo apt install -y clang libbpf-dev lld musl-tools
 
 # assuming you have rustup and cargo installed
 cargo install bpf-linker
@@ -65,39 +65,56 @@ cargo install bpf-linker
 
 ### Building Kunai
 
-Once you have the **requirements** installed, you are good to go. You can now build the project with **xtask**, a cargo command (specific to this project) to make your life easier.
+Once you have the **requirements** installed, you are good to go.
 
-Building debug version
+#### Building debug version
 ```bash
-cargo xtask build
-# find your executable in: ./target/x86_64-unknown-linux-musl/debug/kunai
+cargo build
+# find your executable in: ./target/debug/kunai
 ```
 
-Building release version (harder, better, faster, stronger)
+#### Building for production. 
+
+For production deployment, we recommend building a static binary using MUSL:
+
 ```bash
-cargo xtask build --release
-# find your executable in: ./target/x86_64-unknown-linux-musl/release/kunai
+# Build static release binary
+cargo build --release --target x86_64-unknown-linux-musl
+
+# The static binary will be available at:
+./target/x86_64-unknown-linux-musl/release/kunai
 ```
+
+**Why MUSL?** MUSL produces static binaries that are more portable across different Linux distributions, avoiding dependency issues with glibc versions. This is particularly important for production deployment where you may not control the target environment.
 
 ### Cross-compiling
 
 #### aarch64
 
-1. Install the proper target using rustup `rustup install target aarch64-unknown-linux-gnu`
-2. You need to install appropriate compiler and linker to cross-compile
-```bash
-# example on ubuntu
-sudo apt install gcc-aarch64-linux-gnu
-```
-4. Cross-compile the project
-```bash
-# compile the project for with release profile
-CC=aarch64-linux-gnu-gcc  cargo xbuild --release --target aarch64-unknown-linux-gnu --linker aarch64-linux-gnu-gcc
-```
-4. You should find your cross-compiled binary at `./target/aarch64-unknown-linux-gnu/release/kunai`
+To cross-compile kunai for aarch64:
 
-**NB:** specifying `--linker` option is just a shortcut for setting appropriate RUSTFLAGS env variable when building userland
-application.
+1. Install the aarch64 musl target:
+   ```bash
+   rustup target add aarch64-unknown-linux-musl
+   ```
+
+2. Install the cross-compilation toolchain (Ubuntu/Debian example):
+   ```bash
+   sudo dpkg --add-architecture arm64
+   sudo apt update
+   sudo apt install -y git clang libbpf-dev lld musl-tools
+   sudo apt install -y crossbuild-essential-arm64 musl-tools:arm64
+   ```
+
+3. Build for aarch64:
+   ```bash
+   cargo build --release --target aarch64-unknown-linux-musl
+   ```
+
+4. The cross-compiled binary will be available at:
+   ```
+   ./target/aarch64-unknown-linux-musl/release/kunai
+   ```
 
 # Memory Profiling
 
@@ -105,7 +122,7 @@ If one believes Kunai has an issue with memory, here is a way to profile it.
 
 ```bash
 # compile kunai with debug information for all packages
-RUSTFLAGS="-g" cargo xbuild
+RUSTFLAGS="-g" cargo build
 
 # use heaptrack
 sudo heaptrack kunai

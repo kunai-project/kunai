@@ -170,7 +170,7 @@ impl<const N: usize> Buffer<N> {
     pub unsafe fn read_user_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
         let size = (size as i64).clamp(0, N as i64);
 
-        if check_bounds_signed(size as i64, 0, N as i64) {
+        if check_bounds_signed(size, 0, N as i64) {
             let ret = gen::bpf_probe_read_user(
                 self.buf.as_mut_ptr() as *mut _,
                 size as u32,
@@ -189,7 +189,7 @@ impl<const N: usize> Buffer<N> {
     pub unsafe fn read_kernel_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
         let size = (size as i64).clamp(0, N as i64);
 
-        if check_bounds_signed(size as i64, 0, N as i64) {
+        if check_bounds_signed(size, 0, N as i64) {
             let ret = gen::bpf_probe_read_kernel(
                 self.buf.as_mut_ptr() as *mut _,
                 size as u32,

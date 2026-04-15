@@ -1,20 +1,73 @@
 [workspace]
 resolver = "2"
-members = ["kunai", "kunai-common", "xlaunch", "xtask"]
+members = ["kunai", "kunai-common", "kunai-ebpf"]
+default-members = ["kunai", "kunai-common"]
 
 [workspace.package]
 version = "0.7.0-rc.1"
-edition = "2021"
 authors = ["Quentin JEROME <qjerome@rawsec.lu>"]
+edition = "2021"
+repository = "https://github.com/kunai-project/kunai"
 license = "GPL-3.0"
 license-file = "LICENSE"
-repository = "https://github.com/kunai-project/kunai"
+
+[workspace.dependencies]
+anyhow = { version = "1", default-features = false }
+aya = "0.13.0"
+aya-build = { git = "https://github.com/aya-rs/aya", rev = "215048bf9078af298072bf5ef8f36843e08b7799", default-features = false }
+aya-ebpf = "0.1.1"
+aya-ebpf-macros = "0.1.1"
+aya-obj = "0.1.0"
+base64ct = { version = "1.8.3", default-features = false }
+bytes = "1.11.1"
+cargo_metadata = { version = "0.23.0", default-features = false }
+chrono = "0.4.24"
+clap = "4.3.4"
+communityid = "0.1"
+env_logger = "0.10"
+firo = "0.3"
+flate2 = "1.0"
+fs-walk = "0.1.0"
+gene = { version = ">=0.7.2" }
+gene_derive = { version = ">=0.7.2" }
+hex = "0.4.3"
+huby = "0.2"
+humantime = "2.3.0"
+ip_network = "0.4"
+kunai-common = { path = "kunai-common" }
+kunai-macros = { path = "kunai-common/src/kunai-macros" }
+lazy-cache = "0.1"
+libc = "0.2"
+log = "0.4"
+lru-st = "0.2"
+magic-db = "0.4"
+object = "0.34.0"
+paste = "1.0"
+procfs = "0.16"
+pure-magic = "0.2"
+serde = "1.0.164"
+serde_json = "1.0.108"
+serde_yaml = "0.9"
+simple-dns = "0.11.2"
+thiserror = "1.0"
+tokio = "1.43"
+uuid = "1.6.1"
+yara-x = "1.14.0"
+
+# crypto
+md-5 = "0.10.5"
+sha1 = "0.10.5"
+sha2 = "0.10.6"
+
+[profile.dev]
+opt-level = 2
+debug = "line-tables-only"
 
 [profile.release]
+strip = true
 lto = true
 codegen-units = 1
-strip = true
 
-[profile.dev-opt]
-inherits = "dev"
-opt-level = 3
+[profile.release.package.kunai-ebpf]
+debug = 2
+codegen-units = 1

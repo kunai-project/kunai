@@ -1,6 +1,8 @@
+#![allow(unexpected_cfgs)]
+
 #[cfg(bpf_target_arch = "riscv64")]
 use crate::bindings::user_regs_struct as pt_regs;
-#[cfg(not(any(bpf_target_arch = "aarch64", bpf_target_arch = "riscv64")))]
+#[cfg(not(any(bpf_target_arch = "aarch64", bpf_target_arch = "riscv64",)))]
 use aya_ebpf::bindings::pt_regs;
 #[cfg(bpf_target_arch = "aarch64")]
 use aya_ebpf::bindings::user_pt_regs as pt_regs;

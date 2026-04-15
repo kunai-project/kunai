@@ -1,15 +1,13 @@
 use core::cmp::min;
 
-use crate::{errors::ProbeError, macros::bpf_target_code, macros::not_bpf_target_code};
+use crate::errors::ProbeError;
 use kunai_macros::BpfError;
 
-not_bpf_target_code! {
-    mod user;
-}
+#[cfg(feature = "user")]
+mod user;
 
-bpf_target_code! {
-    mod bpf;
-}
+#[cfg(target_arch = "bpf")]
+mod bpf;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

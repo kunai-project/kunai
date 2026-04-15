@@ -115,6 +115,7 @@ macro_rules! rust_shim_kernel_impl {
 
     ($pub:vis, $fn_name:ident, $struct: ident, $member:ident, $ret:ty) => {
         #[inline(always)]
+        #[allow(clippy::len_without_is_empty)]
         $pub unsafe fn $fn_name(&self) -> Option<$ret> {
             if !self.is_null()
                 && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())

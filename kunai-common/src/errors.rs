@@ -1,10 +1,9 @@
 use crate::kprobe;
-use crate::macros::bpf_target_code;
 
-bpf_target_code! {
-    mod bpf;
-    pub use bpf::*;
-}
+#[cfg(target_arch = "bpf")]
+mod bpf;
+#[cfg(target_arch = "bpf")]
+pub use bpf::*;
 
 use crate::alloc;
 use crate::bpf_events;

@@ -1,27 +1,24 @@
 [package]
 name = "kunai-ebpf"
 version = "0.7.0-rc.1"
+authors.workspace = true
 edition = "2021"
 description = "Package containing eBPF code used by Kunai"
-authors = ["Quentin JEROME <qjerome@rawsec.lu>"]
-license = "GPL-3.0"
 repository = "https://github.com/kunai-project/kunai"
+license = "GPL-3.0"
 publish = false
-
-[features]
-# enable debug probes
-debug = []
-
-[dependencies]
-aya-ebpf = { version = "0.1.1" }
-aya-ebpf-macros = { version = "0.1.1" }
-kunai-common = { path = "../kunai-common" }
-kunai-macros = { path = "../kunai-common/src/kunai-macros" }
-paste = "1.0"
 
 [[bin]]
 name = "kunai-ebpf"
 path = "src/main.rs"
 
-[workspace]
-members = []
+[dependencies]
+aya-ebpf = { workspace = true }
+aya-ebpf-macros = { workspace = true }
+kunai-common = { workspace = true }
+kunai-macros = { workspace = true }
+paste = { workspace = true }
+
+[features]
+# enable debug probes
+debug = []

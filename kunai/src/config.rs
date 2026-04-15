@@ -292,7 +292,7 @@ mod test {
 
         config.output.rotate_interval = Some(Duration::from_mins(15));
         let yaml_config = serde_yaml::to_string(&config).unwrap();
-        assert!(yaml_config.contains("rotate_time: 15m"));
+        assert!(yaml_config.contains("rotate_interval: 15m"));
         config = serde_yaml::from_str(&yaml_config).unwrap();
         assert_eq!(config.output.rotate_interval, Some(Duration::from_mins(15)));
     }

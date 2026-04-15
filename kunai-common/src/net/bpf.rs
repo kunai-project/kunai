@@ -95,22 +95,18 @@ impl SockAddr {
         let sport = sk.skc_num().ok_or(Error::SkcPortPairMissing)?;
 
         match sa_family {
-            AF_INET => {
-                return Ok(SockAddr::new_v4_from_be(
-                    sk.skc_rcv_saddr()
-                        .map(u32::to_be)
-                        .ok_or(Error::SkcAddrPairMissing)?,
-                    sport,
-                ));
-            }
-            AF_INET6 => {
-                return Ok(SockAddr::new_v6_from_be(
-                    sk.skc_v6_rcv_saddr()
-                        .and_then(|in6| in6.addr32())
-                        .ok_or(Error::SkcV6daddrMissing)?,
-                    sport,
-                ));
-            }
+            AF_INET => Ok(SockAddr::new_v4_from_be(
+                sk.skc_rcv_saddr()
+                    .map(u32::to_be)
+                    .ok_or(Error::SkcAddrPairMissing)?,
+                sport,
+            )),
+            AF_INET6 => Ok(SockAddr::new_v6_from_be(
+                sk.skc_v6_rcv_saddr()
+                    .and_then(|in6| in6.addr32())
+                    .ok_or(Error::SkcV6daddrMissing)?,
+                sport,
+            )),
             _ => Err(Error::UnsupportedSaFamily),
         }
     }

@@ -1,13 +1,12 @@
-use crate::{bpf_events, macros::bpf_target_code, macros::not_bpf_target_code};
+use crate::bpf_events;
 
-not_bpf_target_code! {
-    mod user;
-}
+#[cfg(feature = "user")]
+mod user;
 
-bpf_target_code! {
-    mod bpf;
-    pub use bpf::*;
-}
+#[cfg(target_arch = "bpf")]
+mod bpf;
+#[cfg(target_arch = "bpf")]
+pub use bpf::*;
 
 // analyzer does not see both target so we can allow dead code
 // to prevent warnings to happen

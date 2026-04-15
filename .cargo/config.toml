@@ -1,7 +1,7 @@
 [alias]
-# xlaunch is a cross platform xtask launcher this way we don't
-# have to hardcode target in this alias
-xtask = "run -q --package xlaunch --release --"
-xrun = "xtask run"
-xbuild = "xtask build"
-xrelease = "xtask release"
+# throw kunai ;)
+tk = "run --config .cargo/sudo-runner.toml --bin kunai"
+
+[target."cfg(target_env = \"musl\")"]
+# to cross compile without having to pass linker via RUSTFLAGS variable
+linker = "lld"
