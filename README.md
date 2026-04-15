@@ -57,7 +57,7 @@ Example of commands to install requirements on Ubuntu/Debian:
 
 ```bash
 sudo apt update
-sudo apt install -y clang libbpf-dev
+sudo apt install -y clang libbpf-dev lld musl-tools
 
 # assuming you have rustup and cargo installed
 cargo install bpf-linker
@@ -78,9 +78,6 @@ cargo build
 For production deployment, we recommend building a static binary using MUSL:
 
 ```bash
-# Install musl target (required for static linking)
-rustup target add x86_64-unknown-linux-musl
-
 # Build static release binary
 cargo build --release --target x86_64-unknown-linux-musl
 
@@ -103,8 +100,10 @@ To cross-compile kunai for aarch64:
 
 2. Install the cross-compilation toolchain (Ubuntu/Debian example):
    ```bash
+   sudo dpkg --add-architecture arm64
    sudo apt update
-   sudo apt install gcc-aarch64-linux-gnu
+   sudo apt install -y git clang libbpf-dev lld musl-tools
+   sudo apt install -y crossbuild-essential-arm64 musl-tools:arm64
    ```
 
 3. Build for aarch64:
