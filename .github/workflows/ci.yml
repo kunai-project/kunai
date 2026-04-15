@@ -54,7 +54,7 @@ jobs:
           rustup component add rust-src --toolchain nightly-${{ matrix.arch }}-unknown-linux-gnu
 
       - name: Run clippy on full project
-        run: cargo clippy -v -- -D warnings
+        run: cargo clippy -- -D warnings
 
       - name: Build (eBPF and userland)
         run: cargo build --release --target ${{ matrix.target }}
