@@ -27,7 +27,7 @@ mod bpf {
     use crate::string::String;
     use aya_ebpf::helpers::{bpf_get_current_comm, bpf_get_current_pid_tgid};
 
-    const DEFAULT_COMM: String<16> = string::from_static("?");
+    const DEFAULT_COMM: String<16> = string::from_str_fitting("?");
 
     impl LogEvent {
         #[inline(always)]
@@ -44,7 +44,7 @@ mod bpf {
 #[cfg(feature = "user")]
 mod user {
     use super::*;
-    
+
     impl core::fmt::Display for LogEvent {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(
