@@ -60,15 +60,39 @@ const fn decode_utf8(array: [u8; 4]) -> Option<char> {
     core::char::from_u32(code_point)
 }
 
-macro_rules! max {
-    ($a: expr, $b: expr) => {{
-        if $a < $b {
-            $b
-        } else {
-            $a
+/// Encodes a char into UTF-8 bytes, returning a 4-byte buffer.
+/// The actual UTF-8 length is determined by the character's code point.
+/// Unused bytes in the buffer will be zero.
+#[inline(always)]
+const fn encode_utf8(c: char) -> [u8; 4] {
+    let code = c as u32;
+    let mut buf = [0u8; 4];
+
+    match code {
+        0x0000..=0x007F => {
+            buf[0] = code as u8;
         }
-    }};
+        0x0080..=0x07FF => {
+            buf[0] = 0b11000000 | ((code >> 6) as u8);
+            buf[1] = 0b10000000 | ((code & 0b00111111) as u8);
+        }
+        0x0800..=0xFFFF => {
+            buf[0] = 0b11100000 | ((code >> 12) as u8);
+            buf[1] = 0b10000000 | ((code >> 6) as u8 & 0b00111111);
+            buf[2] = 0b10000000 | ((code & 0b00111111) as u8);
+        }
+        0x10000..=0x10FFFF => {
+            buf[0] = 0b11110000 | ((code >> 18) as u8);
+            buf[1] = 0b10000000 | ((code >> 12) as u8 & 0b00111111);
+            buf[2] = 0b10000000 | ((code >> 6) as u8 & 0b00111111);
+            buf[3] = 0b10000000 | ((code & 0b00111111) as u8);
+        }
+        _ => unreachable!(),
+    }
+
+    buf
 }
+
 pub struct CharsIterator<'s> {
     s: &'s str,
     i: usize,
@@ -233,11 +257,14 @@ impl<const N: usize> String<N> {
             return Ok(());
         }
 
-        let mut buf = [0u8; 4];
-        // this call cannot panic as utf8 chars are encoded on max 4 bytes
-        c.encode_utf8(buf.as_mut_slice());
         let mut i = 0;
-        while i < core::hint::black_box(max!(c.len_utf8(), 4)) {
+        let buf = encode_utf8(c);
+
+        // Note: this makes the loop more eBPF friendly
+        while i < 4 {
+            if i == c.len_utf8() {
+                break;
+            }
             // we have checked that we can copy all bytes
             let _ = self.push_byte(buf[i]);
             i += 1
