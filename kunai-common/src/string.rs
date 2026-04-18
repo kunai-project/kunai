@@ -60,6 +60,15 @@ const fn decode_utf8(array: [u8; 4]) -> Option<char> {
     core::char::from_u32(code_point)
 }
 
+macro_rules! max {
+    ($a: expr, $b: expr) => {{
+        if $a < $b {
+            $b
+        } else {
+            $a
+        }
+    }};
+}
 pub struct CharsIterator<'s> {
     s: &'s str,
     i: usize,
@@ -219,17 +228,18 @@ impl<const N: usize> String<N> {
             return Err(Error::AppendLimit);
         }
 
-        let mut buf = [0u8; 4];
+        if c.is_ascii() {
+            let _ = self.push_byte(c as u8);
+            return Ok(());
+        }
 
+        let mut buf = [0u8; 4];
         // this call cannot panic as utf8 chars are encoded on max 4 bytes
         c.encode_utf8(buf.as_mut_slice());
         let mut i = 0;
-        while i < c.len_utf8() {
-            match self.push_byte(buf[i]) {
-                Ok(()) => {}
-                // we have checked that we can copy all bytes
-                Err(_) => unreachable!(),
-            }
+        while i < core::hint::black_box(max!(c.len_utf8(), 4)) {
+            // we have checked that we can copy all bytes
+            let _ = self.push_byte(buf[i]);
             i += 1
         }
 
