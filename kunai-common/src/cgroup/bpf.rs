@@ -30,7 +30,7 @@ impl Cgroup {
                 break;
             }
 
-            self.path.push_byte(b'/').map_err(|_| {
+            self.path.push_char('/').map_err(|_| {
                 self.error = Some(Error::Append);
                 Error::Append
             })?;

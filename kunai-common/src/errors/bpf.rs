@@ -17,58 +17,32 @@ pub static EMPTY_LOG: [u8; SIZE] = [0; SIZE];
 #[macro_export]
 macro_rules! probe_name {
     () => {{
-        const fn index_rev_search(needle: &'static str, haystack: &'static str) -> usize {
-            let needle = needle.as_bytes();
-            let haystack = haystack.as_bytes();
-            let mut i = haystack.len() - needle.len() - 1;
-
-            while i > 0 {
-                let mut k = 0;
-                while k < needle.len() {
-                    if haystack[i + k] != needle[k] {
-                        break;
-                    }
-
-                    if k == needle.len() - 1 {
-                        return i;
-                    }
-                    k += 1
-                }
-                i -= 1
-            }
-
-            i
-        }
-
         const fn string_loc<const N: usize>(st: &'static str) -> $crate::string::String<N> {
             let src = "src/";
-            let ext = ".rs";
             let mut s = $crate::string::String::new();
-            let i_src = index_rev_search(src, st) + src.len();
+            let mut it = $crate::string::CharsIterator::from_str(st);
+            let i_src = match it.chars_until_last(src) {
+                Some(n) => n,
+                None => 0,
+            };
+            it.reset();
+            // this works because src is ascii
+            it.skip(i_src + src.len());
 
-            let bytes = st.as_bytes();
-
-            let mut i = i_src;
-            'outer: while i < i_src + s.cap() && i < bytes.len() - ext.len() {
-                let b = bytes[i];
-                // if it is path separator we replace by ::
-                if b == b'/' {
-                    let mut k = 0;
-                    while k < 2 {
-                        if s.push_byte(b':').is_err() {
-                            break 'outer;
-                        }
-                        k += 1
+            while let Some(c) = it.next_char() {
+                match c {
+                    '.' => break,
+                    '/' => {
+                        let _ = s.push_char(':');
+                        let _ = s.push_char(':');
+                        continue;
                     }
-                } else {
-                    // we just copy other characters
-                    if s.push_byte(b).is_err() {
-                        break;
+                    _ => {
+                        let _ = s.push_char(c);
                     }
                 }
-
-                i += 1
             }
+
             s
         }
 
@@ -91,7 +65,7 @@ pub unsafe fn log_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
         let e = &mut *e;
         e.init_with_level(args.level);
         e.info.etype = bpf_events::Type::Log;
-        e.data.location.copy_from(&args.location);
+        e.data.location.clone_from(&args.location);
         e.data.line = args.line;
         e.data.error = args.err;
         e.data.message = args.message;
@@ -105,7 +79,7 @@ macro_rules! log {
     ($ctx:expr, $msg:literal, $err:expr, $level:expr) => {{
         unsafe {
             const _PROBE_NAME: $crate::string::String<32> = $crate::probe_name!();
-            const _MSG: $crate::string::String<64> = $crate::string::from_static($msg);
+            const _MSG: $crate::string::String<64> = $crate::string::from_str_fitting($msg);
 
             let args = $crate::errors::Args {
                 line: core::line!(),

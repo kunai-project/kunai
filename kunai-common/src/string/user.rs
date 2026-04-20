@@ -50,9 +50,17 @@ impl<const N: usize> String<N> {
 
     #[inline(always)]
     pub fn as_str(&self) -> &str {
+        // String API guarantee that characters are valid UTF8 chars
+        let s = {
+            #[cfg(not(debug_assertions))]
+            unsafe {
+                core::str::from_utf8_unchecked(&self.s[..self.len])
+            }
+            #[cfg(debug_assertions)]
+            core::str::from_utf8(&self.s[..self.len]).expect("string should have only valid utf8 char")
+        };
         // there is currently a bug in bpf_probe_read_[user|kernel]_str_bytes that returns
         // a len containing NULL byte so we attempt to fix that
-        let s = unsafe { core::str::from_utf8_unchecked(&(self.s.as_ref())[..self.len]) };
         if s.ends_with(0 as char) && !s.is_empty() {
             return &s[..s.len() - 1];
         }
