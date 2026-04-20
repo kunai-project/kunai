@@ -65,7 +65,7 @@ jobs:
           debug="target/${{ matrix.target }}/debug"
           tmp_debug="target.tmp/${{ matrix.target }}/debug/"
           mkdir -p $tmp_debug
-          find $release -maxdepth 1 -type f -executable | xargs -I '{}' cp '{}' $tmp_debug
+          find $debug -maxdepth 1 -type f -executable | xargs -I '{}' cp '{}' $tmp_debug
 
       - name: Upload target
         uses: actions/upload-artifact@v6
