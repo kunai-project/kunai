@@ -45,7 +45,7 @@ jobs:
           set -euxo pipefail
           sudo apt update -y
           sudo apt install -y musl-tools libbpf-dev clang lld
-          
+
       - name: Install Rust Tools
         run: |
           cargo install bpf-linker
@@ -104,7 +104,7 @@ jobs:
           path: target
 
       - name: Make target bin exec
-        run: chmod +x target/*/release/*
+        run: chmod +x target/*/debug/*
 
       - name: Set kernel cache key
         run: echo "KERNEL_CACHE_KEY=cache-vmlinuz-${{ matrix.arch }}-cache-$(date +%Y-%m-%d)" >> $GITHUB_ENV
