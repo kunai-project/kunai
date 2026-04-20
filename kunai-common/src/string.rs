@@ -289,7 +289,7 @@ impl<const N: usize> String<N> {
         Ok(())
     }
 
-    pub fn clone_from(&mut self, other: &Self) {
+    pub const fn clone_from(&mut self, other: &Self) {
         self.s = other.s;
         self.len = other.len;
     }
