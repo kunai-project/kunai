@@ -17,7 +17,7 @@ else
     exit 1
 fi
 
-test_bin=target/${qemu_arch}-unknown-linux-musl/release/tests
+test_bin=target/${qemu_arch}-unknown-linux-musl/debug/tests
 if [[ ! -f ${test_bin} ]]; then
     echo "test binary ${test_bin} is missing compile program first"
     exit 1
@@ -29,7 +29,7 @@ initramfs=${tmp_dir}/initramfs.img
 
 
 # building initramfs with our test binary as init
-cp target/${qemu_arch}-unknown-linux-musl/release/tests $tmp_dir/init
+cp $test_bin $tmp_dir/init
 echo "init" | cpio -D $tmp_dir -o -H newc > $initramfs
 
 distro="ubuntu"
