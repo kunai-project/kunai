@@ -330,13 +330,9 @@ impl EventConsumer<'_> {
         Ok(out)
     }
 
-    pub fn with_config(mut config: Config) -> anyhow::Result<Self> {
+    pub fn with_config(config: Config) -> anyhow::Result<Self> {
         // building up system information
-        let system_info = SystemInfo::from_sys()?.with_host_uuid(
-            config
-                .host_uuid()
-                .ok_or(anyhow!("failed to read host_uuid"))?,
-        );
+        let system_info = SystemInfo::from_sys()?.with_host_uuid(config.host_uuid);
 
         let scan_events_enabled = config
             .events
@@ -3715,7 +3711,7 @@ impl Command {
 
     fn config(co: ConfigOpt) -> anyhow::Result<()> {
         if co.dump {
-            let conf = Config::default().generate_host_uuid();
+            let conf = Config::default();
             // do not use println because to_string already includes a
             // trailing newline. Using print! allow one to easily compute
             // config hash as the one found in start event.
@@ -3903,16 +3899,13 @@ WantedBy=sysinit.target"#,
         fs::create_dir_all(config_dir)?;
 
         // create configuration for installation
-        let conf = Config::default()
-            .harden(o.harden)
-            .generate_host_uuid()
-            .output(config::Output {
-                path: log_path.to_string_lossy().to_string(),
-                rotate_size: Some(huby::ByteSize::from_mb(10)),
-                rotate_interval: Some(Duration::from_mins(15)),
-                max_size: Some(huby::ByteSize::from_gb(1)),
-                buffered: false,
-            });
+        let conf = Config::default().harden(o.harden).output(config::Output {
+            path: log_path.to_string_lossy().to_string(),
+            rotate_size: Some(huby::ByteSize::from_mb(10)),
+            rotate_interval: Some(Duration::from_mins(15)),
+            max_size: Some(huby::ByteSize::from_gb(1)),
+            buffered: false,
+        });
 
         let mut overwrite_config = !config_path.exists();
         // we write configuration file

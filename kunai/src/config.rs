@@ -6,9 +6,11 @@ use kunai_common::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    env::var,
     fs,
     ops::{Div, Mul},
     path::PathBuf,
+    str::FromStr,
     time::Duration,
 };
 use thiserror::Error;
@@ -76,7 +78,7 @@ pub struct Scanner {
 /// Kunai configuration structure to be used in userland
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    host_uuid: Option<uuid::Uuid>,
+    pub host_uuid: uuid::Uuid,
     pub max_buffered_events: u16,
     pub max_eps_fs: Option<u64>,
     pub workers: Option<usize>,
@@ -104,7 +106,7 @@ impl Default for Config {
         }
 
         Self {
-            host_uuid: None,
+            host_uuid: Config::default_host_uuid(),
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVENTS,
             // this x2 rule generally works for small values of max_buffered_events
             max_eps_fs: Some(DEFAULT_MAX_BUFFERED_EVENTS as u64 * 2),
@@ -131,17 +133,25 @@ impl Default for Config {
     }
 }
 
-fn host_uuid() -> Option<uuid::Uuid> {
+fn derive_uuid_from<B: AsRef<[u8]>>(bytes: B) -> uuid::Uuid {
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, bytes.as_ref())
+}
+
+fn host_uuid_from_machine_id() -> Option<uuid::Uuid> {
     if let Ok(machine_id) = fs::read_to_string("/etc/machine-id") {
         let machine_id = machine_id.trim_end();
         // we do not generate uuid if machine_id is empty string
         if machine_id.is_empty() {
             return None;
         }
-        return Some(uuid::Uuid::new_v5(
-            &uuid::Uuid::NAMESPACE_OID,
-            machine_id.as_bytes(),
-        ));
+        return Some(derive_uuid_from(machine_id));
+    }
+    None
+}
+
+fn host_uuid_from_boot_id() -> Option<uuid::Uuid> {
+    if let Ok(boot_id) = fs::read_to_string("/proc/sys/kernel/random/boot_id") {
+        return uuid::Uuid::from_str(boot_id.trim_end()).ok();
     }
     None
 }
@@ -154,12 +164,14 @@ impl Config {
         }
     }
 
-    pub fn host_uuid(&mut self) -> Option<uuid::Uuid> {
-        // host_uuid in config supersedes system host_uuid
-        self.host_uuid.or(host_uuid()).and_then(|u| {
-            self.host_uuid = Some(u);
-            self.host_uuid
-        })
+    fn default_host_uuid() -> uuid::Uuid {
+        var("KUNAI_HOST_UUID_SEED")
+            .ok()
+            .map(|seed| derive_uuid_from(&seed))
+            .or(host_uuid_from_machine_id())
+            // allow to at least have something stable accross runs
+            .or(host_uuid_from_boot_id())
+            .unwrap_or(uuid::Uuid::new_v4())
     }
 
     pub fn harden(mut self, value: bool) -> Self {
@@ -180,11 +192,6 @@ impl Config {
             rotate_interval: None,
             buffered: false,
         };
-        self
-    }
-
-    pub fn generate_host_uuid(mut self) -> Self {
-        self.host_uuid = host_uuid().or(Some(uuid::Uuid::new_v4()));
         self
     }
 
@@ -279,7 +286,14 @@ mod test {
 
     #[test]
     fn test_machine_uuid() {
-        let uuid = host_uuid();
+        let uuid = host_uuid_from_machine_id();
+        assert!(uuid.is_some());
+        println!("machine uuid: {}", uuid.unwrap())
+    }
+
+    #[test]
+    fn test_boot_id_uuid() {
+        let uuid = host_uuid_from_boot_id();
         assert!(uuid.is_some());
         println!("machine uuid: {}", uuid.unwrap())
     }
