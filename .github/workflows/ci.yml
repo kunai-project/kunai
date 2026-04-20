@@ -57,15 +57,15 @@ jobs:
         run: cargo clippy -- -D warnings
 
       - name: Build (eBPF and userland)
-        run: cargo build --release --target ${{ matrix.target }}
+        run: RUSTFLAGS="-C strip=debuginfo" cargo build --target ${{ matrix.target }}
 
       - name: Preparing files for upload
         run: |
           set -eux
-          release="target/${{ matrix.target }}/release"
-          tmp_release="target.tmp/${{ matrix.target }}/release/"
-          mkdir -p $tmp_release
-          find $release -maxdepth 1 -type f -executable | xargs -I '{}' cp '{}' $tmp_release
+          debug="target/${{ matrix.target }}/debug"
+          tmp_debug="target.tmp/${{ matrix.target }}/debug/"
+          mkdir -p $tmp_debug
+          find $release -maxdepth 1 -type f -executable | xargs -I '{}' cp '{}' $tmp_debug
 
       - name: Upload target
         uses: actions/upload-artifact@v6
