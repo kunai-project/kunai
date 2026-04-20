@@ -249,7 +249,7 @@ impl<const N: usize> String<N> {
     #[inline(always)]
     pub const fn push_char(&mut self, c: char) -> Result<(), Error> {
         if self.remaining() < c.len_utf8() {
-            return Err(Error::AppendLimit);
+            return Err(Error::InsufficientSpace);
         }
 
         if c.is_ascii() {
