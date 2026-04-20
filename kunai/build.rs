@@ -6,10 +6,18 @@ fn main() -> anyhow::Result<()> {
         .no_deps()
         .exec()
         .context("MetadataCommand::exec")?;
+
+    for p in packages.iter() {
+        if let Some(d) = p.manifest_path.parent() {
+            println!("cargo:rerun-if-changed={}", d);
+        }
+    }
+
     let ebpf_package = packages
         .into_iter()
         .find(|cargo_metadata::Package { name, .. }| name.as_str() == "kunai-ebpf")
         .ok_or_else(|| anyhow!("kunai-ebpf package not found"))?;
+
     let cargo_metadata::Package {
         name,
         manifest_path,
