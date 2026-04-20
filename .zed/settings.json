@@ -2,6 +2,9 @@
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
+        "check": {
+          "overrideCommand": ["cargo", "make", "clippy-json"],
+        },
         "cargo": {
           "cfgs": ["debug_assertions", "target_arch=bpf"],
         },
