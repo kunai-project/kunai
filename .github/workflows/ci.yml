@@ -55,6 +55,9 @@ jobs:
 
       - name: Run clippy on full project
         run: cargo clippy -- -D warnings
+        
+      - name: Run cargo test
+        run: cargo test --all-features
 
       - name: Build (eBPF and userland)
         run: RUSTFLAGS="-C strip=debuginfo" cargo build --target ${{ matrix.target }}
