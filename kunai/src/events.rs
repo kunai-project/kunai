@@ -280,7 +280,7 @@ pub struct Detection {
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
     pub actions: HashSet<String>,
-    /// total severity score (bounded to [MAX_SEVERITY](rules::MAX_SEVERITY))
+    /// total severity score (bounded to [`MAX_SEVERITY`])
     pub severity: u8,
 }
 

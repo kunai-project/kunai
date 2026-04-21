@@ -95,7 +95,7 @@ impl From<LossEvent> for EbpfEvent {
 
 impl EbpfEvent {
     /// # Safety
-    /// * the bytes decoded must be a valid Event<T>
+    /// * the bytes decoded must be a valid [`EbpfEvent`]
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DecoderError> {
         // event content must be at least the size of EventInfo
