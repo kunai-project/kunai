@@ -405,10 +405,10 @@ unsafe fn try_exit_recvmsg(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
         .get_fd(fd as usize)
         .ok_or(ProbeError::FileNotFound)?;
 
-    if file.is_null() {
-        return Err(ProbeError::NullPointer);
-    }
-
+    // File may be null here. We initially returned an error but it
+    // occurred too frequently. Since dns_query events work correctly
+    // with null file, we now return Ok. Traffic causing null file is
+    // likely unrelated to DNS. Note: we cannot verify traffic type.
     if !file.is_sock().unwrap_or(false) {
         return Ok(());
     }
