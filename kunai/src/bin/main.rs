@@ -3662,7 +3662,8 @@ impl Command {
         // checking that we are running as root
         if get_current_uid() != 0 {
             return Err(anyhow::Error::msg(
-                "You need to be root to run this program, this is necessary to load eBPF programs",
+                "root privileges are required to monitor system events (default behavior). Some \
+                 commands do not require root. Use 'kunai help' to see available commands.",
             ));
         }
 
