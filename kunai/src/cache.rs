@@ -1,6 +1,7 @@
 use gene::{FieldGetter, FieldNameIterator, FieldValue};
 use gene_derive::FieldGetter;
 
+use huby::ByteSize;
 use kunai_common::time::Time;
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};
@@ -27,6 +28,8 @@ use crate::{
     yara::Scanner,
 };
 
+const FILE_SIZE_SCAN_LIMIT: u64 = ByteSize::from_mb(100).in_bytes();
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("unknown namespace {0}")]
@@ -41,6 +44,8 @@ pub enum Error {
     MetadataRequired,
     #[error("yara scan error: {0}")]
     ScanError(#[from] yara_x::errors::ScanError),
+    #[error("file size exceeds scan limit")]
+    FileSizeScanLimit,
 }
 
 impl Error {
@@ -56,7 +61,7 @@ pub struct FileMeta {
     pub sha1: String,
     pub sha256: String,
     pub sha512: String,
-    pub size: usize,
+    pub size: u64,
     pub error: Option<String>,
 }
 
@@ -86,7 +91,7 @@ impl FileMeta {
     }
 }
 
-#[derive(Debug, Default, Clone, FieldGetter, Serialize, Deserialize)]
+#[derive(Debug, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct Hashes {
     pub path: PathBuf,
     pub magic: String,
@@ -94,8 +99,23 @@ pub struct Hashes {
     pub sha1: String,
     pub sha256: String,
     pub sha512: String,
-    pub size: usize,
+    pub size: u64,
     pub error: Option<String>,
+}
+
+impl Default for Hashes {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::default(),
+            magic: "?".into(),
+            md5: "?".into(),
+            sha1: "?".into(),
+            sha256: "?".into(),
+            sha512: "?".into(),
+            size: 0,
+            error: None,
+        }
+    }
 }
 
 impl Hashes {
@@ -119,10 +139,14 @@ impl Hashes {
             path: path.to_path_buf(),
             ..Hashes::default()
         };
-        let mut md5 = Md5::new();
-        let mut sha1 = Sha1::new();
-        let mut sha256 = Sha256::new();
-        let mut sha512 = Sha512::new();
+
+        let Ok(meta) = path.metadata().inspect_err(|e| {
+            h.error = Some(format!("failed to get metadata: {e}"));
+        }) else {
+            return h;
+        };
+
+        h.size = meta.size();
 
         if let Ok(mut f) = File::open(path)
             .inspect_err(|e| {
@@ -133,24 +157,32 @@ impl Hashes {
                 h.error = Some(format!("failed to create lazy cache: {e}",));
             })
         {
-            let mut buf = [0; 4096];
-            while let Ok(n) = f.read(&mut buf[..]).inspect_err(|e| {
-                h.error = Some(format!("failed to read: {e}",));
-            }) {
-                if n == 0 {
-                    break;
-                }
-                md5.update(&buf[..n]);
-                sha1.update(&buf[..n]);
-                sha256.update(&buf[..n]);
-                sha512.update(&buf[..n]);
-                h.size += n;
-            }
+            if meta.size() <= FILE_SIZE_SCAN_LIMIT {
+                let mut md5 = Md5::new();
+                let mut sha1 = Sha1::new();
+                let mut sha256 = Sha256::new();
+                let mut sha512 = Sha512::new();
 
-            h.md5 = hex::encode(md5.finalize());
-            h.sha1 = hex::encode(sha1.finalize());
-            h.sha256 = hex::encode(sha256.finalize());
-            h.sha512 = hex::encode(sha512.finalize());
+                let mut buf = [0; 4096];
+                while let Ok(n) = f.read(&mut buf[..]).inspect_err(|e| {
+                    h.error = Some(format!("failed to read: {e}",));
+                }) {
+                    if n == 0 {
+                        break;
+                    }
+                    md5.update(&buf[..n]);
+                    sha1.update(&buf[..n]);
+                    sha256.update(&buf[..n]);
+                    sha512.update(&buf[..n]);
+                }
+
+                h.md5 = hex::encode(md5.finalize());
+                h.sha1 = hex::encode(sha1.finalize());
+                h.sha256 = hex::encode(sha256.finalize());
+                h.sha512 = hex::encode(sha512.finalize());
+            } else {
+                h.error = Some(Error::FileSizeScanLimit.to_string());
+            }
 
             h.magic = magic_db
                 .first_magic_with_lazy_cache(&mut f, None)
@@ -411,6 +443,10 @@ impl Cache {
             // we create key to check if we already have cached
             // signatures for that file
             let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
+
+            if key.size > FILE_SIZE_SCAN_LIMIT {
+                return Err(namespace::Error::other(Error::FileSizeScanLimit));
+            }
 
             let sigs = match self.signatures.get(&key) {
                 // we have caches signatures
