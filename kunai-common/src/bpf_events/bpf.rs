@@ -6,6 +6,7 @@ use super::TaskInfo;
 use super::Type;
 use crate::co_re::core_read_kernel;
 use crate::co_re::task_struct;
+use crate::option::BpfOption;
 use crate::uuid::Uuid;
 use aya_ebpf::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
 
@@ -79,7 +80,7 @@ impl TaskInfo {
             // it may happen that under some very specific conditions nsproxy
             // gets null (see https://github.com/kunai-project/kunai/issues/34)
             if !nsproxy.is_null() {
-                self.namespaces = Some(Namespaces {
+                self.namespaces = BpfOption::Some(Namespaces {
                     mnt: core_read_kernel!(nsproxy, mnt_ns, ns, inum)
                         .ok_or(Error::MntNamespaceFailure)?,
                 });

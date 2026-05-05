@@ -121,7 +121,7 @@ impl TaskSection {
             user: add.user.map(|u| u.name).unwrap_or("?".into()),
             gid: ti.gid,
             group: add.group.map(|g| g.name).unwrap_or("?".into()),
-            namespaces: ti.namespaces.map(|ns| ns.into()),
+            namespaces: ti.namespaces.map(|ns| ns.into()).into(),
             flags: ti.flags,
             zombie: ti.zombie,
         }

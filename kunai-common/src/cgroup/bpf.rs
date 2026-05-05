@@ -1,4 +1,7 @@
-use crate::co_re::{self, core_read_kernel};
+use crate::{
+    co_re::{self, core_read_kernel},
+    option::BpfOption,
+};
 
 use super::{Cgroup, Error};
 
@@ -10,7 +13,7 @@ impl Cgroup {
     #[inline(always)]
     pub unsafe fn resolve(&mut self, cgroup: co_re::cgroup) -> Result<(), Error> {
         // initialize error
-        self.error = None;
+        self.error = BpfOption::None;
 
         if cgroup.is_null() {
             return Ok(());
@@ -21,7 +24,7 @@ impl Cgroup {
         for _ in 0..MAX_CGROUP_DEPTH {
             let kn_name = core_read_kernel!(kn, name).ok_or(Error::KnName)?;
             self.path.append_kernel_str_bytes(kn_name).map_err(|_| {
-                self.error = Some(Error::Append);
+                self.error = BpfOption::Some(Error::Append);
                 Error::Append
             })?;
 
@@ -31,7 +34,7 @@ impl Cgroup {
             }
 
             self.path.push_char('/').map_err(|_| {
-                self.error = Some(Error::Append);
+                self.error = BpfOption::Some(Error::Append);
                 Error::Append
             })?;
         }

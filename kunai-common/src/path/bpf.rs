@@ -1,8 +1,13 @@
-use crate::co_re::{self, core_read_kernel};
+use crate::{
+    co_re::{self, core_read_kernel},
+    option::BpfOption,
+    path::Metadata,
+    time::Time,
+};
 use aya_ebpf::check_bounds_signed;
 use aya_ebpf::helpers::gen;
 
-use super::{Error, Metadata, Mode, Path, MAX_NAME, MAX_PATH_LEN};
+use super::{Error, Mode, Path, MAX_NAME, MAX_PATH_LEN};
 
 type Result<T> = core::result::Result<T, Error>;
 
@@ -17,19 +22,24 @@ fn xor_shift_star(a: u64, b: u64) -> u64 {
 impl Path {
     #[inline(always)]
     unsafe fn init_from_inode(&mut self, i: &co_re::inode) -> Result<()> {
-        let atime = core_read_kernel!(i, i_atime).ok_or(Error::DentryAtime)?;
-        let ctime = core_read_kernel!(i, i_ctime).ok_or(Error::DentryCtime)?;
-        let mtime = core_read_kernel!(i, i_mtime).ok_or(Error::DentryMtime)?;
+        // weird initialization pattern but it prevent raising stack size issue
+        self.metadata = BpfOption::Some(Metadata::default());
 
-        self.metadata = Some(Metadata {
-            ino: core_read_kernel!(i, i_ino).ok_or(Error::PathInoFailure)?,
-            sb_ino: core_read_kernel!(i, i_sb, s_root, d_inode, i_ino)
-                .ok_or(Error::PathSbInoFailure)?,
-            size: core_read_kernel!(i, i_size).ok_or(Error::InodeIsize)?,
-            atime: atime.into(),
-            ctime: ctime.into(),
-            mtime: mtime.into(),
-        });
+        if let BpfOption::Some(m) = self.metadata.as_mut() {
+            m.ino = core_read_kernel!(i, i_ino).ok_or(Error::PathInoFailure)?;
+            m.sb_ino = core_read_kernel!(i, i_sb, s_root, d_inode, i_ino)
+                .ok_or(Error::PathSbInoFailure)?;
+            m.size = core_read_kernel!(i, i_size).ok_or(Error::InodeIsize)?;
+            m.atime = core_read_kernel!(i, i_atime)
+                .ok_or(Error::DentryAtime)
+                .map(Time::from)?;
+            m.ctime = core_read_kernel!(i, i_ctime)
+                .ok_or(Error::DentryCtime)
+                .map(Time::from)?;
+            m.mtime = core_read_kernel!(i, i_mtime)
+                .ok_or(Error::DentryMtime)
+                .map(Time::from)?;
+        }
 
         Ok(())
     }
@@ -47,7 +57,7 @@ impl Path {
         match self.inner_resolve(p, max_depth) {
             Ok(()) => Ok(()),
             Err(e) => {
-                self.error = Some(e);
+                self.error = BpfOption::Some(e);
                 Err(e)
             }
         }

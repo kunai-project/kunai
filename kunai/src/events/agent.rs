@@ -2,6 +2,7 @@ use std::{ffi::OsString, io};
 
 use kunai_common::{
     bpf_events::{self, TaskInfo, Type, COMM_SIZE},
+    option::BpfOption,
     uuid::ProcUuid,
 };
 use thiserror::Error;
@@ -57,7 +58,7 @@ impl AgentEventInfo {
             uid: status.euid,
             gid: status.egid,
             tg_uuid: ProcUuid::new(start_time, 0, status.tgid as u32),
-            namespaces: Some(bpf_events::Namespaces {
+            namespaces: BpfOption::Some(bpf_events::Namespaces {
                 mnt: mnt.identifier as u32,
             }),
             comm,
