@@ -18,6 +18,7 @@ pub struct Cgroup {
     pub error: Option<Error>,
 }
 
+#[repr(C)]
 #[derive(BpfError, Debug, Clone, Copy)]
 pub enum Error {
     #[error("failed to read cgroup.kn")]

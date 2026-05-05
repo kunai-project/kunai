@@ -91,6 +91,7 @@ impl<const N: usize> Buffer<N> {
     }
 }
 
+#[repr(C)]
 #[derive(BpfError, Clone, Copy)]
 pub enum Error {
     #[error("bpf_probe_read failed")]

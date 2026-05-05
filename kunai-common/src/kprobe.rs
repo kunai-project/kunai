@@ -7,6 +7,7 @@ mod bpf;
 #[cfg(target_arch = "bpf")]
 pub use bpf::*;
 
+#[repr(C)]
 #[derive(BpfError, Clone, Copy)]
 pub enum Error {
     #[error("failed to insert ctx")]
