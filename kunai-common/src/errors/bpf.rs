@@ -1,4 +1,4 @@
-use aya_ebpf::{macros::map, maps::LruPerCpuHashMap, EbpfContext};
+use aya_ebpf::{macros::map, maps::LruPerCpuHashMap};
 
 use crate::{
     bpf_events::{log, LogEvent},
@@ -60,22 +60,6 @@ pub struct Args {
     pub level: log::Level,
 }
 
-#[inline(always)]
-pub unsafe fn log_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
-    let _ = LOGS.insert(&0, &(*(EMPTY_LOG.as_ptr() as *const LogEvent)), 0);
-    if let Some(e) = LOGS.get_ptr_mut(&0) {
-        let e = &mut *e;
-        e.init_with_level(args.level);
-        e.info.etype = bpf_events::Type::Log;
-        e.data.location.clone_from(&args.location);
-        e.data.line = args.line;
-        e.data.error = args.err;
-        e.data.message = args.message;
-
-        bpf_events::pipe_log(ctx, e);
-    }
-}
-
 #[macro_export]
 macro_rules! log {
     ($ctx:expr, $msg:literal, $err:expr, $level:expr) => {{
@@ -83,21 +67,24 @@ macro_rules! log {
             const _PROBE_NAME: $crate::string::String<32> = $crate::probe_name!();
             const _MSG: $crate::string::String<64> = $crate::string::from_str_fitting($msg);
 
-            let args = $crate::errors::Args {
-                line: core::line!(),
-                location: _PROBE_NAME,
-                message: {
+            let _ = LOGS.insert(&0, &(*(EMPTY_LOG.as_ptr() as *const LogEvent)), 0);
+            if let Some(e) = LOGS.get_ptr_mut(&0) {
+                let e = &mut *e;
+                e.init_with_level($level);
+                e.info.etype = $crate::bpf_events::Type::Log;
+                e.data.location.clone_from(&_PROBE_NAME);
+                e.data.line = core::line!();
+                e.data.error = $err;
+                e.data.message = {
                     if !$msg.is_empty() {
                         $crate::option::BpfOption::Some(_MSG)
                     } else {
                         $crate::option::BpfOption::None
                     }
-                },
-                err: $err,
-                level: $level,
-            };
+                };
 
-            $crate::errors::log_with_args($ctx, &args);
+                $crate::bpf_events::pipe_log($ctx, e);
+            }
         };
     }};
 }
