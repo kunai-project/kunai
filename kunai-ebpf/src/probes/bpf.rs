@@ -3,6 +3,7 @@ use aya_ebpf::{
     maps::LruHashMap,
     programs::{ProbeContext, RetProbeContext},
 };
+use kunai_common::option::BpfOption;
 
 #[map]
 static mut BPF_PROG_TRACK: LruHashMap<u64, co_re::bpf_prog> = LruHashMap::with_max_entries(1024, 0);
@@ -90,7 +91,7 @@ unsafe fn try_bpf_prog_load(ctx: &RetProbeContext) -> ProbeResult<()> {
         // needs to be implemented like that not to cause a read_ok! verifier error
         // on some kernels
         if let Some(vi) = bpf_prog_aux.verified_insns() {
-            event.data.verified_insns = Some(vi)
+            event.data.verified_insns = BpfOption::Some(vi)
         }
 
         // get attached_func_name

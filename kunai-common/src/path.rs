@@ -1,4 +1,4 @@
-use crate::errors::ProbeError;
+use crate::{errors::ProbeError, option::BpfOption};
 
 use super::time::Time;
 
@@ -157,22 +157,22 @@ pub struct Path {
     depth: u16,
     real: bool, // flag if path is a realpath
     pub hash: u64,
-    pub metadata: Option<Metadata>,
+    pub metadata: BpfOption<Metadata>,
     pub mode: Mode,
-    pub error: Option<Error>,
+    pub error: BpfOption<Error>,
 }
 
 impl PartialEq for Path {
     fn eq(&self, other: &Self) -> bool {
         let meta_eq = match (self.metadata, other.metadata) {
-            (Some(sm), Some(om)) => {
+            (BpfOption::Some(sm), BpfOption::Some(om)) => {
                 sm.ino == om.ino
                     && sm.sb_ino == om.sb_ino
                     && sm.size == om.size
                     && sm.mtime == om.mtime
                     && sm.ctime == om.ctime
             }
-            (None, None) => true,
+            (BpfOption::None, BpfOption::None) => true,
             _ => false,
         };
 
@@ -193,9 +193,9 @@ impl Default for Path {
             depth: 0,
             hash: 0,
             real: false,
-            metadata: None,
+            metadata: BpfOption::None,
             mode: Mode::Append,
-            error: None,
+            error: BpfOption::None,
         }
     }
 }
@@ -217,7 +217,7 @@ impl Path {
 
         self.len = 0;
         self.mode = mode;
-        self.error = None;
+        self.error = BpfOption::None;
 
         let mut start = 0;
         if matches!(mode, Mode::Prepend) {
@@ -228,7 +228,7 @@ impl Path {
         self.len = n as u32;
 
         if src.len() > self.buffer.len() {
-            self.error = Some(Error::TruncPath);
+            self.error = BpfOption::Some(Error::TruncPath);
             return Err(n);
         }
 

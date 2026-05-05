@@ -39,6 +39,7 @@ use kunai_common::bpf_events::{
 };
 use kunai_common::config::Filter;
 use kunai_common::io_uring::io_uring_op;
+use kunai_common::option::BpfOption;
 use kunai_common::{inspect_err, kernel};
 
 use kunai::util::namespace::{Mnt, Namespace};
@@ -861,7 +862,7 @@ impl EventConsumer<'_> {
 
     #[inline(always)]
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
-        ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt))
+        ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt)).into()
     }
 
     #[inline(always)]
@@ -1183,11 +1184,11 @@ impl EventConsumer<'_> {
                 sha512: "?".into(),
                 size: 0,
             },
-            verified_insns: bpf_data.verified_insns,
+            verified_insns: bpf_data.verified_insns.into(),
             loaded: bpf_data.loaded,
         };
 
-        if let Some(h) = &bpf_data.hashes {
+        if let BpfOption::Some(h) = &bpf_data.hashes {
             data.bpf_prog.md5 = h.md5.into();
             data.bpf_prog.sha1 = h.sha1.into();
             data.bpf_prog.sha256 = h.sha256.into();
@@ -1602,8 +1603,8 @@ impl EventConsumer<'_> {
         // we encountered some cgroup parsing error in eBPF
         // so we need to resolve cgroup in userland
         let cgroups = match cgroup.error {
-            None => vec![cgroup.to_string()],
-            Some(_) => {
+            BpfOption::None => vec![cgroup.to_string()],
+            BpfOption::Some(_) => {
                 if let Ok(cgroups) =
                     procfs::process::Process::new(info.task_info().pid).and_then(|p| p.cgroups())
                 {
@@ -2409,7 +2410,7 @@ impl EventProducer {
                             size: insns.len(),
                         };
 
-                        e.data.hashes = Some(h);
+                        e.data.hashes = BpfOption::Some(h);
                     }
 
                     Err(err) => {

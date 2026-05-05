@@ -1,4 +1,4 @@
-use crate::errors::ProbeError;
+use crate::{errors::ProbeError, option::BpfOption};
 use kunai_macros::BpfError;
 
 #[cfg(feature = "user")]
@@ -15,9 +15,10 @@ const CGROUP_STRING_LEN: usize = CGROUP_PATH_MAX * 2;
 #[derive(Debug, Clone, Copy)]
 pub struct Cgroup {
     path: crate::string::String<CGROUP_STRING_LEN>,
-    pub error: Option<Error>,
+    pub error: BpfOption<Error>,
 }
 
+#[repr(C)]
 #[derive(BpfError, Debug, Clone, Copy)]
 pub enum Error {
     #[error("failed to read cgroup.kn")]

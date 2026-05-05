@@ -7,6 +7,7 @@ use kunai_macros::BpfError;
 
 use super::errors::ProbeError;
 
+#[repr(C)]
 #[derive(BpfError, Clone, Copy)]
 pub enum Error {
     #[error("failed to get allocator")]

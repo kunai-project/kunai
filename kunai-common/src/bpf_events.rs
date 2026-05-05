@@ -1,6 +1,7 @@
 use crate::buffer::Buffer;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
+use crate::option::BpfOption;
 use crate::uuid::{ProcUuid, Uuid};
 use kunai_macros::{BpfError, StrEnum};
 
@@ -199,7 +200,7 @@ pub struct TaskInfo {
     pub pid: i32,
     // task group uuid -> used to group tasks
     pub tg_uuid: ProcUuid,
-    pub namespaces: Option<Namespaces>,
+    pub namespaces: BpfOption<Namespaces>,
     pub start_time: u64,
 }
 

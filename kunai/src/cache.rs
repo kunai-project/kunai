@@ -235,7 +235,7 @@ impl From<&kunai_common::path::Path> for Path {
     fn from(value: &kunai_common::path::Path) -> Self {
         Self::Bpf {
             path: value.to_path_buf(),
-            ebpf_meta: value.metadata,
+            ebpf_meta: value.metadata.into(),
         }
     }
 }

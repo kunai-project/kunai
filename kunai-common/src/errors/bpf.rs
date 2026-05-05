@@ -1,7 +1,8 @@
-use aya_ebpf::{macros::map, maps::LruPerCpuHashMap, EbpfContext};
+use aya_ebpf::{macros::map, maps::LruPerCpuHashMap};
 
 use crate::{
     bpf_events::{log, LogEvent},
+    option::BpfOption,
     string::String,
 };
 
@@ -50,28 +51,13 @@ macro_rules! probe_name {
     }};
 }
 
+#[repr(C)]
 pub struct Args {
     pub line: u32,
     pub location: String<32>,
-    pub message: Option<String<64>>,
-    pub err: Option<ProbeError>,
+    pub message: BpfOption<String<64>>,
+    pub err: BpfOption<ProbeError>,
     pub level: log::Level,
-}
-
-#[inline(always)]
-pub unsafe fn log_with_args<C: EbpfContext>(ctx: &C, args: &Args) {
-    let _ = LOGS.insert(&0, &(*(EMPTY_LOG.as_ptr() as *const LogEvent)), 0);
-    if let Some(e) = LOGS.get_ptr_mut(&0) {
-        let e = &mut *e;
-        e.init_with_level(args.level);
-        e.info.etype = bpf_events::Type::Log;
-        e.data.location.clone_from(&args.location);
-        e.data.line = args.line;
-        e.data.error = args.err;
-        e.data.message = args.message;
-
-        bpf_events::pipe_log(ctx, e);
-    }
 }
 
 #[macro_export]
@@ -81,21 +67,24 @@ macro_rules! log {
             const _PROBE_NAME: $crate::string::String<32> = $crate::probe_name!();
             const _MSG: $crate::string::String<64> = $crate::string::from_str_fitting($msg);
 
-            let args = $crate::errors::Args {
-                line: core::line!(),
-                location: _PROBE_NAME,
-                message: {
+            let _ = LOGS.insert(&0, &(*(EMPTY_LOG.as_ptr() as *const LogEvent)), 0);
+            if let Some(e) = LOGS.get_ptr_mut(&0) {
+                let e = &mut *e;
+                e.init_with_level($level);
+                e.info.etype = $crate::bpf_events::Type::Log;
+                e.data.location.clone_from(&_PROBE_NAME);
+                e.data.line = core::line!();
+                e.data.error = $err;
+                e.data.message = {
                     if !$msg.is_empty() {
-                        Some(_MSG)
+                        $crate::option::BpfOption::Some(_MSG)
                     } else {
-                        None
+                        $crate::option::BpfOption::None
                     }
-                },
-                err: $err,
-                level: $level,
-            };
+                };
 
-            $crate::errors::log_with_args($ctx, &args);
+                $crate::bpf_events::pipe_log($ctx, e);
+            }
         };
     }};
 }
@@ -104,18 +93,28 @@ macro_rules! log {
 macro_rules! error {
     // literal must be evaluated first
     ($ctx:expr, $msg:literal) => {
-        $crate::log!($ctx, $msg, None, $crate::bpf_events::log::Level::Error)
+        $crate::log!(
+            $ctx,
+            $msg,
+            $crate::option::BpfOption::None,
+            $crate::bpf_events::log::Level::Error
+        )
     };
 
     ($ctx:expr, $err:expr) => {
-        $crate::log!($ctx, "", Some($err), $crate::bpf_events::log::Level::Error)
+        $crate::log!(
+            $ctx,
+            "",
+            $crate::option::BpfOption::Some($err),
+            $crate::bpf_events::log::Level::Error
+        )
     };
 
     ($ctx:expr, $msg:literal, $err:expr) => {
         $crate::log!(
             $ctx,
             $msg,
-            Some($err),
+            $crate::option::BpfOption::Some($err),
             $crate::bpf_events::log::Level::Error
         );
     };
@@ -125,14 +124,29 @@ macro_rules! error {
 macro_rules! warn {
     // literal must be evaluated first
     ($ctx:expr, $msg:literal) => {
-        $crate::log!($ctx, $msg, None, $crate::bpf_events::log::Level::Warn)
+        $crate::log!(
+            $ctx,
+            $msg,
+            $crate::option::BpfOption::None,
+            $crate::bpf_events::log::Level::Warn
+        )
     };
 
     ($ctx:expr, $err:expr) => {
-        $crate::log!($ctx, "", Some($err), $crate::bpf_events::log::Level::Warn);
+        $crate::log!(
+            $ctx,
+            "",
+            $crate::option::BpfOption::Some($err),
+            $crate::bpf_events::log::Level::Warn
+        );
     };
 
     ($ctx:expr, $msg:literal, $err:expr) => {
-        $crate::log!($ctx, $msg, Some($err), $crate::bpf_events::log::Level::Warn);
+        $crate::log!(
+            $ctx,
+            $msg,
+            $crate::option::BpfOption::Some($err),
+            $crate::bpf_events::log::Level::Warn
+        );
     };
 }

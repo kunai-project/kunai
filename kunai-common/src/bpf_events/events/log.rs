@@ -1,4 +1,4 @@
-use crate::{bpf_events::Event, errors::ProbeError, string::String};
+use crate::{bpf_events::Event, errors::ProbeError, option::BpfOption, string::String};
 
 pub type LogEvent = Event<LogData>;
 
@@ -15,8 +15,8 @@ pub struct LogData {
     pub location: String<32>,
     pub line: u32,
     pub level: Level,
-    pub error: Option<ProbeError>,
-    pub message: Option<String<64>>,
+    pub error: BpfOption<ProbeError>,
+    pub message: BpfOption<String<64>>,
 }
 
 #[cfg(target_arch = "bpf")]
@@ -57,11 +57,11 @@ mod user {
                 self.info.process.comm_str(),
             )?;
 
-            if let Some(msg) = self.data.message.as_ref() {
+            if let BpfOption::Some(msg) = self.data.message.as_ref() {
                 write!(f, " {}", msg,)?;
             }
 
-            if let Some(e) = self.data.error.as_ref() {
+            if let BpfOption::Some(e) = self.data.error.as_ref() {
                 write!(f, " {}: {}", e.name(), e.description())?;
             }
             Ok(())
