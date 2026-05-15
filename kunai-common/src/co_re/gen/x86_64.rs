@@ -119,12 +119,36 @@ pub struct kuid_t {
 pub struct cred {
     pub uid: kuid_t,
     pub gid: kgid_t,
+    pub suid: kuid_t,
+    pub sgid: kgid_t,
+    pub euid: kuid_t,
+    pub egid: kgid_t,
+    pub fsuid: kuid_t,
+    pub fsgid: kgid_t,
 }
 unsafe extern "C" {
     pub fn shim_cred_uid(pcred: *mut cred) -> uid_t;
 }
 unsafe extern "C" {
     pub fn shim_cred_gid(pcred: *mut cred) -> gid_t;
+}
+unsafe extern "C" {
+    pub fn shim_cred_euid(pcred: *mut cred) -> uid_t;
+}
+unsafe extern "C" {
+    pub fn shim_cred_egid(pcred: *mut cred) -> gid_t;
+}
+unsafe extern "C" {
+    pub fn shim_cred_suid(pcred: *mut cred) -> uid_t;
+}
+unsafe extern "C" {
+    pub fn shim_cred_sgid(pcred: *mut cred) -> gid_t;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsuid(pcred: *mut cred) -> uid_t;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsgid(pcred: *mut cred) -> gid_t;
 }
 #[repr(C)]
 #[derive(Copy, Clone)]

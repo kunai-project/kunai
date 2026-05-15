@@ -687,6 +687,36 @@ impl Scannable for PtraceData {
 
 impl_std_iocs!(PtraceData);
 
+#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
+pub struct CredSnapshot {
+    pub uid: u32,
+    pub gid: u32,
+    pub euid: u32,
+    pub egid: u32,
+    pub suid: u32,
+    pub sgid: u32,
+    pub fsuid: u32,
+    pub fsgid: u32,
+}
+
+def_user_data!(
+    pub struct SetCredsData {
+        pub kind: String,
+        pub flags: String,
+        pub old: CredSnapshot,
+        pub new: CredSnapshot,
+    }
+);
+
+impl Scannable for SetCredsData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.path)]
+    }
+}
+
+impl_std_iocs!(SetCredsData);
+
 def_user_data!(
     pub struct MmapExecData {
         pub mapped: Hashes,

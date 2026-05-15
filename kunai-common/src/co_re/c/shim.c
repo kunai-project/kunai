@@ -175,10 +175,22 @@ struct cred
 {
 	struct kuid_t uid;
 	struct kgid_t gid;
+	struct kuid_t suid;
+	struct kgid_t sgid;
+	struct kuid_t euid;
+	struct kgid_t egid;
+	struct kuid_t fsuid;
+	struct kgid_t fsgid;
 } __attribute__((preserve_access_index));
 
 _SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_uid(struct cred *pcred), pcred, uid.val);
 _SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_gid(struct cred *pcred), pcred, gid.val);
+_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_euid(struct cred *pcred), pcred, euid.val);
+_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_egid(struct cred *pcred), pcred, egid.val);
+_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_suid(struct cred *pcred), pcred, suid.val);
+_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_sgid(struct cred *pcred), pcred, sgid.val);
+_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_fsuid(struct cred *pcred), pcred, fsuid.val);
+_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_fsgid(struct cred *pcred), pcred, fsgid.val);
 
 struct qstr
 {

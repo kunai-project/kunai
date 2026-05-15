@@ -76,6 +76,8 @@ pub enum Type {
     Kill,
     #[str("ptrace")]
     Ptrace,
+    #[str("set_creds")]
+    SetCreds,
 
     // stuff loaded in kernel
     #[str("init_module")]

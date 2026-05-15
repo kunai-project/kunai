@@ -2,6 +2,8 @@ use core::ffi::c_void;
 
 use aya_ebpf::{cty::c_int, programs::LsmContext};
 
+use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent};
+
 use super::*;
 
 enum LsmStatus {
@@ -82,4 +84,140 @@ unsafe fn try_ptrace_access_check(ctx: &LsmContext) -> Result<LsmStatus, ProbeEr
 
     // we block any attempt to ptrace kunai
     Ok(LsmStatus::Block)
+}
+
+#[inline(always)]
+unsafe fn snapshot_cred(c: &co_re::cred) -> CredSnapshot {
+    CredSnapshot {
+        uid: c.uid(),
+        gid: c.gid(),
+        euid: c.euid(),
+        egid: c.egid(),
+        suid: c.suid(),
+        sgid: c.sgid(),
+        fsuid: c.fsuid(),
+        fsgid: c.fsgid(),
+    }
+}
+
+#[inline(always)]
+unsafe fn emit_creds_event(
+    ctx: &LsmContext,
+    new: &co_re::cred,
+    old: &co_re::cred,
+    kind: CredsChangeKind,
+    flags: u32,
+) -> Result<(), ProbeError> {
+    if new.is_null() || old.is_null() {
+        return Ok(());
+    }
+
+    alloc::init()?;
+    let event = alloc::alloc_zero::<CredsEvent>()?;
+    event.init_from_current_task(Type::SetCreds)?;
+    event.data.kind = kind;
+    event.data.flags = flags;
+    event.data.old = snapshot_cred(old);
+    event.data.new = snapshot_cred(new);
+
+    pipe_event(ctx, event);
+    Ok(())
+}
+
+/// LSM hook: int task_fix_setuid(struct cred *new, const struct cred *old, int flags)
+/// Fires on setuid/setresuid/setreuid/setfsuid family syscalls.
+#[lsm(hook = "task_fix_setuid")]
+pub fn lsm_task_fix_setuid(ctx: LsmContext) -> i32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
+    let ret: c_int = unsafe { ctx.arg(3) };
+
+    match unsafe { try_lsm_task_fix_setuid(&ctx) } {
+        Ok(_) => ret,
+        Err(s) => {
+            error!(&ctx, s);
+            // observational hook: never block on error
+            ret
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn try_lsm_task_fix_setuid(ctx: &LsmContext) -> Result<(), ProbeError> {
+    if_disabled_return!(Type::SetCreds, ());
+
+    let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
+    let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
+    let flags: c_int = ctx.arg(2);
+
+    emit_creds_event(ctx, &new, &old, CredsChangeKind::SetUid, flags as u32)
+}
+
+/// LSM hook: int task_fix_setgid(struct cred *new, const struct cred *old, int flags)
+/// Fires on setgid/setresgid/setregid/setfsgid family syscalls.
+#[lsm(hook = "task_fix_setgid")]
+pub fn lsm_task_fix_setgid(ctx: LsmContext) -> i32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
+    let ret: c_int = unsafe { ctx.arg(3) };
+
+    match unsafe { try_lsm_task_fix_setgid(&ctx) } {
+        Ok(_) => ret,
+        Err(s) => {
+            error!(&ctx, s);
+            ret
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn try_lsm_task_fix_setgid(ctx: &LsmContext) -> Result<(), ProbeError> {
+    if_disabled_return!(Type::SetCreds, ());
+
+    let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
+    let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
+    let flags: c_int = ctx.arg(2);
+
+    emit_creds_event(ctx, &new, &old, CredsChangeKind::SetGid, flags as u32)
+}
+
+/// LSM hook: int capset(struct cred *new, const struct cred *old,
+///                      const kernel_cap_t *effective,
+///                      const kernel_cap_t *inheritable,
+///                      const kernel_cap_t *permitted)
+/// Fires on capset(2). Capability masks are intentionally not captured in this
+/// first iteration because the kernel `kernel_cap_t` layout changed between
+/// kernel versions (u32[2] pre-6.3, single u64 post-6.3) and requires
+/// dedicated CO-RE handling to read portably. uid/gid fields on the cred
+/// snapshot still surface meaningful context (capset can be called by
+/// non-root tasks after privilege manipulation).
+#[lsm(hook = "capset")]
+pub fn lsm_capset(ctx: LsmContext) -> i32 {
+    if is_current_loader_task() {
+        return 0;
+    }
+
+    let ret: c_int = unsafe { ctx.arg(5) };
+
+    match unsafe { try_lsm_capset(&ctx) } {
+        Ok(_) => ret,
+        Err(s) => {
+            error!(&ctx, s);
+            ret
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn try_lsm_capset(ctx: &LsmContext) -> Result<(), ProbeError> {
+    if_disabled_return!(Type::SetCreds, ());
+
+    let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
+    let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
+
+    emit_creds_event(ctx, &new, &old, CredsChangeKind::Capset, 0)
 }
