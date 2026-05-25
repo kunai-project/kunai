@@ -1,10 +1,54 @@
 use core::ffi::c_void;
 
-use aya_ebpf::{cty::c_int, programs::LsmContext};
+use aya_ebpf::{cty::c_int, maps::LruHashMap, programs::LsmContext, EbpfContext};
 
-use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent};
+use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent, CredsTamperedEvent};
 
 use super::*;
+
+#[map]
+pub(crate) static mut TASK_CREDS: LruHashMap<u32, u32> =
+    LruHashMap::with_max_entries(10240, 0);
+
+#[inline(always)]
+pub(crate) unsafe fn check_creds_tampering<C: EbpfContext>(ctx: &C) -> Result<(), ProbeError> {
+    if_disabled_return!(Type::CredsTampered, ());
+
+    let task = co_re::task_struct::current();
+
+    let tgid = match task.tgid() {
+        Some(t) => t as u32,
+        None => return Ok(()),
+    };
+
+    let cred = match task.cred() {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+
+    let actual_uid = cred.uid();
+
+    match TASK_CREDS.get(&tgid) {
+        None => {
+            // First time we see this task — set baseline, no alert.
+            let _ = TASK_CREDS.insert(&tgid, &actual_uid, 0);
+        }
+        Some(&expected_uid) => {
+            if expected_uid != actual_uid {
+                alloc::init()?;
+                let event = alloc::alloc_zero::<CredsTamperedEvent>()?;
+                event.init_from_current_task(Type::CredsTampered)?;
+                event.data.expected_uid = expected_uid;
+                event.data.actual_uid = actual_uid;
+                pipe_event(ctx, event);
+                // Update baseline so we don't flood with repeated alerts.
+                let _ = TASK_CREDS.insert(&tgid, &actual_uid, 0);
+            }
+        }
+    }
+
+    Ok(())
+}
 
 enum LsmStatus {
     Continue(i32),
@@ -87,6 +131,18 @@ unsafe fn try_ptrace_access_check(ctx: &LsmContext) -> Result<LsmStatus, ProbeEr
 }
 
 #[inline(always)]
+unsafe fn update_creds_map(new: &co_re::cred) {
+    if new.is_null() {
+        return;
+    }
+    let task = co_re::task_struct::current();
+    if let Some(tgid) = task.tgid() {
+        let new_uid = new.uid();
+        let _ = TASK_CREDS.insert(&(tgid as u32), &new_uid, 0);
+    }
+}
+
+#[inline(always)]
 unsafe fn snapshot_cred(c: &co_re::cred) -> CredSnapshot {
     CredSnapshot {
         uid: c.uid(),
@@ -146,11 +202,13 @@ pub fn lsm_task_fix_setuid(ctx: LsmContext) -> i32 {
 
 #[inline(always)]
 unsafe fn try_lsm_task_fix_setuid(ctx: &LsmContext) -> Result<(), ProbeError> {
-    if_disabled_return!(Type::SetCreds, ());
-
     let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
     let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
     let flags: c_int = ctx.arg(2);
+
+    update_creds_map(&new);
+
+    if_disabled_return!(Type::SetCreds, ());
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetUid, flags as u32)
 }
@@ -176,11 +234,13 @@ pub fn lsm_task_fix_setgid(ctx: LsmContext) -> i32 {
 
 #[inline(always)]
 unsafe fn try_lsm_task_fix_setgid(ctx: &LsmContext) -> Result<(), ProbeError> {
-    if_disabled_return!(Type::SetCreds, ());
-
     let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
     let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
     let flags: c_int = ctx.arg(2);
+
+    update_creds_map(&new);
+
+    if_disabled_return!(Type::SetCreds, ());
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetGid, flags as u32)
 }
@@ -214,10 +274,12 @@ pub fn lsm_capset(ctx: LsmContext) -> i32 {
 
 #[inline(always)]
 unsafe fn try_lsm_capset(ctx: &LsmContext) -> Result<(), ProbeError> {
-    if_disabled_return!(Type::SetCreds, ());
-
     let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
     let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
+
+    update_creds_map(&new);
+
+    if_disabled_return!(Type::SetCreds, ());
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::Capset, 0)
 }

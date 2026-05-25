@@ -45,6 +45,13 @@ pub fn execve_security_bprm_check(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
+    // Detect out-of-band credential changes (kernel memory corruption
+    // exploits) before any other processing. A mismatch between the tracked
+    // uid and the actual uid in the task's cred struct means the cred was
+    // modified without going through the LSM hooks we monitor. Errors are
+    // ignored so this check never blocks a legitimate exec.
+    let _ = crate::probes::lsm::check_creds_tampering(ctx);
+
     let linux_binprm = co_re::linux_binprm::from_ptr(ctx.arg(0).unwrap_or(core::ptr::null()));
     let current = co_re::task_struct::current();
     let task_uuid = current.uuid();

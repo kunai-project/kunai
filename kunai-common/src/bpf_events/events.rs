@@ -78,6 +78,7 @@ const fn max_bpf_event_size() -> usize {
             Type::Kill => KillEvent::size_of(),
             Type::Ptrace => PtraceEvent::size_of(),
             Type::SetCreds => CredsEvent::size_of(),
+            Type::CredsTampered => CredsTamperedEvent::size_of(),
             Type::InitModule => InitModuleEvent::size_of(),
             Type::BpfProgLoad => BpfProgLoadEvent::size_of(),
             Type::BpfSocketFilter => BpfSocketFilterEvent::size_of(),

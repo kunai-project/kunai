@@ -718,6 +718,22 @@ impl Scannable for SetCredsData {
 impl_std_iocs!(SetCredsData);
 
 def_user_data!(
+    pub struct CredsTamperedData {
+        pub expected_uid: u32,
+        pub actual_uid: u32,
+    }
+);
+
+impl Scannable for CredsTamperedData {
+    #[inline]
+    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+        vec![Cow::Borrowed(&self.exe.path)]
+    }
+}
+
+impl_std_iocs!(CredsTamperedData);
+
+def_user_data!(
     pub struct MmapExecData {
         pub mapped: Hashes,
     }

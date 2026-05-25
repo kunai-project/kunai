@@ -15,11 +15,11 @@ use huby::ByteSize;
 use kunai::containers::Container;
 use kunai::events::{
     agent::AgentEventInfo, BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData,
-    ConnectData, DnsQueryData, ErrorData, EventInfo, ExecveData, ExitData, FileData,
-    FileRenameData, FileScanData, FilterInfo, InitModuleData, KillData, KunaiEvent, LossData,
-    MmapExecData, MprotectData, NetworkInfo, PrctlData, PtraceData, ScanResult, SendDataData,
-    SetCredsData,
-    SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData, UserEvent,
+    ConnectData, CredsTamperedData, DnsQueryData, ErrorData, EventInfo, ExecveData, ExitData,
+    FileData, FileRenameData, FileScanData, FilterInfo, InitModuleData, KillData, KunaiEvent,
+    LossData, MmapExecData, MprotectData, NetworkInfo, PrctlData, PtraceData, ScanResult,
+    SendDataData, SetCredsData, SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData,
+    UserEvent,
 };
 use kunai::events::{IoUringOp, IoUringSqeData, StartData};
 use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo};
@@ -1107,6 +1107,23 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
+    fn creds_tampered_event(
+        &mut self,
+        info: StdEventInfo,
+        bpf_data: bpf_events::CredsTamperedData,
+    ) -> UserEvent<CredsTamperedData> {
+        let (exe, command_line) = self.get_exe_and_command_line(&info);
+        let data = CredsTamperedData {
+            ancestors: self.get_ancestors_string(&info),
+            exe: exe.into(),
+            command_line,
+            expected_uid: bpf_data.expected_uid,
+            actual_uid: bpf_data.actual_uid,
+        };
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
     fn mmap_exec_event(
         &mut self,
         info: StdEventInfo,
@@ -2186,6 +2203,12 @@ impl EventConsumer<'_> {
                 self.scan_and_print(&mut e);
             }
 
+            EbpfEvent::CredsTampered(e) => {
+                let std_info = self.build_std_event_info(e.info);
+                let mut e = self.creds_tampered_event(std_info, e.data);
+                self.scan_and_print(&mut e);
+            }
+
             EbpfEvent::MmapExec(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.mmap_exec_event(std_info, e.data);
@@ -3251,6 +3274,7 @@ enum ReplayEvent {
     Kill(UserEvent<KillData>),
     Ptrace(UserEvent<PtraceData>),
     SetCreds(UserEvent<SetCredsData>),
+    CredsTampered(UserEvent<CredsTamperedData>),
     MmapExec(UserEvent<MmapExecData>),
     MprotectExec(UserEvent<MprotectData>),
     Connect(UserEvent<ConnectData>),
@@ -3282,6 +3306,7 @@ impl ReplayEvent {
             Self::Kill(u) => c.scan(u),
             Self::Ptrace(u) => c.scan(u),
             Self::SetCreds(u) => c.scan(u),
+            Self::CredsTampered(u) => c.scan(u),
             Self::MmapExec(u) => c.scan(u),
             Self::MprotectExec(u) => c.scan(u),
             Self::Connect(u) => c.scan(u),
@@ -3311,6 +3336,7 @@ impl ReplayEvent {
             Self::Kill(u) => c.scan_and_print(u),
             Self::Ptrace(u) => c.scan_and_print(u),
             Self::SetCreds(u) => c.scan_and_print(u),
+            Self::CredsTampered(u) => c.scan_and_print(u),
             Self::MmapExec(u) => c.scan_and_print(u),
             Self::MprotectExec(u) => c.scan_and_print(u),
             Self::Connect(u) => c.scan_and_print(u),
@@ -3363,6 +3389,7 @@ impl TryFrom<serde_json::Value> for ReplayEvent {
             Type::Kill => event_enum!(KillData, ReplayEvent::Kill),
             Type::Ptrace => event_enum!(PtraceData, ReplayEvent::Ptrace),
             Type::SetCreds => event_enum!(SetCredsData, ReplayEvent::SetCreds),
+            Type::CredsTampered => event_enum!(CredsTamperedData, ReplayEvent::CredsTampered),
             Type::MmapExec => event_enum!(MmapExecData, ReplayEvent::MmapExec),
             Type::MprotectExec => event_enum!(MprotectData, ReplayEvent::MprotectExec),
             Type::Connect => event_enum!(ConnectData, ReplayEvent::Connect),

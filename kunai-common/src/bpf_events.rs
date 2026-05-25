@@ -78,6 +78,8 @@ pub enum Type {
     Ptrace,
     #[str("set_creds")]
     SetCreds,
+    #[str("creds_tampered")]
+    CredsTampered,
 
     // stuff loaded in kernel
     #[str("init_module")]
