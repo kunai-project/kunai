@@ -12,7 +12,7 @@ use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent, CredsT
 use super::*;
 
 #[map]
-pub(crate) static mut TASK_CREDS: LruHashMap<u32, u32> =
+pub(crate) static mut TASK_CREDS: LruHashMap<u128, u32> =
     LruHashMap::with_max_entries(10240, 0);
 
 #[inline(always)]
@@ -20,11 +20,8 @@ pub(crate) unsafe fn check_creds_tampering<C: EbpfContext>(ctx: &C) -> Result<()
     if_disabled_return!(Type::CredsTampered, ());
 
     let task = co_re::task_struct::current();
-
-    let tgid = match task.tgid() {
-        Some(t) => t as u32,
-        None => return Ok(()),
-    };
+    
+    let task_uuid = task.uuid();
 
     let cred = match task.cred() {
         Some(c) => c,
@@ -33,10 +30,10 @@ pub(crate) unsafe fn check_creds_tampering<C: EbpfContext>(ctx: &C) -> Result<()
 
     let actual_uid = cred.uid();
 
-    match TASK_CREDS.get(&tgid) {
+    match TASK_CREDS.get(&task_uuid) {
         None => {
             // First time we see this task — set baseline, no alert.
-            let _ = TASK_CREDS.insert(&tgid, &actual_uid, 0);
+            let _ = TASK_CREDS.insert(&task_uuid, &actual_uid, 0);
         }
         Some(&expected_uid) => {
             if expected_uid != actual_uid {
@@ -47,7 +44,7 @@ pub(crate) unsafe fn check_creds_tampering<C: EbpfContext>(ctx: &C) -> Result<()
                 event.data.actual_uid = actual_uid;
                 pipe_event(ctx, event);
                 // Update baseline so we don't flood with repeated alerts.
-                let _ = TASK_CREDS.insert(&tgid, &actual_uid, 0);
+                let _ = TASK_CREDS.insert(&task_uuid, &actual_uid, 0);
             }
         }
     }
@@ -141,10 +138,9 @@ unsafe fn update_creds_map(new: &co_re::cred) {
         return;
     }
     let task = co_re::task_struct::current();
-    if let Some(tgid) = task.tgid() {
-        let new_uid = new.uid();
-        let _ = TASK_CREDS.insert(&(tgid as u32), &new_uid, 0);
-    }
+    let task_uuid = task.uuid();
+    let new_uid = new.uid();
+    let _ = TASK_CREDS.insert(&task_uuid, &new_uid, 0);
 }
 
 #[inline(always)]
