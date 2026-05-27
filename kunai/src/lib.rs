@@ -52,22 +52,19 @@ fn configure_probes(
         .prio(0)
         .disable_if(!conf.harden);
 
-    // Observational LSM hooks for credential transitions. Unlike
-    // lsm_task_kill / lsm_ptrace_access_check above, these do not block,
-    // so they are not gated behind harden mode.
     programs
-        .expect_mut("lsm_task_fix_setuid")
-        .min_kernel(kernel!(5, 7))
+        .expect_mut("lsm_security_task_fix_setuid")
+        .min_kernel(kernel!(5, 4))
         .prio(0);
 
     programs
-        .expect_mut("lsm_task_fix_setgid")
-        .min_kernel(kernel!(5, 7))
+        .expect_mut("lsm_security_task_fix_setgid")
+        .min_kernel(kernel!(5, 4))
         .prio(0);
 
     programs
-        .expect_mut("lsm_capset")
-        .min_kernel(kernel!(5, 7))
+        .expect_mut("lsm_security_capset")
+        .min_kernel(kernel!(5, 4))
         .prio(0);
 
     // Other probes

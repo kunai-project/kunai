@@ -1,6 +1,11 @@
 use core::ffi::c_void;
 
-use aya_ebpf::{cty::c_int, maps::LruHashMap, programs::LsmContext, EbpfContext};
+use aya_ebpf::{
+    cty::c_int,
+    maps::LruHashMap,
+    programs::{LsmContext, ProbeContext},
+    EbpfContext,
+};
 
 use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent, CredsTamperedEvent};
 
@@ -157,8 +162,8 @@ unsafe fn snapshot_cred(c: &co_re::cred) -> CredSnapshot {
 }
 
 #[inline(always)]
-unsafe fn emit_creds_event(
-    ctx: &LsmContext,
+unsafe fn emit_creds_event<C: EbpfContext>(
+    ctx: &C,
     new: &co_re::cred,
     old: &co_re::cred,
     kind: CredsChangeKind,
@@ -180,31 +185,36 @@ unsafe fn emit_creds_event(
     Ok(())
 }
 
-/// LSM hook: int task_fix_setuid(struct cred *new, const struct cred *old, int flags)
+/// kprobe: security_task_fix_setuid(struct cred *new, const struct cred *old, int flags)
 /// Fires on setuid/setresuid/setreuid/setfsuid family syscalls.
-#[lsm(hook = "task_fix_setuid")]
-pub fn lsm_task_fix_setuid(ctx: LsmContext) -> i32 {
+/// Equivalent coverage to the LSM task_fix_setuid hook; compatible from kernel 5.4.
+///
+/// match-proto:v5.4:security/security.c:int security_task_fix_setuid(struct cred *new, const struct cred *old, int flags)
+/// match-proto:latest:security/security.c:int security_task_fix_setuid(struct cred *new, const struct cred *old, int flags)
+#[kprobe(function = "security_task_fix_setuid")]
+pub fn lsm_security_task_fix_setuid(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
 
-    let ret: c_int = unsafe { ctx.arg(3) };
-
-    match unsafe { try_lsm_task_fix_setuid(&ctx) } {
-        Ok(_) => ret,
+    match unsafe { try_lsm_security_task_fix_setuid(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
-            // observational hook: never block on error
-            ret
+            errors::BPF_PROG_FAILURE
         }
     }
 }
 
 #[inline(always)]
-unsafe fn try_lsm_task_fix_setuid(ctx: &LsmContext) -> Result<(), ProbeError> {
-    let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
-    let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
-    let flags: c_int = ctx.arg(2);
+unsafe fn try_lsm_security_task_fix_setuid(ctx: &ProbeContext) -> Result<(), ProbeError> {
+    let new = co_re::cred::from_ptr(
+        ctx.arg::<*const c_void>(0).unwrap_or(core::ptr::null()) as *const _,
+    );
+    let old = co_re::cred::from_ptr(
+        ctx.arg::<*const c_void>(1).unwrap_or(core::ptr::null()) as *const _,
+    );
+    let flags: c_int = ctx.arg(2).unwrap_or(0);
 
     update_creds_map(&new);
 
@@ -213,30 +223,30 @@ unsafe fn try_lsm_task_fix_setuid(ctx: &LsmContext) -> Result<(), ProbeError> {
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetUid, flags as u32)
 }
 
-/// LSM hook: int task_fix_setgid(struct cred *new, const struct cred *old, int flags)
-/// Fires on setgid/setresgid/setregid/setfsgid family syscalls.
-#[lsm(hook = "task_fix_setgid")]
-pub fn lsm_task_fix_setgid(ctx: LsmContext) -> i32 {
+#[kprobe(function = "security_task_fix_setgid")]
+pub fn lsm_security_task_fix_setgid(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
 
-    let ret: c_int = unsafe { ctx.arg(3) };
-
-    match unsafe { try_lsm_task_fix_setgid(&ctx) } {
-        Ok(_) => ret,
+    match unsafe { try_lsm_security_task_fix_setgid(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
-            ret
+            errors::BPF_PROG_FAILURE
         }
     }
 }
 
 #[inline(always)]
-unsafe fn try_lsm_task_fix_setgid(ctx: &LsmContext) -> Result<(), ProbeError> {
-    let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
-    let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
-    let flags: c_int = ctx.arg(2);
+unsafe fn try_lsm_security_task_fix_setgid(ctx: &ProbeContext) -> Result<(), ProbeError> {
+    let new = co_re::cred::from_ptr(
+        ctx.arg::<*const c_void>(0).unwrap_or(core::ptr::null()) as *const _,
+    );
+    let old = co_re::cred::from_ptr(
+        ctx.arg::<*const c_void>(1).unwrap_or(core::ptr::null()) as *const _,
+    );
+    let flags: c_int = ctx.arg(2).unwrap_or(0);
 
     update_creds_map(&new);
 
@@ -245,37 +255,30 @@ unsafe fn try_lsm_task_fix_setgid(ctx: &LsmContext) -> Result<(), ProbeError> {
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetGid, flags as u32)
 }
 
-/// LSM hook: int capset(struct cred *new, const struct cred *old,
-///                      const kernel_cap_t *effective,
-///                      const kernel_cap_t *inheritable,
-///                      const kernel_cap_t *permitted)
-/// Fires on capset(2). Capability masks are intentionally not captured in this
-/// first iteration because the kernel `kernel_cap_t` layout changed between
-/// kernel versions (u32[2] pre-6.3, single u64 post-6.3) and requires
-/// dedicated CO-RE handling to read portably. uid/gid fields on the cred
-/// snapshot still surface meaningful context (capset can be called by
-/// non-root tasks after privilege manipulation).
-#[lsm(hook = "capset")]
-pub fn lsm_capset(ctx: LsmContext) -> i32 {
+
+#[kprobe(function = "security_capset")]
+pub fn lsm_security_capset(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
         return 0;
     }
 
-    let ret: c_int = unsafe { ctx.arg(5) };
-
-    match unsafe { try_lsm_capset(&ctx) } {
-        Ok(_) => ret,
+    match unsafe { try_lsm_security_capset(&ctx) } {
+        Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
-            ret
+            errors::BPF_PROG_FAILURE
         }
     }
 }
 
 #[inline(always)]
-unsafe fn try_lsm_capset(ctx: &LsmContext) -> Result<(), ProbeError> {
-    let new = co_re::cred::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
-    let old = co_re::cred::from_ptr(ctx.arg::<*const c_void>(1) as *const _);
+unsafe fn try_lsm_security_capset(ctx: &ProbeContext) -> Result<(), ProbeError> {
+    let new = co_re::cred::from_ptr(
+        ctx.arg::<*const c_void>(0).unwrap_or(core::ptr::null()) as *const _,
+    );
+    let old = co_re::cred::from_ptr(
+        ctx.arg::<*const c_void>(1).unwrap_or(core::ptr::null()) as *const _,
+    );
 
     update_creds_map(&new);
 
