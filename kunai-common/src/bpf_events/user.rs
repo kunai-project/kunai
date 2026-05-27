@@ -8,10 +8,11 @@ use thiserror::Error;
 use crate::bpf_events::{CorrelationEvent, HashEvent};
 
 use super::{
-    BpfProgLoadEvent, BpfSocketFilterEvent, CloneEvent, ConnectEvent, CredsEvent, DnsQueryEvent,
-    ErrorEvent, Event, EventInfo, ExecveEvent, ExitEvent, FileEvent, FileRenameEvent,
-    InitModuleEvent, IoUringSqeEvent, KillEvent, LogEvent, LossEvent, MmapExecEvent, MprotectEvent,
-    PrctlEvent, PtraceEvent, SendEntropyEvent, SysCoreResumeEvent, Type, UnlinkEvent,
+    BpfProgLoadEvent, BpfSocketFilterEvent, CloneEvent, ConnectEvent, CredsEvent,
+    CredsTamperedEvent, DnsQueryEvent, ErrorEvent, Event, EventInfo, ExecveEvent, ExitEvent,
+    FileEvent, FileRenameEvent, InitModuleEvent, IoUringSqeEvent, KillEvent, LogEvent, LossEvent,
+    MmapExecEvent, MprotectEvent, PrctlEvent, PtraceEvent, SendEntropyEvent, SysCoreResumeEvent,
+    Type, UnlinkEvent,
 };
 
 unsafe impl Pod for Type {}
