@@ -53,11 +53,3 @@ pub struct CredsData {
     pub old: CredSnapshot,
     pub new: CredSnapshot,
 }
-
-pub type CredsTamperedEvent = Event<CredsTamperedData>;
-
-#[repr(C)]
-pub struct CredsTamperedData {
-    pub expected_uid: u32,
-    pub actual_uid: u32,
-}

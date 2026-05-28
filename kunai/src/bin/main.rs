@@ -279,6 +279,8 @@ struct EventConsumer<'s> {
     resolved: HashMap<IpAddr, String>,
     killed_tasks: LruHashSet<String>,
     exited_tasks: u64,
+    // baseline uid per process, updated on set_creds and cleared on exit
+    expected_uids: HashMap<ProcKey, u32>,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
     magic_db: MagicDb,
@@ -355,6 +357,7 @@ impl EventConsumer<'_> {
             processes: HashMap::with_capacity(512),
             killed_tasks: LruHashSet::with_max_entries(512),
             exited_tasks: 0,
+            expected_uids: HashMap::new(),
             resolved: HashMap::new(),
             output,
             file_scanner: None,
@@ -1110,15 +1113,16 @@ impl EventConsumer<'_> {
     fn creds_tampered_event(
         &mut self,
         info: StdEventInfo,
-        bpf_data: bpf_events::CredsTamperedData,
+        expected_uid: u32,
+        actual_uid: u32,
     ) -> UserEvent<CredsTamperedData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
         let data = CredsTamperedData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
-            expected_uid: bpf_data.expected_uid,
-            actual_uid: bpf_data.actual_uid,
+            expected_uid,
+            actual_uid,
         };
         UserEvent::new(data, info)
     }
@@ -1483,6 +1487,9 @@ impl EventConsumer<'_> {
                     self.processes.entry(pk).and_modify(|t| t.on_exit());
                 }
             }
+
+            // clean up the uid baseline for this process
+            self.expected_uids.remove(&pk);
 
             // we trigger some very specific cleanup
             if self.exited_tasks.is_multiple_of(1000) {
@@ -2135,6 +2142,25 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
+    fn check_uid_baseline(&mut self, evt: &EbpfEvent) {
+        if !self.filter.is_enabled(Type::CredsTampered) {
+            return;
+        }
+        let info = evt.info();
+        let pk = ProcKey::from(info.process.tg_uuid);
+        let actual_uid = info.process.uid;
+        if let Some(&expected_uid) = self.expected_uids.get(&pk) {
+            if actual_uid != expected_uid {
+                let std_info = self.build_std_event_info(*info);
+                let mut tampered = self.creds_tampered_event(std_info, expected_uid, actual_uid);
+                self.scan_and_print(&mut tampered);
+                // update baseline so we don't re-fire on every subsequent event
+                self.expected_uids.insert(pk, actual_uid);
+            }
+        }
+    }
+
+    #[inline(always)]
     fn handle_event(&mut self, evt: EbpfEvent) {
         // we don't handle our own events
         if evt.info().process.tgid as u32 == std::process::id() {
@@ -2142,6 +2168,12 @@ impl EventConsumer<'_> {
         }
 
         self.cache_namespaces(evt.info());
+
+        // check for credential tampering on every event except the legitimate
+        // set_creds event (the baseline is updated after we process that event)
+        if !matches!(evt, EbpfEvent::SetCreds(_)) {
+            self.check_uid_baseline(&evt);
+        }
 
         match evt {
             EbpfEvent::Execve(e) => {
@@ -2198,14 +2230,12 @@ impl EventConsumer<'_> {
             }
 
             EbpfEvent::SetCreds(e) => {
+                // update the uid baseline so the next event from this process
+                // doesn't incorrectly fire a creds_tampered event
+                let pk = ProcKey::from(e.info.process.tg_uuid);
+                self.expected_uids.insert(pk, e.data.new.uid);
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.set_creds_event(std_info, e.data);
-                self.scan_and_print(&mut e);
-            }
-
-            EbpfEvent::CredsTampered(e) => {
-                let std_info = self.build_std_event_info(e.info);
-                let mut e = self.creds_tampered_event(std_info, e.data);
                 self.scan_and_print(&mut e);
             }
 

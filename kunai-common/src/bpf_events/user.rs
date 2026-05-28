@@ -8,11 +8,10 @@ use thiserror::Error;
 use crate::bpf_events::{CorrelationEvent, HashEvent};
 
 use super::{
-    BpfProgLoadEvent, BpfSocketFilterEvent, CloneEvent, ConnectEvent, CredsEvent,
-    CredsTamperedEvent, DnsQueryEvent, ErrorEvent, Event, EventInfo, ExecveEvent, ExitEvent,
-    FileEvent, FileRenameEvent, InitModuleEvent, IoUringSqeEvent, KillEvent, LogEvent, LossEvent,
-    MmapExecEvent, MprotectEvent, PrctlEvent, PtraceEvent, SendEntropyEvent, SysCoreResumeEvent,
-    Type, UnlinkEvent,
+    BpfProgLoadEvent, BpfSocketFilterEvent, CloneEvent, ConnectEvent, CredsEvent, DnsQueryEvent,
+    ErrorEvent, Event, EventInfo, ExecveEvent, ExitEvent, FileEvent, FileRenameEvent,
+    InitModuleEvent, IoUringSqeEvent, KillEvent, LogEvent, LossEvent, MmapExecEvent, MprotectEvent,
+    PrctlEvent, PtraceEvent, SendEntropyEvent, SysCoreResumeEvent, Type, UnlinkEvent,
 };
 
 unsafe impl Pod for Type {}
@@ -60,7 +59,6 @@ pub enum EbpfEvent {
     Kill(Box<KillEvent>),
     Ptrace(Box<PtraceEvent>),
     SetCreds(Box<CredsEvent>),
-    CredsTampered(Box<CredsTamperedEvent>),
     InitModule(Box<InitModuleEvent>),
     BpfProgLoad(Box<BpfProgLoadEvent>),
     BpfSocketFilter(Box<BpfSocketFilterEvent>),
@@ -173,9 +171,6 @@ impl EbpfEvent {
             Type::Kill => Ok(Self::Kill(Box::new(decode!(KillEvent)))),
             Type::Ptrace => Ok(Self::Ptrace(Box::new(decode!(PtraceEvent)))),
             Type::SetCreds => Ok(Self::SetCreds(Box::new(decode!(CredsEvent)))),
-            Type::CredsTampered => {
-                Ok(Self::CredsTampered(Box::new(decode!(CredsTamperedEvent))))
-            }
             Type::InitModule => Ok(Self::InitModule(Box::new(decode!(InitModuleEvent)))),
             Type::BpfProgLoad => Ok(Self::BpfProgLoad(Box::new(decode!(BpfProgLoadEvent)))),
             Type::BpfSocketFilter => Ok(Self::BpfSocketFilter(Box::new(decode!(
@@ -202,9 +197,12 @@ impl EbpfEvent {
             Type::Loss => Ok(Self::Loss(Box::new(decode!(LossEvent)))),
             Type::Error => Ok(Self::Error(Box::new(decode!(ErrorEvent)))),
             Type::SyscoreResume => Ok(Self::SysCoreResume(Box::new(decode!(SysCoreResumeEvent)))),
-            Type::EndConfigurable | Type::Max | Type::Start | Type::FileScan | Type::Unknown => {
-                Err(DecoderError::Unsupported(etype))
-            }
+            Type::CredsTampered
+            | Type::EndConfigurable
+            | Type::Max
+            | Type::Start
+            | Type::FileScan
+            | Type::Unknown => Err(DecoderError::Unsupported(etype)),
         }
     }
 
@@ -223,7 +221,6 @@ impl EbpfEvent {
             Self::Kill(e) => &e.info,
             Self::Ptrace(e) => &e.info,
             Self::SetCreds(e) => &e.info,
-            Self::CredsTampered(e) => &e.info,
             Self::InitModule(e) => &e.info,
             Self::BpfProgLoad(e) => &e.info,
             Self::BpfSocketFilter(e) => &e.info,
@@ -256,7 +253,6 @@ impl EbpfEvent {
             Self::Kill(e) => &mut e.info,
             Self::Ptrace(e) => &mut e.info,
             Self::SetCreds(e) => &mut e.info,
-            Self::CredsTampered(e) => &mut e.info,
             Self::InitModule(e) => &mut e.info,
             Self::BpfProgLoad(e) => &mut e.info,
             Self::BpfSocketFilter(e) => &mut e.info,

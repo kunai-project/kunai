@@ -2,55 +2,13 @@ use core::ffi::c_void;
 
 use aya_ebpf::{
     cty::c_int,
-    maps::LruHashMap,
     programs::{LsmContext, ProbeContext},
     EbpfContext,
 };
 
-use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent, CredsTamperedEvent};
+use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent};
 
 use super::*;
-
-#[map]
-pub(crate) static mut TASK_CREDS: LruHashMap<u128, u32> =
-    LruHashMap::with_max_entries(10240, 0);
-
-#[inline(always)]
-pub(crate) unsafe fn check_creds_tampering<C: EbpfContext>(ctx: &C) -> Result<(), ProbeError> {
-    if_disabled_return!(Type::CredsTampered, ());
-
-    let task = co_re::task_struct::current();
-    
-    let task_uuid = task.uuid();
-
-    let cred = match task.cred() {
-        Some(c) => c,
-        None => return Ok(()),
-    };
-
-    let actual_uid = cred.uid();
-
-    match TASK_CREDS.get(&task_uuid) {
-        None => {
-            // First time we see this task — set baseline, no alert.
-            let _ = TASK_CREDS.insert(&task_uuid, &actual_uid, 0);
-        }
-        Some(&expected_uid) => {
-            if expected_uid != actual_uid {
-                alloc::init()?;
-                let event = alloc::alloc_zero::<CredsTamperedEvent>()?;
-                event.init_from_current_task(Type::CredsTampered)?;
-                event.data.expected_uid = expected_uid;
-                event.data.actual_uid = actual_uid;
-                pipe_event(ctx, event);
-                // Update baseline so we don't flood with repeated alerts.
-                let _ = TASK_CREDS.insert(&task_uuid, &actual_uid, 0);
-            }
-        }
-    }
-
-    Ok(())
-}
 
 enum LsmStatus {
     Continue(i32),
@@ -83,7 +41,7 @@ pub fn lsm_task_kill(ctx: LsmContext) -> i32 {
 unsafe fn try_lsm_security_task_kill(ctx: &LsmContext) -> Result<LsmStatus, ProbeError> {
     let target = co_re::task_struct::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
     let sig: c_int = ctx.arg(2);
-    // previous hook return code
+    // previous hook return code
     let ret: c_int = ctx.arg(4);
 
     // signal can be 0 but no signal is actually sent to the target
@@ -118,7 +76,7 @@ pub fn lsm_ptrace_access_check(ctx: LsmContext) -> i32 {
 #[inline(always)]
 unsafe fn try_ptrace_access_check(ctx: &LsmContext) -> Result<LsmStatus, ProbeError> {
     let target = co_re::task_struct::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
-    // previous hook return code
+    // previous hook return code
     let ret: c_int = ctx.arg(2);
 
     let target_tgid = core_read_kernel!(target, tgid)?;
@@ -130,17 +88,6 @@ unsafe fn try_ptrace_access_check(ctx: &LsmContext) -> Result<LsmStatus, ProbeEr
 
     // we block any attempt to ptrace kunai
     Ok(LsmStatus::Block)
-}
-
-#[inline(always)]
-unsafe fn update_creds_map(new: &co_re::cred) {
-    if new.is_null() {
-        return;
-    }
-    let task = co_re::task_struct::current();
-    let task_uuid = task.uuid();
-    let new_uid = new.uid();
-    let _ = TASK_CREDS.insert(&task_uuid, &new_uid, 0);
 }
 
 #[inline(always)]
@@ -212,8 +159,6 @@ unsafe fn try_lsm_security_task_fix_setuid(ctx: &ProbeContext) -> Result<(), Pro
     );
     let flags: c_int = ctx.arg(2).unwrap_or(0);
 
-    update_creds_map(&new);
-
     if_disabled_return!(Type::SetCreds, ());
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetUid, flags as u32)
@@ -244,13 +189,10 @@ unsafe fn try_lsm_security_task_fix_setgid(ctx: &ProbeContext) -> Result<(), Pro
     );
     let flags: c_int = ctx.arg(2).unwrap_or(0);
 
-    update_creds_map(&new);
-
     if_disabled_return!(Type::SetCreds, ());
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetGid, flags as u32)
 }
-
 
 #[kprobe(function = "security_capset")]
 pub fn lsm_security_capset(ctx: ProbeContext) -> u32 {
@@ -275,8 +217,6 @@ unsafe fn try_lsm_security_capset(ctx: &ProbeContext) -> Result<(), ProbeError> 
     let old = co_re::cred::from_ptr(
         ctx.arg::<*const c_void>(1).unwrap_or(core::ptr::null()) as *const _,
     );
-
-    update_creds_map(&new);
 
     if_disabled_return!(Type::SetCreds, ());
 
