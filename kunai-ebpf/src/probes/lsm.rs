@@ -101,6 +101,9 @@ unsafe fn snapshot_cred(c: &co_re::cred) -> CredSnapshot {
         sgid: c.sgid(),
         fsuid: c.fsuid(),
         fsgid: c.fsgid(),
+        cap_effective: c.cap_effective(),
+        cap_permitted: c.cap_permitted(),
+        cap_inheritable: c.cap_inheritable(),
     }
 }
 

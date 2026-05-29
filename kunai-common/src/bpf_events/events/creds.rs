@@ -43,6 +43,9 @@ pub struct CredSnapshot {
     pub sgid: u32,
     pub fsuid: u32,
     pub fsgid: u32,
+    pub cap_effective: u64,
+    pub cap_permitted: u64,
+    pub cap_inheritable: u64,
 }
 
 #[repr(C)]

@@ -197,6 +197,7 @@ pub struct TaskInfo {
     pub comm: [u8; COMM_SIZE],
     pub uid: u32,
     pub gid: u32,
+    pub cap_effective: u64,
     // task group id in kernel or pid in userland
     // when program is single threaded tgid == pid
     pub tgid: i32,

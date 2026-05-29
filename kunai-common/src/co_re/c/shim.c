@@ -170,6 +170,22 @@ struct kuid_t
 
 // Defining shim for cred struct
 // We just need to define the fields we need to access
+//
+// Capability sets — the kernel changed the layout of kernel_cap_t in v6.3:
+//   pre-6.3:  struct kernel_cap_struct { __u32 cap[2]; }
+//   >= 6.3:   typedef struct { __u64 val; } kernel_cap_t;
+// The field NAMES in struct cred (cap_effective, ...) are unchanged. We
+// expose both layouts and pick at runtime with bpf_core_field_exists.
+
+struct kernel_cap_struct_v1
+{
+	__u32 cap[2];
+} __attribute__((preserve_access_index));
+
+struct kernel_cap_struct_v2
+{
+	__u64 val;
+} __attribute__((preserve_access_index));
 
 struct cred
 {
@@ -181,6 +197,27 @@ struct cred
 	struct kgid_t egid;
 	struct kuid_t fsuid;
 	struct kgid_t fsgid;
+	struct kernel_cap_struct_v2 cap_inheritable;
+	struct kernel_cap_struct_v2 cap_permitted;
+	struct kernel_cap_struct_v2 cap_effective;
+} __attribute__((preserve_access_index));
+
+// Parallel layout used to read caps on pre-6.3 kernels where each cap set
+// is an array of two u32. The cap_* field names are the same as in struct
+// cred so CO-RE relocations resolve to the same kernel field.
+struct cred_v1
+{
+	struct kuid_t uid;
+	struct kgid_t gid;
+	struct kuid_t suid;
+	struct kgid_t sgid;
+	struct kuid_t euid;
+	struct kgid_t egid;
+	struct kuid_t fsuid;
+	struct kgid_t fsgid;
+	struct kernel_cap_struct_v1 cap_inheritable;
+	struct kernel_cap_struct_v1 cap_permitted;
+	struct kernel_cap_struct_v1 cap_effective;
 } __attribute__((preserve_access_index));
 
 _SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_uid(struct cred *pcred), pcred, uid.val);
@@ -191,6 +228,53 @@ _SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_suid(struct cred *pcred), pcred, sui
 _SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_sgid(struct cred *pcred), pcred, sgid.val);
 _SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_fsuid(struct cred *pcred), pcred, fsuid.val);
 _SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_fsgid(struct cred *pcred), pcred, fsgid.val);
+
+// Capability accessors: pack into a u64. On modern kernels read .val
+// directly, on older kernels combine cap[1]<<32 | cap[0].
+__attribute__((always_inline)) __u64 shim_cred_cap_effective(struct cred *pcred)
+{
+	if (bpf_core_field_exists(((struct cred *)0)->cap_effective.val))
+	{
+		return BPF_CORE_READ(pcred, cap_effective.val);
+	}
+	else
+	{
+		struct cred_v1 *p = (struct cred_v1 *)pcred;
+		__u32 lo = BPF_CORE_READ(p, cap_effective.cap[0]);
+		__u32 hi = BPF_CORE_READ(p, cap_effective.cap[1]);
+		return ((__u64)hi << 32) | (__u64)lo;
+	}
+}
+
+__attribute__((always_inline)) __u64 shim_cred_cap_permitted(struct cred *pcred)
+{
+	if (bpf_core_field_exists(((struct cred *)0)->cap_permitted.val))
+	{
+		return BPF_CORE_READ(pcred, cap_permitted.val);
+	}
+	else
+	{
+		struct cred_v1 *p = (struct cred_v1 *)pcred;
+		__u32 lo = BPF_CORE_READ(p, cap_permitted.cap[0]);
+		__u32 hi = BPF_CORE_READ(p, cap_permitted.cap[1]);
+		return ((__u64)hi << 32) | (__u64)lo;
+	}
+}
+
+__attribute__((always_inline)) __u64 shim_cred_cap_inheritable(struct cred *pcred)
+{
+	if (bpf_core_field_exists(((struct cred *)0)->cap_inheritable.val))
+	{
+		return BPF_CORE_READ(pcred, cap_inheritable.val);
+	}
+	else
+	{
+		struct cred_v1 *p = (struct cred_v1 *)pcred;
+		__u32 lo = BPF_CORE_READ(p, cap_inheritable.cap[0]);
+		__u32 hi = BPF_CORE_READ(p, cap_inheritable.cap[1]);
+		return ((__u64)hi << 32) | (__u64)lo;
+	}
+}
 
 struct qstr
 {

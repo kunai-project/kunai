@@ -57,6 +57,9 @@ impl AgentEventInfo {
             tgid: status.tgid,
             uid: status.euid,
             gid: status.egid,
+            // Read CapEff from /proc/<pid>/status so the loader's self-info
+            // starts with a correct capability baseline.
+            cap_effective: status.capeff,
             tg_uuid: ProcUuid::new(start_time, 0, status.tgid as u32),
             namespaces: BpfOption::Some(bpf_events::Namespaces {
                 mnt: mnt.identifier as u32,

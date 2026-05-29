@@ -267,6 +267,12 @@ impl std::fmt::Display for Action {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CredBaseline {
+    uid: u32,
+    cap_effective: u64,
+}
+
 struct EventConsumer<'s> {
     system_info: SystemInfo,
     config: Config,
@@ -279,8 +285,7 @@ struct EventConsumer<'s> {
     resolved: HashMap<IpAddr, String>,
     killed_tasks: LruHashSet<String>,
     exited_tasks: u64,
-    // baseline uid per process, updated on set_creds and cleared on exit
-    expected_uids: HashMap<ProcKey, u32>,
+    expected_creds: HashMap<ProcKey, CredBaseline>,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
     magic_db: MagicDb,
@@ -357,7 +362,7 @@ impl EventConsumer<'_> {
             processes: HashMap::with_capacity(512),
             killed_tasks: LruHashSet::with_max_entries(512),
             exited_tasks: 0,
-            expected_uids: HashMap::new(),
+            expected_creds: HashMap::new(),
             resolved: HashMap::new(),
             output,
             file_scanner: None,
@@ -714,6 +719,16 @@ impl EventConsumer<'_> {
             exit: false,
             zombie: false,
         };
+
+        if let Ok(status) = p.status() {
+            self.expected_creds.insert(
+                tk,
+                CredBaseline {
+                    uid: status.euid,
+                    cap_effective: status.capeff,
+                },
+            );
+        }
 
         self.processes.insert(tk, task);
 
@@ -1094,6 +1109,9 @@ impl EventConsumer<'_> {
             sgid: s.sgid,
             fsuid: s.fsuid,
             fsgid: s.fsgid,
+            cap_effective: s.cap_effective,
+            cap_permitted: s.cap_permitted,
+            cap_inheritable: s.cap_inheritable,
         };
 
         let data = SetCredsData {
@@ -1113,16 +1131,22 @@ impl EventConsumer<'_> {
     fn creds_tampered_event(
         &mut self,
         info: StdEventInfo,
+        kind: &str,
         expected_uid: u32,
         actual_uid: u32,
+        expected_cap_effective: u64,
+        actual_cap_effective: u64,
     ) -> UserEvent<CredsTamperedData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
         let data = CredsTamperedData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
+            kind: kind.to_string(),
             expected_uid,
             actual_uid,
+            expected_cap_effective,
+            actual_cap_effective,
         };
         UserEvent::new(data, info)
     }
@@ -1488,8 +1512,8 @@ impl EventConsumer<'_> {
                 }
             }
 
-            // clean up the uid baseline for this process
-            self.expected_uids.remove(&pk);
+            // clean up the creds baseline for this process
+            self.expected_creds.remove(&pk);
 
             // we trigger some very specific cleanup
             if self.exited_tasks.is_multiple_of(1000) {
@@ -2142,20 +2166,42 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn check_uid_baseline(&mut self, evt: &EbpfEvent) {
+    fn check_creds_baseline(&mut self, evt: &EbpfEvent) {
         if !self.filter.is_enabled(Type::CredsTampered) {
             return;
         }
         let info = evt.info();
         let pk = ProcKey::from(info.process.tg_uuid);
         let actual_uid = info.process.uid;
-        if let Some(&expected_uid) = self.expected_uids.get(&pk) {
-            if actual_uid != expected_uid {
+        let actual_caps = info.process.cap_effective;
+        if let Some(&baseline) = self.expected_creds.get(&pk) {
+            let uid_diff = actual_uid != baseline.uid;
+            let cap_diff = actual_caps != baseline.cap_effective;
+            if uid_diff || cap_diff {
+                let kind = match (uid_diff, cap_diff) {
+                    (true, true) => "uid+caps",
+                    (true, false) => "uid",
+                    (false, true) => "caps",
+                    (false, false) => unreachable!(),
+                };
                 let std_info = self.build_std_event_info(*info);
-                let mut tampered = self.creds_tampered_event(std_info, expected_uid, actual_uid);
+                let mut tampered = self.creds_tampered_event(
+                    std_info,
+                    kind,
+                    baseline.uid,
+                    actual_uid,
+                    baseline.cap_effective,
+                    actual_caps,
+                );
                 self.scan_and_print(&mut tampered);
                 // update baseline so we don't re-fire on every subsequent event
-                self.expected_uids.insert(pk, actual_uid);
+                self.expected_creds.insert(
+                    pk,
+                    CredBaseline {
+                        uid: actual_uid,
+                        cap_effective: actual_caps,
+                    },
+                );
             }
         }
     }
@@ -2169,14 +2215,33 @@ impl EventConsumer<'_> {
 
         self.cache_namespaces(evt.info());
 
-        // check for credential tampering on every event except the legitimate
-        // set_creds event (the baseline is updated after we process that event)
-        if !matches!(evt, EbpfEvent::SetCreds(_)) {
-            self.check_uid_baseline(&evt);
+        // check for credential tampering on every event except those that
+        // can legitimately alter the task credentials inside the kernel:
+        //   - SetCreds: the explicit setuid/setgid/capset path
+        //   - Execve:   file caps + suid binaries can change uid/caps as
+        //               part of bprm_check_security; the handler refreshes
+        //               the baseline from the post-exec snapshot
+        // For every other event the baseline must already match what the
+        // task currently carries.
+        if !matches!(evt, EbpfEvent::SetCreds(_) | EbpfEvent::Execve(_)) {
+            self.check_creds_baseline(&evt);
         }
 
         match evt {
             EbpfEvent::Execve(e) => {
+                // refresh the creds baseline from the post-exec snapshot.
+                // execve can legitimately change uid/caps via setuid bits or
+                // file capabilities applied during bprm_check_security, so
+                // we trust the kernel's view at this point.
+                let pk = ProcKey::from(e.info.process.tg_uuid);
+                self.expected_creds.insert(
+                    pk,
+                    CredBaseline {
+                        uid: e.info.process.uid,
+                        cap_effective: e.info.process.cap_effective,
+                    },
+                );
+
                 let std_info = self.build_std_event_info(e.info);
                 // this event is used for correlation but cannot be processed
                 // asynchronously so we have to handle correlation here
@@ -2230,10 +2295,16 @@ impl EventConsumer<'_> {
             }
 
             EbpfEvent::SetCreds(e) => {
-                // update the uid baseline so the next event from this process
-                // doesn't incorrectly fire a creds_tampered event
+                // update the creds baseline so the next event from this
+                // process doesn't incorrectly fire a creds_tampered event
                 let pk = ProcKey::from(e.info.process.tg_uuid);
-                self.expected_uids.insert(pk, e.data.new.uid);
+                self.expected_creds.insert(
+                    pk,
+                    CredBaseline {
+                        uid: e.data.new.uid,
+                        cap_effective: e.data.new.cap_effective,
+                    },
+                );
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.set_creds_event(std_info, e.data);
                 self.scan_and_print(&mut e);

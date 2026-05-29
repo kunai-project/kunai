@@ -73,8 +73,10 @@ impl TaskInfo {
         self.comm = task.comm_array().ok_or(Error::CommMissing)?;
 
         // if task_struct is valid cannot be null
-        self.uid = task.cred().ok_or(Error::CredFieldMissing)?.uid();
-        self.gid = task.cred().ok_or(Error::CredFieldMissing)?.gid();
+        let cred = task.cred().ok_or(Error::CredFieldMissing)?;
+        self.uid = cred.uid();
+        self.gid = cred.gid();
+        self.cap_effective = cred.cap_effective();
 
         if let Some(nsproxy) = core_read_kernel!(task, nsproxy) {
             // it may happen that under some very specific conditions nsproxy

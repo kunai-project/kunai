@@ -697,6 +697,9 @@ pub struct CredSnapshot {
     pub sgid: u32,
     pub fsuid: u32,
     pub fsgid: u32,
+    pub cap_effective: u64,
+    pub cap_permitted: u64,
+    pub cap_inheritable: u64,
 }
 
 def_user_data!(
@@ -719,8 +722,11 @@ impl_std_iocs!(SetCredsData);
 
 def_user_data!(
     pub struct CredsTamperedData {
+        pub kind: String,
         pub expected_uid: u32,
         pub actual_uid: u32,
+        pub expected_cap_effective: u64,
+        pub actual_cap_effective: u64,
     }
 );
 
