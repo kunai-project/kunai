@@ -702,6 +702,24 @@ pub struct CredSnapshot {
     pub cap_inheritable: u64,
 }
 
+impl From<bpf_events::CredSnapshot> for CredSnapshot {
+    fn from(s: bpf_events::CredSnapshot) -> Self {
+        Self {
+            uid: s.uid,
+            gid: s.gid,
+            euid: s.euid,
+            egid: s.egid,
+            suid: s.suid,
+            sgid: s.sgid,
+            fsuid: s.fsuid,
+            fsgid: s.fsgid,
+            cap_effective: s.cap_effective,
+            cap_permitted: s.cap_permitted,
+            cap_inheritable: s.cap_inheritable,
+        }
+    }
+}
+
 def_user_data!(
     pub struct SetCredsData {
         pub kind: String,
@@ -725,6 +743,8 @@ def_user_data!(
         pub kind: String,
         pub expected_uid: u32,
         pub actual_uid: u32,
+        pub expected_gid: u32,
+        pub actual_gid: u32,
         pub expected_cap_effective: u64,
         pub actual_cap_effective: u64,
     }

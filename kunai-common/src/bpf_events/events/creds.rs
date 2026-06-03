@@ -19,7 +19,7 @@ pub enum CredsChangeKind {
 
 #[repr(u32)]
 #[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum LsmSetIdFlag {
+pub enum SetIdFlag {
     #[str("unknown")]
     #[default]
     Unknown = 0,

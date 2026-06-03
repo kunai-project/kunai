@@ -53,17 +53,17 @@ fn configure_probes(
         .disable_if(!conf.harden);
 
     programs
-        .expect_mut("lsm_security_task_fix_setuid")
+        .expect_mut("creds_security_task_fix_setuid")
         .min_kernel(kernel!(5, 4))
         .prio(0);
 
     programs
-        .expect_mut("lsm_security_task_fix_setgid")
+        .expect_mut("creds_security_task_fix_setgid")
         .min_kernel(kernel!(5, 4))
         .prio(0);
 
     programs
-        .expect_mut("lsm_security_capset")
+        .expect_mut("creds_security_capset")
         .min_kernel(kernel!(5, 4))
         .prio(0);
 

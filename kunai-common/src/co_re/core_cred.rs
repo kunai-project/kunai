@@ -1,5 +1,5 @@
 use super::gen::{self, *};
-use super::{CoRe};
+use super::{rust_shim_kernel_impl, CoRe};
 
 #[allow(non_camel_case_types)]
 pub type cred = CoRe<gen::cred>;
@@ -45,18 +45,46 @@ impl cred {
         shim_cred_fsgid(self.as_ptr_mut())
     }
 
-    #[inline(always)]
-    pub unsafe fn cap_effective(&self) -> u64 {
-        shim_cred_cap_effective(self.as_ptr_mut())
-    }
+    rust_shim_kernel_impl!(pub(self), _cap_effective_val, cred, cap_effective_val, u64);
+    rust_shim_kernel_impl!(pub(self), _cap_effective_cap_lo, cred, cap_effective_cap_lo, u32);
+    rust_shim_kernel_impl!(pub(self), _cap_effective_cap_hi, cred, cap_effective_cap_hi, u32);
+
+    rust_shim_kernel_impl!(pub(self), _cap_permitted_val, cred, cap_permitted_val, u64);
+    rust_shim_kernel_impl!(pub(self), _cap_permitted_cap_lo, cred, cap_permitted_cap_lo, u32);
+    rust_shim_kernel_impl!(pub(self), _cap_permitted_cap_hi, cred, cap_permitted_cap_hi, u32);
+
+    rust_shim_kernel_impl!(pub(self), _cap_inheritable_val, cred, cap_inheritable_val, u64);
+    rust_shim_kernel_impl!(pub(self), _cap_inheritable_cap_lo, cred, cap_inheritable_cap_lo, u32);
+    rust_shim_kernel_impl!(pub(self), _cap_inheritable_cap_hi, cred, cap_inheritable_cap_hi, u32);
 
     #[inline(always)]
+    pub unsafe fn cap_effective(&self) -> u64 {
+        if let Some(v) = self._cap_effective_val() {
+            return v;
+        }
+        let lo = self._cap_effective_cap_lo().unwrap_or(0);
+        let hi = self._cap_effective_cap_hi().unwrap_or(0);
+        ((hi as u64) << 32) | (lo as u64)
+    }
+
+    /// Permitted capability set packed into a u64.
+    #[inline(always)]
     pub unsafe fn cap_permitted(&self) -> u64 {
-        shim_cred_cap_permitted(self.as_ptr_mut())
+        if let Some(v) = self._cap_permitted_val() {
+            return v;
+        }
+        let lo = self._cap_permitted_cap_lo().unwrap_or(0);
+        let hi = self._cap_permitted_cap_hi().unwrap_or(0);
+        ((hi as u64) << 32) | (lo as u64)
     }
 
     #[inline(always)]
     pub unsafe fn cap_inheritable(&self) -> u64 {
-        shim_cred_cap_inheritable(self.as_ptr_mut())
+        if let Some(v) = self._cap_inheritable_val() {
+            return v;
+        }
+        let lo = self._cap_inheritable_cap_lo().unwrap_or(0);
+        let hi = self._cap_inheritable_cap_hi().unwrap_or(0);
+        ((hi as u64) << 32) | (lo as u64)
     }
 }
