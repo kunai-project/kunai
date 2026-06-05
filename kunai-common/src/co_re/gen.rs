@@ -1721,6 +1721,9 @@ unsafe extern "C" {
 pub struct page {
     pub flags: ::core::ffi::c_ulong,
 }
+unsafe extern "C" {
+    pub fn shim_size_of_page() -> __u64;
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct bio_vec {

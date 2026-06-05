@@ -91,6 +91,15 @@ Using anonymous structs seems to make the linking fail
 		return bpf_core_enum_value_exists(enum enum_type, enum_value);              \
 	}
 
+// Exposes the CO-RE-resolved size of a struct as shim_size_of_<struct>().
+// The returned value reflects the actual kernel struct size at runtime, not
+// the (potentially incomplete) definition in this file.
+#define SHIM_SIZE_OF(struc)                                          \
+	__attribute__((always_inline)) __u64 shim_size_of_##struc()      \
+	{                                                                \
+		return bpf_core_type_size(struct struc);                     \
+	}
+
 struct kgid_t
 {
 	gid_t val;
@@ -718,6 +727,8 @@ struct page
 {
 	long unsigned int flags;
 } __attribute__((preserve_access_index));
+
+SHIM_SIZE_OF(page);
 
 struct bio_vec
 {
