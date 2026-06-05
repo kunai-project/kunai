@@ -111,6 +111,7 @@ impl iov_iter {
     rust_shim_kernel_impl!(pub(self), _iov, iov_iter, iov, iovec);
     rust_shim_kernel_impl!(pub(self), ___iov, iov_iter, __iov, iovec);
 
+    #[inline(always)]
     fn is_iter_type(&self, ty: IterType) -> bool {
         if let Some(t) = unsafe { self.iter_type() } {
             return t == ty;
