@@ -25,6 +25,7 @@ use kunai::events::{
 use kunai::events::{IoUringOp, IoUringSqeData, StartData};
 use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo};
 use kunai::ioc::IoC;
+use kunai::kallsyms::KernelSymbols;
 use kunai::util::uname::Utsname;
 use kunai::util::uptime::Uptime;
 use kunai::util::{
@@ -3513,6 +3514,9 @@ impl Command {
         setrlimit(RLIMIT_MEMLOCK, rlimit)
             .map_err(|e| anyhow!("failed to set RLIMIT_MEMLOCK: {e}"))?;
 
+        let kernel_syms = KernelSymbols::from_sys()
+            .map_err(|e| anyhow!("failed to build kernel symbols: {e}"))?;
+
         // checks on harden mode
         if conf.harden {
             if current_kernel < kernel!(5, 7, 0) {
@@ -3608,7 +3612,7 @@ impl Command {
                 loop {
                     info!("Starting event producer");
                     // we start producer
-                    let mut bpf = kunai::prepare_bpf(current_kernel, &conf, vll)?;
+                    let mut bpf = kunai::prepare_bpf(current_kernel, &kernel_syms, &conf, vll)?;
                     let mut prod =
                         EventProducer::with_params(&mut bpf, conf.clone(), sender.clone())?;
 
@@ -3624,7 +3628,7 @@ impl Command {
                     let arc_prod = prod.produce().await;
 
                     // we load and attach bpf programs
-                    kunai::load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
+                    kunai::load_and_attach_bpf(&conf, &kernel_syms, current_kernel, &mut bpf)?;
 
                     loop {
                         // block make sure lock is dropped before sleeping

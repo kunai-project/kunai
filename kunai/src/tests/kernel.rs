@@ -4,6 +4,7 @@ use aya::VerifierLogLevel;
 use env_logger::Builder;
 use kunai::{
     config::Config,
+    kallsyms::KernelSymbols,
     util::{is_bpf_lsm_enabled, uname::Utsname},
 };
 use kunai_common::kernel;
@@ -69,6 +70,8 @@ fn integration() -> anyhow::Result<()> {
         }
     }
 
+    let kernel_syms = KernelSymbols::from_sys().unwrap_or_default();
+
     // we have lsm loading failure under aarch64 for kernel < 6.4.x
     // https://blog.exein.io/exploring-bpf-lsm-support-on-aarch64-with-ftrace/
     if cfg!(target_arch = "aarch64") && current_kernel < kernel!(6, 4, 0) {
@@ -76,8 +79,8 @@ fn integration() -> anyhow::Result<()> {
     }
 
     info!("loading ebpf bytes");
-    let mut bpf = kunai::prepare_bpf(current_kernel, &conf, verifier_level)?;
-    kunai::load_and_attach_bpf(&conf, current_kernel, &mut bpf)?;
+    let mut bpf = kunai::prepare_bpf(current_kernel, &kernel_syms, &conf, verifier_level)?;
+    kunai::load_and_attach_bpf(&conf, &kernel_syms, current_kernel, &mut bpf)?;
 
     Ok(())
 }
