@@ -4,6 +4,7 @@
     target_arch = "bpf",
     allow(static_mut_refs, clippy::missing_safety_doc)
 )]
+#![cfg_attr(target_arch = "bpf", feature(asm_experimental_arch))]
 
 pub mod macros;
 
