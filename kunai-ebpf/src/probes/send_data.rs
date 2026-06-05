@@ -9,7 +9,9 @@ use super::*;
 use aya_ebpf::programs::ProbeContext;
 use kunai_common::{
     buffer::Buffer,
+    kernel,
     net::{SaFamily, SockAddr, SocketInfo},
+    version::kernel_version,
 };
 
 /// match-proto:v5.0:security/security.c:int security_socket_sendmsg(struct socket *sock, struct msghdr *msg, int size)
@@ -75,7 +77,15 @@ unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
     let src_ip_port = SockAddr::src_from_sock_common(sk_common)?;
 
     let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
-    if let Err(e) = iov_buf.fill_from_iov_iter::<128>(iov_iter, None) {
+
+    let res = if kernel_version() < kernel!(5, 5, 0) {
+        // verifier trips with program too large in 5.4
+        iov_buf.fill_from_iov_iter::<96>(iov_iter)
+    } else {
+        iov_buf.fill_from_iov_iter::<128>(iov_iter)
+    };
+
+    if let Err(e) = res {
         match e {
             // buffer full is not a bad error it just tell we have no more space in our buffer
             kunai_common::buffer::Error::BufferFull => {}

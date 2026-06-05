@@ -133,8 +133,12 @@ pub enum Error {
     BvecOffsetMissing,
     #[error("bio_vec.bv_len missing")]
     BvecLenMissing,
+    #[error("bio_vec base is null")]
+    BvecNullBase,
     #[error("failed to read bio_vec")]
     FailedToReadBioVec,
+    #[error("Unsupported target arch")]
+    UnsupportedArch,
 }
 
 impl From<Error> for ProbeError {
