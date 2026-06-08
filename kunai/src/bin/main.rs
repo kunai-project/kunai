@@ -1072,7 +1072,7 @@ impl EventConsumer<'_> {
 
         let kind = bpf_data.kind.as_str().to_string();
 
-        // Decode LSM_SETID_* flag bits (not applicable to capset).
+        // Decode SETID_* flag bits (not applicable to capset).
         let flags = match bpf_data.kind {
             bpf_events::CredsChangeKind::SetUid | bpf_events::CredsChangeKind::SetGid => {
                 let mut parts: Vec<&'static str> = Vec::new();
@@ -1112,30 +1112,29 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
     fn creds_tampered_event(
         &mut self,
         info: StdEventInfo,
         kind: &str,
-        expected_uid: u32,
-        actual_uid: u32,
-        expected_gid: u32,
-        actual_gid: u32,
-        expected_cap_effective: u64,
-        actual_cap_effective: u64,
+        baseline: CredBaseline,
     ) -> UserEvent<CredsTamperedData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
+        // `baseline` carries the per-process values we previously recorded;
+        // `info.task_info()` carries what the task is reporting right now.
+        // A creds_tampered event is emitted precisely because the two differ
+        // on at least one of (uid, gid, cap_effective).
+        let actual = info.task_info();
         let data = CredsTamperedData {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
             kind: kind.to_string(),
-            expected_uid,
-            actual_uid,
-            expected_gid,
-            actual_gid,
-            expected_cap_effective,
-            actual_cap_effective,
+            expected_uid: baseline.uid,
+            actual_uid: actual.uid,
+            expected_gid: baseline.gid,
+            actual_gid: actual.gid,
+            expected_cap_effective: baseline.cap_effective,
+            actual_cap_effective: actual.cap_effective,
         };
         UserEvent::new(data, info)
     }
@@ -2196,16 +2195,7 @@ impl EventConsumer<'_> {
         let kind = parts.join("+");
 
         let std_info = self.build_std_event_info(*info);
-        let mut tampered = self.creds_tampered_event(
-            std_info,
-            &kind,
-            baseline.uid,
-            actual_uid,
-            baseline.gid,
-            actual_gid,
-            baseline.cap_effective,
-            actual_caps,
-        );
+        let mut tampered = self.creds_tampered_event(std_info, &kind, baseline);
         self.scan_and_print(&mut tampered);
         // update baseline so we don't re-fire on every subsequent event
         if let Some(p) = self.processes.get_mut(&pk) {
@@ -2248,8 +2238,7 @@ impl EventConsumer<'_> {
                 // execve can legitimately change uid/caps via setuid bits or
                 // file capabilities applied during bprm_check_security, so
                 // we trust the kernel's view at this point.
-                let pk = ProcKey::from(e.info.process.tg_uuid);
-                if let Some(p) = self.processes.get_mut(&pk) {
+                if let Some(p) = self.processes.get_mut(&std_info.process_key()) {
                     p.expected_creds = Some(CredBaseline {
                         uid: e.info.process.uid,
                         gid: e.info.process.gid,
@@ -2303,17 +2292,16 @@ impl EventConsumer<'_> {
             }
 
             EbpfEvent::SetCreds(e) => {
+                let std_info = self.build_std_event_info(e.info);
                 // update the creds baseline so the next event from this
                 // process doesn't incorrectly fire a creds_tampered event
-                let pk = ProcKey::from(e.info.process.tg_uuid);
-                if let Some(p) = self.processes.get_mut(&pk) {
+                if let Some(p) = self.processes.get_mut(&std_info.process_key()) {
                     p.expected_creds = Some(CredBaseline {
                         uid: e.data.new.uid,
                         gid: e.data.new.gid,
                         cap_effective: e.data.new.cap_effective,
                     });
                 }
-                let std_info = self.build_std_event_info(e.info);
                 let mut e = self.set_creds_event(std_info, e.data);
                 self.scan_and_print(&mut e);
             }

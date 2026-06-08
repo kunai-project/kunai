@@ -23,13 +23,13 @@ pub enum SetIdFlag {
     #[str("unknown")]
     #[default]
     Unknown = 0,
-    #[str("LSM_SETID_ID")]
+    #[str("SETID_ID")]
     Id = 1,
-    #[str("LSM_SETID_RE")]
+    #[str("SETID_RE")]
     Re = 2,
-    #[str("LSM_SETID_RES")]
+    #[str("SETID_RES")]
     Res = 4,
-    #[str("LSM_SETID_FS")]
+    #[str("SETID_FS")]
     Fs = 8,
 }
 
@@ -51,7 +51,7 @@ pub struct CredSnapshot {
 #[repr(C)]
 pub struct CredsData {
     pub kind: CredsChangeKind,
-    /// LSM_SETID_* flags (0 for capset).
+    /// SETID_* flags (0 for capset).
     pub flags: u32,
     pub old: CredSnapshot,
     pub new: CredSnapshot,
