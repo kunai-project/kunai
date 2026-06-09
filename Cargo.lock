@@ -227,17 +227,7 @@ dependencies = [
 [[package]]
 name = "aya-build"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59bc42f3c5ddacc34eca28a420b47e3cbb3f0f484137cb2bf1ad2153d0eae52a"
-dependencies = [
- "anyhow",
- "cargo_metadata",
-]
-
-[[package]]
-name = "aya-build"
-version = "0.1.3"
-source = "git+https://github.com/aya-rs/aya?rev=215048bf9078af298072bf5ef8f36843e08b7799#215048bf9078af298072bf5ef8f36843e08b7799"
+source = "git+https://github.com/aya-rs/aya?rev=bd397b644723b13bc4397acb0c792546d5df7215#bd397b644723b13bc4397acb0c792546d5df7215"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -247,10 +237,10 @@ dependencies = [
 
 [[package]]
 name = "aya-ebpf"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8dbaf5409a1a0982e5c9bdc0f499a55fe5ead39fe9c846012053faf0d404f73"
+version = "0.1.2"
+source = "git+https://github.com/aya-rs/aya?rev=bd397b644723b13bc4397acb0c792546d5df7215#bd397b644723b13bc4397acb0c792546d5df7215"
 dependencies = [
+ "aya-build",
  "aya-ebpf-bindings",
  "aya-ebpf-cty",
  "aya-ebpf-macros",
@@ -260,27 +250,24 @@ dependencies = [
 [[package]]
 name = "aya-ebpf-bindings"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71ee8e6a617f040d8da7565ec4010aea75e33cda4662f64c019c66ee97d17889"
+source = "git+https://github.com/aya-rs/aya?rev=bd397b644723b13bc4397acb0c792546d5df7215#bd397b644723b13bc4397acb0c792546d5df7215"
 dependencies = [
- "aya-build 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "aya-build",
  "aya-ebpf-cty",
 ]
 
 [[package]]
 name = "aya-ebpf-cty"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6f33396742e7fd0f519c1e0de5141d84e1a8df69146a557c08cc222b0ceace4"
+source = "git+https://github.com/aya-rs/aya?rev=bd397b644723b13bc4397acb0c792546d5df7215#bd397b644723b13bc4397acb0c792546d5df7215"
 dependencies = [
- "aya-build 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "aya-build",
 ]
 
 [[package]]
 name = "aya-ebpf-macros"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96fd02363736177e7e91d6c95d7effbca07be87502c7b5b32fc194aed8b177a0"
+source = "git+https://github.com/aya-rs/aya?rev=bd397b644723b13bc4397acb0c792546d5df7215#bd397b644723b13bc4397acb0c792546d5df7215"
 dependencies = [
  "proc-macro2",
  "proc-macro2-diagnostics",
@@ -1585,7 +1572,7 @@ version = "0.7.0-rc.1"
 dependencies = [
  "anyhow",
  "aya",
- "aya-build 0.1.3 (git+https://github.com/aya-rs/aya?rev=215048bf9078af298072bf5ef8f36843e08b7799)",
+ "aya-build",
  "aya-obj 0.1.0",
  "bytes",
  "cargo_metadata",

@@ -80,11 +80,6 @@ impl<P> From<*const P> for CoRe<P> {
 
 impl<P> CoRe<P> {
     #[inline(always)]
-    pub unsafe fn bpf_read(&self) -> Result<*const P, i64> {
-        aya_ebpf::helpers::bpf_probe_read(&self.ptr)
-    }
-
-    #[inline(always)]
     pub fn is_null(&self) -> bool {
         self.ptr.is_null()
     }

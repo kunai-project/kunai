@@ -5,7 +5,7 @@ use crate::{
     time::Time,
 };
 use aya_ebpf::check_bounds_signed;
-use aya_ebpf::helpers::gen;
+use aya_ebpf::helpers::generated;
 
 use super::{Error, Mode, Path, MAX_NAME, MAX_PATH_LEN};
 
@@ -169,7 +169,7 @@ impl Path {
             return Err(Error::FileNameTooLong);
         }
 
-        if gen::bpf_probe_read(dst as *mut _, qstr_len as u32, name as *const _) >= 0 {
+        if generated::bpf_probe_read(dst as *mut _, qstr_len as u32, name as *const _) >= 0 {
             self.len += qstr_len as u32;
             self.depth += 1;
         } else {

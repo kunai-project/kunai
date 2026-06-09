@@ -170,7 +170,7 @@ unsafe fn try_exit_vfs_read(ctx: &RetProbeContext) -> ProbeResult<()> {
         _ => return Ok(()),
     };
 
-    let rc = ctx.ret().unwrap_or(-1);
+    let rc: c_int = ctx.ret();
 
     // rc is also the size of the data read so we don't irrelevant cases
     if rc < DNS_HEADER_SIZE as i32 {
@@ -276,7 +276,7 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
         _ => return Ok(()),
     };
 
-    let rc = exit_ctx.ret().unwrap_or(-1);
+    let rc: c_int = exit_ctx.ret();
 
     // rc is also the size of the data read so we don't irrelevant cases
     if rc < DNS_HEADER_SIZE as i32 {
@@ -392,7 +392,7 @@ unsafe fn try_exit_recvmsg(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
         _ => return Ok(()),
     };
 
-    let rc = exit_ctx.ret().unwrap_or(-1);
+    let rc: c_int = exit_ctx.ret();
 
     // rc is also the size of the data read so we don't handle irrelevant cases
     if rc < DNS_HEADER_SIZE as i32 {

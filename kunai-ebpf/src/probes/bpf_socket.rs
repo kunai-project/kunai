@@ -1,4 +1,7 @@
-use aya_ebpf::programs::{ProbeContext, RetProbeContext};
+use aya_ebpf::{
+    cty::c_int,
+    programs::{ProbeContext, RetProbeContext},
+};
 use kunai_common::{co_re::sock_fprog_kern, kprobe::ProbeFn, net::SocketInfo};
 
 use super::*;
@@ -97,7 +100,7 @@ unsafe fn handle_socket_attach_prog(
     prog: co_re::bpf_prog,
     sk: co_re::sock,
 ) -> ProbeResult<()> {
-    let rc = exit_ctx.ret().unwrap_or(-1);
+    let rc: c_int = exit_ctx.ret();
 
     let orig = core_read_kernel!(prog, orig_prog)?;
     let filter = core_read_kernel!(orig, filter)?;

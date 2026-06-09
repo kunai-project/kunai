@@ -52,7 +52,7 @@ unsafe fn try_exit_connect(
     entry_ctx: &mut KProbeEntryContext,
     exit_ctx: &RetProbeContext,
 ) -> ProbeResult<()> {
-    let rc = exit_ctx.ret().unwrap_or(-1);
+    let rc: c_int = exit_ctx.ret();
 
     let entry_ctx = &entry_ctx.probe_context();
     let fd: c_int = kprobe_arg!(entry_ctx, 0)?;

@@ -1,5 +1,6 @@
 use super::*;
 use aya_ebpf::{
+    cty::c_int,
     maps::LruHashMap,
     programs::{ProbeContext, RetProbeContext},
 };
@@ -58,7 +59,7 @@ pub fn exit_bpf_prog_load(ctx: RetProbeContext) -> u32 {
 }
 
 unsafe fn try_bpf_prog_load(ctx: &RetProbeContext) -> ProbeResult<()> {
-    let rc = ctx.ret().unwrap_or(-1);
+    let rc: c_int = ctx.ret();
     let key = bpf_task_tracking_id();
 
     if let Some(bpf_prog) = BPF_PROG_TRACK.get(&key) {

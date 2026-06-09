@@ -3,7 +3,7 @@ use core::cmp::min;
 use crate::co_re::{bio_vec, iov_iter, iovec};
 use crate::utils::verifier_clamp;
 use aya_ebpf::check_bounds_signed;
-use aya_ebpf::helpers::{gen, *};
+use aya_ebpf::helpers::{generated, *};
 
 use super::{Buffer, Error};
 
@@ -62,7 +62,7 @@ impl<const N: usize> Buffer<N> {
         let offset = verifier_clamp(self.len() as i64, 0, N as i64) as usize;
 
         if let Some(dst) = self.buf.get_mut(offset..N).map(|d| d.as_mut_ptr()) {
-            if gen::bpf_probe_read_user(
+            if generated::bpf_probe_read_user(
                 dst as *mut _,
                 verifier_clamp(size, 0, N as i64) as u32,
                 iov_base as *const _,
@@ -96,7 +96,7 @@ impl<const N: usize> Buffer<N> {
         let offset = verifier_clamp(self.len() as i64, 0, N as i64) as usize;
 
         if let Some(dst) = self.buf.get_mut(offset..N).map(|d| d.as_mut_ptr()) {
-            if gen::bpf_probe_read_kernel(
+            if generated::bpf_probe_read_kernel(
                 dst as *mut _,
                 verifier_clamp(size, 0, N as i64) as u32,
                 bvec_data,
@@ -122,7 +122,7 @@ impl<const N: usize> Buffer<N> {
         let size = (size as i64).clamp(0, N as i64);
 
         if check_bounds_signed(size, 0, N as i64) {
-            let ret = gen::bpf_probe_read_user(
+            let ret = generated::bpf_probe_read_user(
                 self.buf.as_mut_ptr() as *mut _,
                 size as u32,
                 from as *const _,
@@ -141,7 +141,7 @@ impl<const N: usize> Buffer<N> {
         let size = (size as i64).clamp(0, N as i64);
 
         if check_bounds_signed(size, 0, N as i64) {
-            let ret = gen::bpf_probe_read_kernel(
+            let ret = generated::bpf_probe_read_kernel(
                 self.buf.as_mut_ptr() as *mut _,
                 size as u32,
                 from as *const _,

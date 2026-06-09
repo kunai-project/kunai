@@ -1,5 +1,6 @@
 use super::*;
 
+use aya_ebpf::cty::c_int;
 use aya_ebpf::maps::LruHashMap;
 use aya_ebpf::programs::{ProbeContext, RetProbeContext, TracePointContext};
 use aya_ebpf::EbpfContext;
@@ -156,7 +157,7 @@ unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
 }
 
 unsafe fn try_bprm_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
-    let rc = ctx.ret().unwrap_or(-1);
+    let rc: c_int = ctx.ret();
 
     // execve failed
     if rc < 0 {

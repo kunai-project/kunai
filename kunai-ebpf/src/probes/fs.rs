@@ -464,7 +464,7 @@ unsafe fn try_vfs_unlink(ctx: &RetProbeContext) -> ProbeResult<()> {
         return Ok(());
     }
 
-    let rc: c_int = ctx.ret().unwrap_or(-1);
+    let rc: c_int = ctx.ret();
 
     alloc::init()?;
     let e = alloc::alloc_zero::<UnlinkEvent>()?;
