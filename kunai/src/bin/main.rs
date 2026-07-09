@@ -1,9 +1,7 @@
 #![deny(unused_imports)]
 
 use anyhow::anyhow;
-use aya::maps::perf::Events;
 use aya::maps::MapData;
-use bytes::BytesMut;
 
 use clap::builder::styling;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -73,7 +71,7 @@ use std::sync::Arc;
 use std::process;
 use std::time::Duration;
 
-use aya::{maps::perf::AsyncPerfEventArray, maps::HashMap as AyaHashMap, util::online_cpus, Ebpf};
+use aya::{maps::perf::PerfEventArray, maps::HashMap as AyaHashMap, util::online_cpus, Ebpf};
 
 use aya::VerifierLogLevel;
 
@@ -2302,7 +2300,7 @@ struct EventProducer {
     filter: Filter,
     ebpf_stats_map: AyaHashMap<MapData, Type, u64>,
     stats: Stats,
-    ebpf_perf_array: AsyncPerfEventArray<MapData>,
+    ebpf_perf_array: PerfEventArray<MapData>,
     tasks: Vec<tokio::task::JoinHandle<Result<(), anyhow::Error>>>,
     stop: bool,
     agent_evt_info: AgentEventInfo,
@@ -2330,7 +2328,7 @@ impl EventProducer {
         )
         .map_err(|e| anyhow!("cannot convert KUNAI_STATS_MAP: {e}"))?;
 
-        let perf_array = AsyncPerfEventArray::try_from(
+        let perf_array = PerfEventArray::try_from(
             bpf.take_map(bpf_events::KUNAI_EVENTS_MAP)
                 .expect("cannot take KUNAI_EVENTS_MAP"),
         )
@@ -2527,7 +2525,7 @@ impl EventProducer {
 
         for cpu_id in online_cpus {
             // open a separate perf buffer for each cpu
-            let mut buf = shared
+            let mut perf_array = shared
                 .lock()
                 .await
                 .ebpf_perf_array
@@ -2542,36 +2540,49 @@ impl EventProducer {
                 .expect("cannot open perf event buffer");
             let event_producer = shared.clone();
             let bar = barrier.clone();
-            let conf = config.clone();
+            let max_buffered_events = config.max_buffered_events as usize;
 
             // process each perf buffer in a separate task
             let t = task::spawn(async move {
-                // the number of buffers we want to use gives us the number of events we can read
-                // in one go in userland
-                let mut buffers = (0..conf.max_buffered_events)
-                    .map(|_| BytesMut::with_capacity(MAX_BPF_EVENT_SIZE))
-                    .collect::<Vec<_>>();
+                let mut queue = VecDeque::with_capacity(max_buffered_events);
 
                 let timeout = time::Duration::from_millis(10);
                 // serves as error display decision
                 let mut last_lost_cnt = 0;
 
                 loop {
-                    // we time this out so that the barrier does not wait too long
-                    let events =
-                    // this is timing out only if we cannot access the perf array as long as the buffer
-                    // is available events will be read (because only waiting for the buffer is async).
-                    match time::timeout(timeout, buf.read_events(&mut buffers)).await {
-                        Ok(r) => r?,
-                        _ => Events { read: 0, lost: 0 },
-                    };
+                    let mut read_count = 0u64;
+                    let mut lost_count = 0u64;
+
+                    if perf_array.readable() {
+                        perf_array.for_each(|event| match event {
+                            aya::maps::perf::PerfEvent::Sample { head, tail } => {
+                                if let Ok(mut evt) = EbpfEvent::from_sample(head, tail)
+                                    .inspect_err(|e| error!("failed at decoding ebpf event: {e}"))
+                                {
+                                    // stamp with read time: more reliable than the original
+                                    // probe timestamp for cross-CPU ordering, since submission
+                                    // delay varies per probe and skews process_piped_events
+                                    if let Ok(now) = util::ktime_get_ns() {
+                                        evt.info_mut().timestamp = now;
+                                    }
+                                    queue.push_front(evt);
+                                }
+
+                                read_count += 1;
+                            }
+                            aya::maps::perf::PerfEvent::Lost { count } => {
+                                lost_count += count;
+                            }
+                        });
+                    }
 
                     // checking out lost events
-                    if events.lost > 0 || events.read > 0 {
+                    if lost_count > 0 || read_count > 0 {
                         {
                             let mut ep = event_producer.lock().await;
                             // update event statistics
-                            ep.stats.update(events.read as u64, events.lost as u64);
+                            ep.stats.update(read_count, lost_count);
                             // borrow stats
                             let stats = &ep.stats;
 
@@ -2638,15 +2649,7 @@ impl EventProducer {
                         }
                     }
 
-                    // events.read contains the number of events that have been read,
-                    // and is always <= buffers.len()
-                    for buf in buffers.iter().take(events.read) {
-                        let Ok(mut evt) = EbpfEvent::from_bytes(buf)
-                            .inspect_err(|e| error!("failed at decoding ebpf event: {e}"))
-                        else {
-                            continue;
-                        };
-
+                    while let Some(mut evt) = queue.pop_back() {
                         let mut ep = event_producer.lock().await;
 
                         // we set the proper batch number
@@ -2704,6 +2707,14 @@ impl EventProducer {
                     // we break the loop if processor is stopped
                     if event_producer.lock().await.stop {
                         break;
+                    }
+
+                    if read_count == 0 {
+                        time::sleep(timeout).await;
+                    }
+
+                    if queue.capacity() > max_buffered_events {
+                        queue.shrink_to(max_buffered_events);
                     }
                 }
 

@@ -18,7 +18,7 @@ path = "src/tests/kernel.rs"
 
 [dependencies]
 # Aya deps
-aya = { workspace = true, features = ["async_tokio"] }
+aya = { workspace = true }
 aya-obj = { workspace = true }
 
 # Kunai deps
@@ -27,7 +27,6 @@ kunai-macros = { workspace = true }
 
 # Non aya deps
 anyhow = { workspace = true }
-bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock", "serde"] }
 clap = { workspace = true, features = ["derive"] }
 communityid = { workspace = true, features = ["serde"] }
@@ -51,17 +50,20 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = [
-  "fs",
-  "io-util",
-  "macros",
-  "net",
-  "rt",
-  "rt-multi-thread",
-  "signal",
-  "sync",
-  "time",
-] }
+tokio = {
+  workspace = true,
+  features = [
+    "fs",
+    "io-util",
+    "macros",
+    "net",
+    "rt",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+    "time",
+  ]
+}
 uuid = { workspace = true, features = ["serde", "v4", "v5"] }
 yara-x = { workspace = true }
 

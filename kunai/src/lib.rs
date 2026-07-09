@@ -125,9 +125,9 @@ pub fn prepare_bpf(
     let mut loader = EbpfLoader::new();
     loader
         .verifier_log_level(vll)
-        .set_global("PAGE_SHIFT", &page_shift, true)
-        .set_global("PAGE_SIZE", &page_size, true)
-        .set_global("LINUX_KERNEL_VERSION", &kernel, true);
+        .override_global("PAGE_SHIFT", &page_shift, true)
+        .override_global("PAGE_SIZE", &page_size, true)
+        .override_global("LINUX_KERNEL_VERSION", &kernel, true);
 
     let mut bpf = cfg_select! {
        target_arch = "x86_64" => {{
@@ -149,8 +149,8 @@ pub fn prepare_bpf(
 
          // these values are needed to access `page struct` data
           loader
-              .set_global("VMEMMAP_BASE_PTR", &vmemmap_base, true)
-              .set_global("PAGE_OFFSET_BASE_PTR", &page_offset_base, true);
+              .override_global("VMEMMAP_BASE_PTR", &vmemmap_base, true)
+              .override_global("PAGE_OFFSET_BASE_PTR", &page_offset_base, true);
 
           loader.load(BPF_ELF)?
        }}

@@ -94,36 +94,68 @@ impl From<LossEvent> for EbpfEvent {
 }
 
 impl EbpfEvent {
+    /// Decodes an [`EbpfEvent`] from a perf ring buffer sample, as split into
+    /// `head`/`tail` by [`aya::maps::perf::PerfEvent::Sample`]. `tail` is only
+    /// non-empty when the sample wraps around the physical end of the ring
+    /// buffer, in which case `head` holds the part before the wrap and
+    /// `tail` the rest; both are treated as one logical, contiguous byte
+    /// stream throughout this function.
+    ///
     /// # Safety
     /// * the bytes decoded must be a valid [`EbpfEvent`]
     #[inline]
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DecoderError> {
-        // event content must be at least the size of EventInfo
-        if bytes.len() < core::mem::size_of::<EventInfo>() {
+    pub fn from_sample(head: &[u8], tail: &[u8]) -> Result<Self, DecoderError> {
+        // offset_of! (rather than an assumed 0) so this keeps working if
+        // info/etype ever move within Event<T>/EventInfo. Every Event<T>
+        // has the same layout for this regardless of T (see the comment
+        // on Event<T> itself).
+        const ETYPE_OFFSET: usize = core::mem::offset_of!(Event<()>, info.etype);
+        const ETYPE_SIZE: usize = core::mem::size_of::<Type>();
+
+        // event content must be at least enough to cover the type field,
+        // which may itself be split across head/tail if the sample wraps
+        if head.len().saturating_add(tail.len()) < ETYPE_OFFSET + ETYPE_SIZE {
             return Err(DecoderError::NotEnoughBytes);
         }
 
-        let info = unsafe {
-            &(*(bytes[0..core::mem::size_of::<EventInfo>()].as_ptr() as *const EventInfo))
-        };
+        let mut ty_buf = [0u8; ETYPE_SIZE];
+        for (i, b) in head
+            .iter()
+            .chain(tail.iter())
+            .skip(ETYPE_OFFSET)
+            .take(ETYPE_SIZE)
+            .enumerate()
+        {
+            ty_buf[i] = *b;
+        }
+        let etype = unsafe { core::mem::transmute::<[u8; ETYPE_SIZE], Type>(ty_buf) };
 
         macro_rules! decode {
             ($src: ident) => {{
-                if bytes.len() < $src::size_of() {
+                if head.len().saturating_add(tail.len()) < $src::size_of() {
                     return Err(DecoderError::SizeDontMatch);
                 }
 
                 let mut buf = [0u8; $src::size_of()];
-                buf.copy_from_slice(&bytes[0..$src::size_of()]);
+
+                for (i, b) in head
+                    .iter()
+                    .chain(tail.iter())
+                    .take($src::size_of())
+                    .enumerate()
+                {
+                    buf[i] = *b;
+                }
+
                 let e: $src = unsafe { core::mem::transmute::<[u8; $src::size_of()], $src>(buf) };
                 e
             }};
         }
 
         // check that we didn't send uninitialized events
-        debug_assert!(info.etype != Type::Unknown, "received unknown event");
+        debug_assert!(etype != Type::Unknown, "received unknown event");
 
-        match info.etype {
+        match etype {
             // here ExecveScript cannot exist
             Type::Execve | Type::ExecveScript => {
                 let mut execve_event = decode!(ExecveEvent);
@@ -164,7 +196,7 @@ impl EbpfEvent {
             Type::Error => Ok(Self::Error(Box::new(decode!(ErrorEvent)))),
             Type::SyscoreResume => Ok(Self::SysCoreResume(Box::new(decode!(SysCoreResumeEvent)))),
             Type::EndConfigurable | Type::Max | Type::Start | Type::FileScan | Type::Unknown => {
-                Err(DecoderError::Unsupported(info.etype))
+                Err(DecoderError::Unsupported(etype))
             }
         }
     }

@@ -37,17 +37,19 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
-/// Function getting time since boot. Does not include
-/// suspended time.
+/// Function getting time since boot expressed in nanoseconds. Does not include
+/// suspended time. Uses `CLOCK_MONOTONIC`, the same clock domain as eBPF's
+/// `bpf_ktime_get_ns()`, so values returned here are directly comparable
+/// with timestamps captured on the kernel side.
 pub fn ktime_get_ns() -> Result<u64, io::Error> {
     let mut ts: timespec = unsafe { std::mem::zeroed() };
 
-    // Call clock_gettime with CLOCK_BOOTTIME
+    // Call clock_gettime with CLOCK_MONOTONIC
     let result = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
 
     if result == 0 {
         // Convert seconds and nanoseconds to total nanoseconds
-        Ok(ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64)
+        Ok((ts.tv_sec as u64 * 1_000_000_000).wrapping_add(ts.tv_nsec as u64))
     } else {
         Err(io::Error::last_os_error())
     }

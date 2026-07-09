@@ -192,9 +192,8 @@ impl<'a> Program<'a> {
                 self.prio
             }
             programs::Program::KProbe(program) => match program.kind() {
-                programs::ProbeKind::URetProbe => self.prio + 1,
-                programs::ProbeKind::KRetProbe => self.prio + 1,
-                _ => self.prio,
+                programs::ProbeKind::Entry => self.prio + 1,
+                programs::ProbeKind::Return => self.prio + 1,
             },
 
             programs::Program::FExit(_) => self.prio + 1,

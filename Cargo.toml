@@ -13,13 +13,12 @@ license-file = "LICENSE"
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
-aya = "0.13.0"
-aya-build = { git = "https://github.com/aya-rs/aya", rev = "bd397b644723b13bc4397acb0c792546d5df7215", default-features = false }
-aya-ebpf = { git = "https://github.com/aya-rs/aya", rev = "bd397b644723b13bc4397acb0c792546d5df7215" }
-aya-ebpf-macros = { git = "https://github.com/aya-rs/aya", rev = "bd397b644723b13bc4397acb0c792546d5df7215" }
-aya-obj = "0.1.0"
+aya = "0.14.0"
+aya-build = { version = "0.2.0", default-features = false }
+aya-ebpf = "0.2.1"
+aya-ebpf-macros = "0.2.0"
+aya-obj = "0.3.0"
 base64ct = { version = "1.8.3", default-features = false }
-bytes = "1.11.1"
 cargo_metadata = { version = "0.23.0", default-features = false }
 chrono = "0.4.24"
 clap = "4.3.4"

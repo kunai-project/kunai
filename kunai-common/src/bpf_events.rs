@@ -338,7 +338,7 @@ mod test {
         let b = exit.encode();
         println!("b.len()={}", b.len());
 
-        let EbpfEvent::Exit(d) = EbpfEvent::from_bytes(b).unwrap() else {
+        let EbpfEvent::Exit(d) = EbpfEvent::from_sample(&b[..3], &b[3..]).unwrap() else {
             panic!("wrong event deserialized")
         };
 
