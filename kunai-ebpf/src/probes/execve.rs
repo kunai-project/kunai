@@ -101,7 +101,7 @@ pub fn execve_exit_bprm_execve(ctx: RetProbeContext) -> u32 {
         return errors::BPF_PROG_SUCCESS;
     }
 
-    match unsafe { try_exit_execve(&ctx) } {
+    match unsafe { try_bprm_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
@@ -168,7 +168,7 @@ unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
 }
 
 #[inline(always)]
-unsafe fn try_exit_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
+unsafe fn try_bprm_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
     let rc: c_int = ctx.ret();
 
     // execve failed
