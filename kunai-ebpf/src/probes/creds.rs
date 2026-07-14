@@ -66,12 +66,8 @@ pub fn creds_security_task_fix_setuid(ctx: ProbeContext) -> u32 {
 unsafe fn try_security_task_fix_setuid(ctx: &ProbeContext) -> Result<(), ProbeError> {
     if_disabled_return!(Type::SetCreds, ());
 
-    let new = co_re::cred::from_ptr(
-        ctx.arg::<*const c_void>(0).unwrap_or(core::ptr::null()) as *const _,
-    );
-    let old = co_re::cred::from_ptr(
-        ctx.arg::<*const c_void>(1).unwrap_or(core::ptr::null()) as *const _,
-    );
+    let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
+    let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
     let flags: c_int = ctx.arg(2).unwrap_or(0);
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetUid, flags as u32)
@@ -96,12 +92,8 @@ pub fn creds_security_task_fix_setgid(ctx: ProbeContext) -> u32 {
 unsafe fn try_security_task_fix_setgid(ctx: &ProbeContext) -> Result<(), ProbeError> {
     if_disabled_return!(Type::SetCreds, ());
 
-    let new = co_re::cred::from_ptr(
-        ctx.arg::<*const c_void>(0).unwrap_or(core::ptr::null()) as *const _,
-    );
-    let old = co_re::cred::from_ptr(
-        ctx.arg::<*const c_void>(1).unwrap_or(core::ptr::null()) as *const _,
-    );
+    let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
+    let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
     let flags: c_int = ctx.arg(2).unwrap_or(0);
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::SetGid, flags as u32)
@@ -126,12 +118,8 @@ pub fn creds_security_capset(ctx: ProbeContext) -> u32 {
 unsafe fn try_security_capset(ctx: &ProbeContext) -> Result<(), ProbeError> {
     if_disabled_return!(Type::SetCreds, ());
 
-    let new = co_re::cred::from_ptr(
-        ctx.arg::<*const c_void>(0).unwrap_or(core::ptr::null()) as *const _,
-    );
-    let old = co_re::cred::from_ptr(
-        ctx.arg::<*const c_void>(1).unwrap_or(core::ptr::null()) as *const _,
-    );
+    let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
+    let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
 
     emit_creds_event(ctx, &new, &old, CredsChangeKind::Capset, 0)
 }
