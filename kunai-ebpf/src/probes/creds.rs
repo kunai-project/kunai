@@ -66,7 +66,7 @@ unsafe fn try_security_task_fix_setuid(ctx: &ProbeContext) -> Result<(), ProbeEr
 
     let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
     let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
-    let flags: i32 = ctx.arg(2).unwrap_or(0);
+    let flags: i32 = kprobe_arg!(ctx, 2)?;
 
     emit_creds_event(
         ctx,
@@ -98,7 +98,7 @@ unsafe fn try_security_task_fix_setgid(ctx: &ProbeContext) -> Result<(), ProbeEr
 
     let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
     let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
-    let flags: i32 = ctx.arg(2).unwrap_or(0);
+    let flags: i32 = kprobe_arg!(ctx, 2)?;
 
     emit_creds_event(
         ctx,
