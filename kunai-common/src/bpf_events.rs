@@ -31,6 +31,12 @@ pub enum Error {
     TgidFieldMissing,
     #[error("cred field is missing")]
     CredFieldMissing,
+    #[error("cred field is missing uid")]
+    CredFieldMissingUid,
+    #[error("cred field is missing gid")]
+    CredFieldMissingGid,
+    #[error("cred field is missing cap_effective")]
+    CredFieldMissingCapEffective,
     #[error("real_parent field is missing")]
     RealParentFieldMissing,
     #[error("boot time field is missing")]

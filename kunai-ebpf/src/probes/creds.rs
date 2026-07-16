@@ -5,20 +5,20 @@ use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent};
 use super::*;
 
 #[inline(always)]
-unsafe fn snapshot_cred(c: &co_re::cred) -> CredSnapshot {
-    CredSnapshot {
-        uid: c.uid(),
-        gid: c.gid(),
-        euid: c.euid(),
-        egid: c.egid(),
-        suid: c.suid(),
-        sgid: c.sgid(),
-        fsuid: c.fsuid(),
-        fsgid: c.fsgid(),
-        cap_effective: c.cap_effective(),
-        cap_permitted: c.cap_permitted(),
-        cap_inheritable: c.cap_inheritable(),
-    }
+unsafe fn snapshot_cred(c: &co_re::cred) -> Result<CredSnapshot, ProbeError> {
+    Ok(CredSnapshot {
+        uid: core_read_kernel!(c, uid)?,
+        gid: core_read_kernel!(c, gid)?,
+        euid: core_read_kernel!(c, euid)?,
+        egid: core_read_kernel!(c, egid)?,
+        suid: core_read_kernel!(c, suid)?,
+        sgid: core_read_kernel!(c, sgid)?,
+        fsuid: core_read_kernel!(c, fsuid)?,
+        fsgid: core_read_kernel!(c, fsgid)?,
+        cap_effective: core_read_kernel!(c, cap_effective)?,
+        cap_permitted: core_read_kernel!(c, cap_permitted)?,
+        cap_inheritable: core_read_kernel!(c, cap_inheritable)?,
+    })
 }
 
 #[inline(always)]
@@ -38,8 +38,8 @@ unsafe fn emit_creds_event<C: EbpfContext>(
     event.init_from_current_task(Type::SetCreds)?;
     event.data.kind = kind;
     event.data.flags = flags;
-    event.data.old = snapshot_cred(old);
-    event.data.new = snapshot_cred(new);
+    event.data.old = snapshot_cred(old)?;
+    event.data.new = snapshot_cred(new)?;
 
     pipe_event(ctx, event);
     Ok(())

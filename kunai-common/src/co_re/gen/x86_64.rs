@@ -141,28 +141,76 @@ pub struct cred {
     pub cap_effective: kernel_cap_t,
 }
 unsafe extern "C" {
-    pub fn shim_cred_uid(pcred: *mut cred) -> uid_t;
+    pub fn shim_cred_uid(cred: *mut cred) -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
-    pub fn shim_cred_gid(pcred: *mut cred) -> gid_t;
+    pub fn shim_cred_uid_user(cred: *mut cred) -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
-    pub fn shim_cred_euid(pcred: *mut cred) -> uid_t;
+    pub fn shim_cred_uid_exists(cred: *mut cred) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_cred_egid(pcred: *mut cred) -> gid_t;
+    pub fn shim_cred_gid(cred: *mut cred) -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
-    pub fn shim_cred_suid(pcred: *mut cred) -> uid_t;
+    pub fn shim_cred_gid_user(cred: *mut cred) -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
-    pub fn shim_cred_sgid(pcred: *mut cred) -> gid_t;
+    pub fn shim_cred_gid_exists(cred: *mut cred) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_cred_fsuid(pcred: *mut cred) -> uid_t;
+    pub fn shim_cred_euid(cred: *mut cred) -> ::core::ffi::c_uint;
 }
 unsafe extern "C" {
-    pub fn shim_cred_fsgid(pcred: *mut cred) -> gid_t;
+    pub fn shim_cred_euid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_euid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_egid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_egid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_egid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_suid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_suid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_suid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_sgid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_sgid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_sgid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsuid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsuid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsuid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsgid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsgid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsgid_exists(cred: *mut cred) -> bool;
 }
 unsafe extern "C" {
     pub fn shim_cred_cap_effective_val(cred: *mut cred) -> ::core::ffi::c_ulonglong;

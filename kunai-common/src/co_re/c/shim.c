@@ -196,14 +196,14 @@ struct cred
 	struct kernel_cap_t cap_effective;
 } __attribute__((preserve_access_index));
 
-_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_uid(struct cred *pcred), pcred, uid.val);
-_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_gid(struct cred *pcred), pcred, gid.val);
-_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_euid(struct cred *pcred), pcred, euid.val);
-_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_egid(struct cred *pcred), pcred, egid.val);
-_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_suid(struct cred *pcred), pcred, suid.val);
-_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_sgid(struct cred *pcred), pcred, sgid.val);
-_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_fsuid(struct cred *pcred), pcred, fsuid.val);
-_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_fsgid(struct cred *pcred), pcred, fsgid.val);
+SHIM_WITH_NAME(cred, uid.val,    uid);
+SHIM_WITH_NAME(cred, gid.val,    gid);
+SHIM_WITH_NAME(cred, euid.val,   euid);
+SHIM_WITH_NAME(cred, egid.val,   egid);
+SHIM_WITH_NAME(cred, suid.val,   suid);
+SHIM_WITH_NAME(cred, sgid.val,   sgid);
+SHIM_WITH_NAME(cred, fsuid.val,  fsuid);
+SHIM_WITH_NAME(cred, fsgid.val,  fsgid);
 
 SHIM_WITH_NAME(cred, cap_effective.val,    cap_effective_val);
 SHIM_WITH_NAME(cred, cap_effective.cap[0], cap_effective_cap_lo);
