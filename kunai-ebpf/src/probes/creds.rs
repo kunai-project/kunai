@@ -1,6 +1,4 @@
-use core::ffi::c_void;
-
-use aya_ebpf::{cty::c_int, programs::ProbeContext, EbpfContext};
+use aya_ebpf::{programs::ProbeContext, EbpfContext};
 
 use kunai_common::bpf_events::{CredSnapshot, CredsChangeKind, CredsEvent};
 
@@ -29,7 +27,7 @@ unsafe fn emit_creds_event<C: EbpfContext>(
     new: &co_re::cred,
     old: &co_re::cred,
     kind: CredsChangeKind,
-    flags: u32,
+    flags: LsmSetIdFlags,
 ) -> Result<(), ProbeError> {
     if new.is_null() || old.is_null() {
         return Ok(());
@@ -68,9 +66,15 @@ unsafe fn try_security_task_fix_setuid(ctx: &ProbeContext) -> Result<(), ProbeEr
 
     let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
     let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
-    let flags: c_int = ctx.arg(2).unwrap_or(0);
+    let flags: i32 = ctx.arg(2).unwrap_or(0);
 
-    emit_creds_event(ctx, &new, &old, CredsChangeKind::SetUid, flags as u32)
+    emit_creds_event(
+        ctx,
+        &new,
+        &old,
+        CredsChangeKind::SetUid,
+        LsmSetIdFlags::from_bits(flags),
+    )
 }
 
 #[kprobe(function = "security_task_fix_setgid")]
@@ -94,9 +98,15 @@ unsafe fn try_security_task_fix_setgid(ctx: &ProbeContext) -> Result<(), ProbeEr
 
     let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
     let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
-    let flags: c_int = ctx.arg(2).unwrap_or(0);
+    let flags: i32 = ctx.arg(2).unwrap_or(0);
 
-    emit_creds_event(ctx, &new, &old, CredsChangeKind::SetGid, flags as u32)
+    emit_creds_event(
+        ctx,
+        &new,
+        &old,
+        CredsChangeKind::SetGid,
+        LsmSetIdFlags::from_bits(flags),
+    )
 }
 
 #[kprobe(function = "security_capset")]
@@ -121,5 +131,11 @@ unsafe fn try_security_capset(ctx: &ProbeContext) -> Result<(), ProbeError> {
     let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
     let old = co_re::cred::from_ptr(kprobe_arg!(ctx, 1)?);
 
-    emit_creds_event(ctx, &new, &old, CredsChangeKind::Capset, 0)
+    emit_creds_event(
+        ctx,
+        &new,
+        &old,
+        CredsChangeKind::Capset,
+        LsmSetIdFlags::empty(),
+    )
 }

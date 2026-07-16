@@ -1,36 +1,56 @@
 use crate::bpf_events::Event;
+use flaglet::flags;
 use kunai_macros::StrEnum;
 
 pub type CredsEvent = Event<CredsData>;
 
-#[repr(u32)]
-#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[repr(C)]
+#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CredsChangeKind {
-    #[str("unknown")]
-    #[default]
-    Unknown = 0,
     #[str("setuid")]
-    SetUid = 1,
+    SetUid,
     #[str("setgid")]
-    SetGid = 2,
+    SetGid,
     #[str("capset")]
-    Capset = 3,
+    Capset,
 }
 
-#[repr(u32)]
-#[derive(StrEnum, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum SetIdFlag {
-    #[str("unknown")]
-    #[default]
-    Unknown = 0,
-    #[str("SETID_ID")]
+#[flags(i32)]
+#[derive(StrEnum, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// defined in : https://elixir.bootlin.com/linux/v7.1.3/source/include/linux/security.h#L242
+pub enum LsmSetId {
+    #[str("LSM_SETID_ID")]
     Id = 1,
-    #[str("SETID_RE")]
+    #[str("LSM_SETID_RE")]
     Re = 2,
-    #[str("SETID_RES")]
+    #[str("LSM_SETID_RES")]
     Res = 4,
-    #[str("SETID_FS")]
+    #[str("LSM_SETID_FS")]
     Fs = 8,
+}
+
+#[cfg(feature = "user")]
+mod user {
+    use crate::bpf_events::LsmSetId;
+
+    use super::LsmSetIdFlags;
+
+    impl std::fmt::Display for LsmSetIdFlags {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            let mut init = false;
+
+            for flag in LsmSetId::variants() {
+                if self.contains(flag) {
+                    if init {
+                        write!(f, "|")?;
+                    }
+                    write!(f, "{}", flag.as_str())?;
+                    init = true;
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 #[repr(C)]
@@ -51,8 +71,7 @@ pub struct CredSnapshot {
 #[repr(C)]
 pub struct CredsData {
     pub kind: CredsChangeKind,
-    /// SETID_* flags (0 for capset).
-    pub flags: u32,
+    pub flags: LsmSetIdFlags,
     pub old: CredSnapshot,
     pub new: CredSnapshot,
 }

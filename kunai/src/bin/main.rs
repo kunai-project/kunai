@@ -1070,30 +1070,10 @@ impl EventConsumer<'_> {
     ) -> UserEvent<SetCredsData> {
         let (exe, command_line) = self.get_exe_and_command_line(&info);
 
-        let kind = bpf_data.kind.as_str().to_string();
-
-        // Decode SETID_* flag bits (not applicable to capset).
+        // Decode LSM_SETID_* flag bits (not applicable to capset).
         let flags = match bpf_data.kind {
             bpf_events::CredsChangeKind::SetUid | bpf_events::CredsChangeKind::SetGid => {
-                let mut parts: Vec<&'static str> = Vec::new();
-                let f = bpf_data.flags;
-                if f & (bpf_events::SetIdFlag::Id as u32) != 0 {
-                    parts.push(bpf_events::SetIdFlag::Id.as_str());
-                }
-                if f & (bpf_events::SetIdFlag::Re as u32) != 0 {
-                    parts.push(bpf_events::SetIdFlag::Re.as_str());
-                }
-                if f & (bpf_events::SetIdFlag::Res as u32) != 0 {
-                    parts.push(bpf_events::SetIdFlag::Res.as_str());
-                }
-                if f & (bpf_events::SetIdFlag::Fs as u32) != 0 {
-                    parts.push(bpf_events::SetIdFlag::Fs.as_str());
-                }
-                if parts.is_empty() {
-                    String::new()
-                } else {
-                    parts.join("|")
-                }
+                bpf_data.flags.to_string()
             }
             _ => String::new(),
         };
@@ -1102,7 +1082,7 @@ impl EventConsumer<'_> {
             ancestors: self.get_ancestors_string(&info),
             exe: exe.into(),
             command_line,
-            kind,
+            kind: bpf_data.kind.as_str().into(),
             flags,
             old: bpf_data.old.into(),
             new: bpf_data.new.into(),
