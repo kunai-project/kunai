@@ -2,6 +2,9 @@ use crate::bpf_events::Event;
 use flaglet::flags;
 use kunai_macros::StrEnum;
 
+#[cfg(feature = "user")]
+mod user;
+
 pub type CredsEvent = Event<CredsData>;
 
 #[repr(C)]
@@ -29,30 +32,6 @@ pub enum LsmSetId {
     Fs = 8,
 }
 
-#[cfg(feature = "user")]
-mod user {
-    use crate::bpf_events::LsmSetId;
-
-    use super::LsmSetIdFlags;
-
-    impl std::fmt::Display for LsmSetIdFlags {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-            let mut init = false;
-
-            for flag in LsmSetId::variants() {
-                if self.contains(flag) {
-                    if init {
-                        write!(f, "|")?;
-                    }
-                    write!(f, "{}", flag.as_str())?;
-                    init = true;
-                }
-            }
-            Ok(())
-        }
-    }
-}
-
 #[repr(C)]
 pub struct CredSnapshot {
     pub uid: u32,
@@ -74,46 +53,4 @@ pub struct CredsData {
     pub flags: LsmSetIdFlags,
     pub old: CredSnapshot,
     pub new: CredSnapshot,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_display_empty_flags() {
-        let flags = LsmSetIdFlags::empty();
-        assert_eq!(format!("{}", flags), "");
-    }
-
-    #[test]
-    fn test_display_single_flag() {
-        let flags = LsmSetIdFlags::from(LsmSetId::Id);
-        assert_eq!(format!("{}", flags), "LSM_SETID_ID");
-    }
-
-    #[test]
-    fn test_display_multiple_flags() {
-        let flags = LsmSetId::Id | LsmSetId::Re;
-        let result = format!("{}", flags);
-        assert_eq!(result, "LSM_SETID_ID|LSM_SETID_RE");
-    }
-
-    #[test]
-    fn test_display_all_flags() {
-        let flags = LsmSetId::Id | LsmSetId::Re | LsmSetId::Res | LsmSetId::Fs;
-        let result = format!("{}", flags);
-        assert_eq!(
-            result,
-            "LSM_SETID_ID|LSM_SETID_RE|LSM_SETID_RES|LSM_SETID_FS"
-        );
-    }
-
-    #[test]
-    fn test_display_flag_from_bits() {
-        // Test flags created from raw bits
-        let flags = LsmSetIdFlags::from_bits(1 | 2); // Id | Re
-        let result = format!("{}", flags);
-        assert_eq!(result, "LSM_SETID_ID|LSM_SETID_RE");
-    }
 }

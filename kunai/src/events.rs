@@ -11,6 +11,7 @@ use gene_derive::{Event, FieldGetter};
 
 use kunai_common::{
     bpf_events::{self, TaskInfo},
+    consts::caps_to_str_vec,
     net,
 };
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
@@ -687,7 +688,14 @@ impl Scannable for PtraceData {
 
 impl_std_iocs!(PtraceData);
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
+#[derive(Debug, FieldGetter, Serialize, Deserialize)]
+pub struct Caps {
+    pub effective: Vec<Cow<'static, str>>,
+    pub permitted: Vec<Cow<'static, str>>,
+    pub inheritable: Vec<Cow<'static, str>>,
+}
+
+#[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct CredSnapshot {
     pub uid: u32,
     pub gid: u32,
@@ -697,9 +705,7 @@ pub struct CredSnapshot {
     pub sgid: u32,
     pub fsuid: u32,
     pub fsgid: u32,
-    pub cap_effective: u64,
-    pub cap_permitted: u64,
-    pub cap_inheritable: u64,
+    pub caps: Caps,
 }
 
 impl From<bpf_events::CredSnapshot> for CredSnapshot {
@@ -713,9 +719,11 @@ impl From<bpf_events::CredSnapshot> for CredSnapshot {
             sgid: s.sgid,
             fsuid: s.fsuid,
             fsgid: s.fsgid,
-            cap_effective: s.cap_effective,
-            cap_permitted: s.cap_permitted,
-            cap_inheritable: s.cap_inheritable,
+            caps: Caps {
+                effective: caps_to_str_vec(s.cap_effective),
+                permitted: caps_to_str_vec(s.cap_permitted),
+                inheritable: caps_to_str_vec(s.cap_inheritable),
+            },
         }
     }
 }
@@ -723,7 +731,7 @@ impl From<bpf_events::CredSnapshot> for CredSnapshot {
 def_user_data!(
     pub struct SetCredsData {
         pub kind: String,
-        pub flags: String,
+        pub flags: Vec<Cow<'static, str>>,
         pub old: CredSnapshot,
         pub new: CredSnapshot,
     }

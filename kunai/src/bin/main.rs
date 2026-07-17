@@ -1073,9 +1073,9 @@ impl EventConsumer<'_> {
         // Decode LSM_SETID_* flag bits (not applicable to capset).
         let flags = match bpf_data.kind {
             bpf_events::CredsChangeKind::SetUid | bpf_events::CredsChangeKind::SetGid => {
-                bpf_data.flags.to_string()
+                bpf_data.flags.to_str_vec()
             }
-            _ => String::new(),
+            _ => Vec::new(),
         };
 
         let data = SetCredsData {
