@@ -1,13 +1,28 @@
 use super::Capability;
 use std::borrow::Cow;
+use std::sync::LazyLock;
+
+pub static CAP_LAST_CAP: LazyLock<u64> = LazyLock::new(|| {
+    std::fs::read_to_string("/proc/sys/kernel/cap_last_cap")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        // ref: https://elixir.bootlin.com/linux/v7.1.7/source/include/uapi/linux/capability.h#L423
+        .unwrap_or(Capability::CheckpointRestore as u64) // fallback: highest known cap at time of writing
+});
 
 /// Iterates over all set bits in a u64 bitmask.
 #[inline]
 pub fn caps_to_str_vec(mut bits: u64) -> Vec<Cow<'static, str>> {
     let mut out = Vec::new();
+
+    if bits == Capability::cap_full_set() {
+        out.push(Cow::Borrowed("CAP_FULL_SET"));
+        return out;
+    }
+
     while bits != 0 {
         let bit = bits.trailing_zeros();
-        if bit > Capability::cap_last_cap() as u32 {
+        if bit > *CAP_LAST_CAP as u32 {
             break;
         }
 
@@ -22,9 +37,9 @@ pub fn caps_to_str_vec(mut bits: u64) -> Vec<Cow<'static, str>> {
 }
 
 impl Capability {
-    #[inline(always)]
-    const fn cap_last_cap() -> Self {
-        Self::CheckpointRestore
+    // ref: https://elixir.bootlin.com/linux/v7.1.7/source/include/linux/capability.h#L67
+    fn cap_full_set() -> u64 {
+        (1 << (1 + *CAP_LAST_CAP)) - 1
     }
 }
 
