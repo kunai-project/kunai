@@ -2724,15 +2724,9 @@ impl EventProducer {
                     if perf_array.readable() {
                         perf_array.for_each(|event| match event {
                             aya::maps::perf::PerfEvent::Sample { head, tail } => {
-                                if let Ok(mut evt) = EbpfEvent::from_sample(head, tail)
+                                if let Ok(evt) = EbpfEvent::from_sample(head, tail)
                                     .inspect_err(|e| error!("failed at decoding ebpf event: {e}"))
                                 {
-                                    // stamp with read time: more reliable than the original
-                                    // probe timestamp for cross-CPU ordering, since submission
-                                    // delay varies per probe and skews process_piped_events
-                                    if let Ok(now) = util::ktime_get_ns() {
-                                        evt.info_mut().timestamp = now;
-                                    }
                                     queue.push_front(evt);
                                 }
 
