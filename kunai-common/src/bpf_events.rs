@@ -1,5 +1,5 @@
 use crate::buffer::Buffer;
-use crate::creds::CredSnapshot;
+use crate::creds::Creds;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
 use crate::option::BpfOption;
@@ -202,7 +202,7 @@ pub struct TaskInfo {
     pub zombie: bool,
     pub flags: u32,
     pub comm: [u8; COMM_SIZE],
-    pub creds: CredSnapshot,
+    pub creds: Creds,
     // task group id in kernel or pid in userland
     // when program is single threaded tgid == pid
     pub tgid: i32,
