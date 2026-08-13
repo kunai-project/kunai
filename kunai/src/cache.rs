@@ -12,17 +12,18 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
-    fs::File,
+    fs::{self, File},
     io::{self},
     os::unix::prelude::MetadataExt,
     path::PathBuf,
+    sync::Arc,
     time::SystemTime,
 };
 use thiserror::Error;
 
 use crate::{
     util::{
-        account::{Group, Groups, User, Users},
+        account::{Groups, Users},
         namespace::{self, Mnt, Switcher},
     },
     yara::Scanner,
@@ -275,15 +276,16 @@ impl Default for Key {
 impl Key {
     #[inline(always)]
     fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
+        // metadata() fails with io::ErrorKind::NotFound when the file is missing
+        let meta = path.to_path_buf().metadata()?;
+        Self::from_path_and_meta(ns, path, &meta)
+    }
+
+    /// Same as [Key::from_path_in_ns] but reuses [fs::Metadata] already
+    /// fetched by the caller, saving a stat.
+    #[inline(always)]
+    fn from_path_and_meta(ns: Mnt, path: &Path, meta: &fs::Metadata) -> Result<Self, Error> {
         let pb = path.to_path_buf();
-
-        // checking if the file still exists
-        if !pb.exists() {
-            // return a io::Error instead of custom error
-            return Err(io::Error::new(io::ErrorKind::NotFound, "file not found").into());
-        }
-
-        let meta = pb.metadata()?;
 
         let k = Key {
             mnt_namespace: ns,
@@ -300,7 +302,7 @@ impl Key {
             // we don't have to switch to ns here as it is done in caller
             let ebpf_meta = ebpf_meta.ok_or(Error::MetadataRequired)?;
 
-            if k.size != meta.size() {
+            if ebpf_meta.size as u64 != meta.size() {
                 return Err(Error::FileModSinceKernelEvent("size changed"));
             }
 
@@ -308,10 +310,8 @@ impl Key {
                 return Err(Error::FileModSinceKernelEvent("inode changed"));
             }
 
-            if let Ok(mtime) = meta.modified() {
-                if mtime != k.modified {
-                    return Err(Error::FileModSinceKernelEvent("mtime changed"));
-                }
+            if SystemTime::from(&ebpf_meta.mtime) != k.modified {
+                return Err(Error::FileModSinceKernelEvent("mtime changed"));
             }
         }
 
@@ -325,8 +325,8 @@ unsafe impl Sync for Key {}
 pub struct Cache {
     mnt_namespaces: LruHashMap<Mnt, namespace::Switcher<Mnt>>,
     hashes: LruHashMap<Key, Hashes>,
-    users: LruHashMap<Key, Users>,
-    groups: LruHashMap<Key, Groups>,
+    users: LruHashMap<Key, Arc<Users>>,
+    groups: LruHashMap<Key, Arc<Groups>>,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -358,71 +358,72 @@ impl Cache {
         Ok(())
     }
 
-    /// Get a [User] structure corresponding to user id `uid`
+    /// Get the [Users] and [Groups] tables of the mount namespace `ns`, so that
+    /// any uid/gid can be resolved by the caller. They are shared behind an
+    /// [Arc] to avoid copying the whole tables around.
     #[inline(always)]
     pub fn get_user_group_in_ns(
         &mut self,
         ns: Mnt,
-        uid: u32,
-        gid: u32,
-    ) -> Result<(Option<&User>, Option<&Group>), Error> {
+    ) -> Result<(Arc<Users>, Arc<Groups>), Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
 
         // we haven't yet parsed users and groups or we don't find an entry
-        let user_group = mnt_ns.do_in_namespace(|| {
+        mnt_ns.do_in_namespace(|| {
             let user_path = PathBuf::from(Users::sys_path());
 
-            // we must explicitely return a not found error if the file is missing
-            // it avoids multiple layers of io error wrapping and complex analysis of
-            // namespace::Error:Other variant to detect missing file
-            if !user_path.exists() {
-                return Err(namespace::Error::other(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "user file not found",
-                )));
-            }
+            // we must explicitely return a bare io::Error here (keeping the original
+            // io::ErrorKind) as the caller downcasts it to detect a missing file and
+            // fallback on the host namespace
+            let umeta = user_path.metadata().map_err(|e| {
+                namespace::Error::other(io::Error::new(
+                    e.kind(),
+                    format!("user file {}: {e}", user_path.display()),
+                ))
+            })?;
 
             // getting user
-            let ukey =
-                Key::from_path_in_ns(ns, &user_path.into()).map_err(namespace::Error::other)?;
+            let ukey = Key::from_path_and_meta(ns, &user_path.into(), &umeta)
+                .map_err(namespace::Error::other)?;
 
             if !self.users.contains_key(&ukey) {
                 self.users.insert(
                     ukey.clone(),
-                    Users::from_sys().map_err(namespace::Error::other)?,
+                    Arc::new(Users::from_sys().map_err(namespace::Error::other)?),
                 );
             }
 
-            let user = self.users.get(&ukey).and_then(|u| u.get_by_uid(uid));
+            // we cannot panic here as we are sure the cache contains value
+            let users = self.users.get(&ukey).cloned().unwrap();
 
             let group_path = PathBuf::from(Groups::sys_path());
 
-            if !group_path.exists() {
-                return Err(namespace::Error::other(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "group file not found",
-                )));
-            }
+            let gmeta = group_path.metadata().map_err(|e| {
+                namespace::Error::other(io::Error::new(
+                    e.kind(),
+                    format!("group file {}: {e}", group_path.display()),
+                ))
+            })?;
 
             // getting group
-            let gkey =
-                Key::from_path_in_ns(ns, &group_path.into()).map_err(namespace::Error::other)?;
+            let gkey = Key::from_path_and_meta(ns, &group_path.into(), &gmeta)
+                .map_err(namespace::Error::other)?;
 
             if !self.groups.contains_key(&gkey) {
                 self.groups.insert(
                     gkey.clone(),
-                    Groups::from_sys().map_err(namespace::Error::other)?,
+                    Arc::new(Groups::from_sys().map_err(namespace::Error::other)?),
                 );
             }
 
-            let group = self.groups.get(&gkey).and_then(|g| g.get_by_gid(gid));
+            // we cannot panic here as we are sure the cache contains value
+            let groups = self.groups.get(&gkey).cloned().unwrap();
 
-            Ok((user, group))
-        })?;
-
-        Ok(user_group)
+            Ok((users, groups))
+        })
+        .map_err(Error::from)
     }
 
     #[inline(always)]

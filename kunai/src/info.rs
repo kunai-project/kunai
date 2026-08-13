@@ -1,8 +1,8 @@
-use std::io;
+use std::{io, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use kunai_common::{
-    bpf_events::{self, EventInfo, TaskInfo},
+    bpf_events::{self, EventInfo, TaskInfo, Type},
     uuid::ProcUuid,
 };
 use thiserror::Error;
@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::{
     containers::Container,
     util::{
-        account::{Group, User},
+        account::{Groups, Users},
         get_clk_tck,
     },
 };
@@ -58,6 +58,43 @@ impl TryFrom<&procfs::process::Process> for ProcKey {
     }
 }
 
+/// Same idea as [ProcKey] but identifies an individual task (thread) rather
+/// than a thread group, so it survives pid reuse: a dead thread's pid being
+/// recycled by an unrelated task will not collide with a stale entry, since
+/// the recycled task has a different start time.
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct TaskKey {
+    start_time_sec: u64,
+    pid: i32,
+}
+
+impl From<&TaskInfo> for TaskKey {
+    #[inline(always)]
+    fn from(ti: &TaskInfo) -> Self {
+        // same reasoning as ProcKey: task_struct start_time has a higher
+        // resolution than procfs, scale it down to be comparable
+        Self {
+            start_time_sec: ti.start_time / 1_000_000_000,
+            pid: ti.pid,
+        }
+    }
+}
+
+impl TryFrom<&procfs::process::Process> for TaskKey {
+    type Error = KeyError;
+    #[inline(always)]
+    fn try_from(p: &procfs::process::Process) -> Result<Self, Self::Error> {
+        let stat = p.stat()?;
+        // panic here if we cannot get CLK_TCK
+        let clk_tck = get_clk_tck()? as u64;
+
+        Ok(Self {
+            start_time_sec: stat.starttime / clk_tck,
+            pid: p.pid,
+        })
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct HostInfo {
     pub name: String,
@@ -70,16 +107,13 @@ pub struct ContainerInfo {
     pub ty: Option<Container>,
 }
 
+/// Holds the user and group tables of the namespace a task lives in, so that
+/// any uid/gid can be resolved. Sharing them behind an [Arc] keeps this
+/// structure owned (no lifetime tied to the cache) while avoiding any copy.
 #[derive(Default, Debug, Clone)]
 pub struct TaskAdditionalInfo {
-    pub user: Option<User>,
-    pub group: Option<Group>,
-}
-
-impl TaskAdditionalInfo {
-    pub fn new(user: Option<User>, group: Option<Group>) -> Self {
-        Self { user, group }
-    }
+    pub users: Option<Arc<Users>>,
+    pub groups: Option<Arc<Groups>>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -137,5 +171,10 @@ impl StdEventInfo {
     pub fn with_additional_info(mut self, info: AdditionalInfo) -> Self {
         self.additional = info;
         self
+    }
+
+    #[inline]
+    pub fn override_type(&mut self, ty: Type) {
+        self.bpf.etype = ty
     }
 }

@@ -10,9 +10,9 @@ use gene::{rules::MAX_SEVERITY, Event, FieldGetter, FieldNameIterator, FieldValu
 use gene_derive::{Event, FieldGetter};
 
 use kunai_common::{
-    bpf_events::{self, TaskInfo},
+    bpf_events::{self, TaskInfo, Type},
     consts::caps_to_str_vec,
-    net,
+    creds, net,
 };
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -96,32 +96,26 @@ impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
-pub struct TaskSection {
+pub struct TaskSection<'s> {
     pub name: String,
     pub pid: i32,
     pub tgid: i32,
     pub guuid: String,
-    pub uid: u32,
-    pub user: String,
-    pub gid: u32,
-    pub group: String,
+    pub creds: Creds<'s>,
     pub namespaces: Option<NamespaceInfo>,
     #[serde(with = "u32_hex")]
     pub flags: u32,
     pub zombie: bool,
 }
 
-impl TaskSection {
-    pub fn from_task_info_with_addition(ti: TaskInfo, add: TaskAdditionalInfo) -> Self {
+impl<'s> TaskSection<'s> {
+    pub fn from_task_info_with_addition(ti: TaskInfo, add: &'s TaskAdditionalInfo) -> Self {
         Self {
             name: ti.comm_string(),
             pid: ti.pid,
             tgid: ti.tgid,
             guuid: ti.tg_uuid.into_uuid().hyphenated().to_string(),
-            uid: ti.uid,
-            user: add.user.map(|u| u.name).unwrap_or("?".into()),
-            gid: ti.gid,
-            group: add.group.map(|g| g.name).unwrap_or("?".into()),
+            creds: Creds::from_bpf_and_additions(ti.creds, add, true),
             namespaces: ti.namespaces.map(|ns| ns.into()).into(),
             flags: ti.flags,
             zombie: ti.zombie,
@@ -191,28 +185,32 @@ impl<'f> FieldGetter<'f> for UtcDateTime {
 }
 
 #[derive(FieldGetter, Serialize, Deserialize, Clone)]
-pub struct EventInfo {
+pub struct EventInfo<'i> {
     pub host: HostSection,
     pub event: EventSection,
-    pub task: TaskSection,
-    pub parent_task: TaskSection,
+    pub task: TaskSection<'i>,
+    pub parent_task: TaskSection<'i>,
     #[serde(serialize_with = "serialize_utc_ts")]
     pub utc_time: UtcDateTime,
 }
 
-impl From<StdEventInfo> for EventInfo {
-    fn from(value: StdEventInfo) -> Self {
+impl<'a> From<&'a StdEventInfo> for EventInfo<'a> {
+    fn from(value: &'a StdEventInfo) -> Self {
         let task =
-            TaskSection::from_task_info_with_addition(value.bpf.process, value.additional.task);
+            TaskSection::from_task_info_with_addition(value.bpf.process, &value.additional.task);
 
         let parent_task =
-            TaskSection::from_task_info_with_addition(value.bpf.parent, value.additional.parent);
+            TaskSection::from_task_info_with_addition(value.bpf.parent, &value.additional.parent);
 
         Self {
             host: HostSection {
-                name: value.additional.host.name,
+                name: value.additional.host.name.clone(),
                 uuid: value.additional.host.uuid,
-                container: value.additional.container.map(ContainerSection::from),
+                container: value
+                    .additional
+                    .container
+                    .clone()
+                    .map(ContainerSection::from),
             },
             event: EventSection {
                 source: "kunai".into(),
@@ -228,8 +226,8 @@ impl From<StdEventInfo> for EventInfo {
     }
 }
 
-impl EventInfo {
-    pub fn from_other_with_type(mut other: EventInfo, ty: bpf_events::Type) -> Self {
+impl EventInfo<'_> {
+    pub fn from_other_with_type(mut other: Self, ty: bpf_events::Type) -> Self {
         other.event.name = ty.to_string();
         other.event.id = ty.id();
         other.event.uuid = Uuid::new_v4().to_string();
@@ -397,21 +395,21 @@ pub trait KunaiEvent<'e>:
     fn get_detection(&self) -> &Option<Detection>;
     fn set_filter(&mut self, f: Filter) -> &Filter;
     fn get_filter(&self) -> &Option<Filter>;
-    fn info(&self) -> &EventInfo;
+    fn info(&self) -> &EventInfo<'_>;
 }
 
 #[derive(Event, FieldGetter, Serialize, Deserialize)]
 #[event(id = self.info.event.id as i64, source = "kunai".into())]
-pub struct UserEvent<T> {
+pub struct UserEvent<'i, T> {
     pub data: T,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detection: Option<Detection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<Filter>,
-    pub info: EventInfo,
+    pub info: EventInfo<'i>,
 }
 
-impl<T> IocGetter for UserEvent<T>
+impl<T> IocGetter for UserEvent<'_, T>
 where
     T: IocGetter,
 {
@@ -421,7 +419,7 @@ where
     }
 }
 
-impl<T> Scannable for UserEvent<T>
+impl<T> Scannable for UserEvent<'_, T>
 where
     T: Scannable,
 {
@@ -431,7 +429,7 @@ where
     }
 }
 
-impl<'e, T> KunaiEvent<'e> for UserEvent<T>
+impl<'e, T> KunaiEvent<'e> for UserEvent<'_, T>
 where
     T: FieldGetter<'e> + IocGetter + Scannable,
 {
@@ -458,13 +456,13 @@ where
     }
 
     #[inline(always)]
-    fn info(&self) -> &EventInfo {
+    fn info(&self) -> &EventInfo<'_> {
         &self.info
     }
 }
 
-impl<T> UserEvent<T> {
-    pub fn new(data: T, info: StdEventInfo) -> Self {
+impl<'i, T> UserEvent<'i, T> {
+    pub fn new(data: T, info: &'i StdEventInfo) -> Self {
         Self {
             data,
             detection: None,
@@ -473,13 +471,19 @@ impl<T> UserEvent<T> {
         }
     }
 
-    pub fn with_data_and_info(data: T, info: EventInfo) -> Self {
+    pub fn with_data_and_info(data: T, info: EventInfo<'i>) -> Self {
         Self {
             data,
             detection: None,
             filter: None,
             info,
         }
+    }
+
+    pub fn with_type(mut self, ty: Type) -> Self {
+        self.info.event.id = ty.id();
+        self.info.event.name = ty.to_string();
+        self
     }
 }
 
@@ -547,10 +551,10 @@ mod u64_hex {
 /// ```
 macro_rules! def_user_data {
             // Match for a struct with fields and field attributes
-            ($(#[$derive:meta])* $struct_vis:vis struct $struct_name:ident { $($(#[$struct_meta:meta])* $vis:vis $field_name:ident : $field_type:ty),* $(,)? }) => {
+            ($(#[$derive:meta])* $struct_vis:vis struct $struct_name:ident $(<$lt:lifetime>)? { $($(#[$struct_meta:meta])* $vis:vis $field_name:ident : $field_type:ty),* $(,)? }) => {
                 $(#[$derive])*
                 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
-                $struct_vis struct $struct_name {
+                $struct_vis struct $struct_name $(<$lt>)? {
                     pub ancestors: String,
                     pub command_line: String,
                     pub exe: File,
@@ -560,7 +564,7 @@ macro_rules! def_user_data {
                     ),*
                 }
 
-                impl $struct_name {
+                impl $(<$lt>)? $struct_name $(<$lt>)? {
                     #[inline(always)]
                     fn _iocs(&self) -> Vec<Cow<'_,str>>{
                         vec![self.exe.path.to_string_lossy()]
@@ -649,123 +653,163 @@ impl Scannable for PrctlData {
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
-pub struct TargetTask {
+pub struct TargetTask<'s> {
     pub command_line: String,
     pub exe: File,
-    pub task: TaskSection,
+    pub task: TaskSection<'s>,
 }
 
 def_user_data!(
-    pub struct KillData {
+    pub struct KillData<'d> {
         pub signal: String,
-        pub target: TargetTask,
+        pub target: TargetTask<'d>,
     }
 );
 
-impl Scannable for KillData {
+impl Scannable for KillData<'_> {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
         vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
-impl_std_iocs!(KillData);
+impl_std_iocs!(KillData<'_>);
 
 def_user_data!(
-    pub struct PtraceData {
+    pub struct PtraceData<'d> {
         #[serde(with = "u32_hex")]
         pub mode: u32,
-        pub target: TargetTask,
+        pub target: TargetTask<'d>,
     }
 );
 
-impl Scannable for PtraceData {
+impl Scannable for PtraceData<'_> {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
         vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
-impl_std_iocs!(PtraceData);
+impl_std_iocs!(PtraceData<'_>);
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize)]
+#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct Caps {
     pub effective: Vec<Cow<'static, str>>,
     pub permitted: Vec<Cow<'static, str>>,
     pub inheritable: Vec<Cow<'static, str>>,
 }
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize)]
-pub struct CredSnapshot {
+#[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
+pub struct Identity<'c> {
     pub uid: u32,
+    pub user: Cow<'c, str>,
     pub gid: u32,
-    pub euid: u32,
-    pub egid: u32,
-    pub suid: u32,
-    pub sgid: u32,
-    pub fsuid: u32,
-    pub fsgid: u32,
-    pub caps: Caps,
+    pub group: Cow<'c, str>,
 }
 
-impl From<bpf_events::CredSnapshot> for CredSnapshot {
-    fn from(s: bpf_events::CredSnapshot) -> Self {
+#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
+pub struct Creds<'s> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub real: Option<Identity<'s>>,
+    pub effective: Identity<'s>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved: Option<Identity<'s>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fs: Option<Identity<'s>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caps: Option<Caps>,
+}
+
+impl<'s> Creds<'s> {
+    pub fn from_bpf_and_additions(
+        s: creds::Creds,
+        ai: &'s TaskAdditionalInfo,
+        light: bool,
+    ) -> Self {
+        macro_rules! identity {
+            ($uid:expr, $gid:expr) => {
+                Identity {
+                    uid: $uid,
+                    user: ai
+                        .users
+                        .as_ref()
+                        .and_then(|users| users.get_by_uid($uid))
+                        .map(|u| Cow::Borrowed(u.name.as_str()))
+                        .unwrap_or("?".into()),
+                    gid: $gid,
+                    group: ai
+                        .groups
+                        .as_ref()
+                        .and_then(|groups| groups.get_by_gid($gid))
+                        .map(|g| Cow::Borrowed(g.name.as_str()))
+                        .unwrap_or("?".into()),
+                }
+            };
+        }
+
         Self {
-            uid: s.uid,
-            gid: s.gid,
-            euid: s.euid,
-            egid: s.egid,
-            suid: s.suid,
-            sgid: s.sgid,
-            fsuid: s.fsuid,
-            fsgid: s.fsgid,
-            caps: Caps {
-                effective: caps_to_str_vec(s.cap_effective),
-                permitted: caps_to_str_vec(s.cap_permitted),
-                inheritable: caps_to_str_vec(s.cap_inheritable),
+            real: {
+                if light {
+                    None
+                } else {
+                    Some(identity!(s.uid, s.gid))
+                }
+            },
+            effective: identity!(s.euid, s.egid),
+            saved: if light {
+                None
+            } else {
+                Some(identity!(s.suid, s.sgid))
+            },
+            fs: if light {
+                None
+            } else {
+                Some(identity!(s.fsuid, s.fsgid))
+            },
+            caps: if light {
+                None
+            } else {
+                Some(Caps {
+                    effective: caps_to_str_vec(s.cap_effective),
+                    permitted: caps_to_str_vec(s.cap_permitted),
+                    inheritable: caps_to_str_vec(s.cap_inheritable),
+                })
             },
         }
     }
 }
 
 def_user_data!(
-    pub struct SetCredsData {
-        pub kind: String,
-        pub flags: Vec<Cow<'static, str>>,
-        pub old: CredSnapshot,
-        pub new: CredSnapshot,
+    pub struct CommitCredsData<'d> {
+        pub old: Creds<'d>,
+        pub new: Creds<'d>,
     }
 );
 
-impl Scannable for SetCredsData {
+impl Scannable for CommitCredsData<'_> {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
         vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
-impl_std_iocs!(SetCredsData);
+impl_std_iocs!(CommitCredsData<'_>);
 
 def_user_data!(
-    pub struct CredsTamperedData {
-        pub kind: String,
-        pub expected_uid: u32,
-        pub actual_uid: u32,
-        pub expected_gid: u32,
-        pub actual_gid: u32,
-        pub expected_cap_effective: u64,
-        pub actual_cap_effective: u64,
+    pub struct CredsTamperedData<'d> {
+        pub actual: Creds<'d>,
+        pub expected: Creds<'d>,
     }
 );
 
-impl Scannable for CredsTamperedData {
+impl Scannable for CredsTamperedData<'_> {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
         vec![Cow::Borrowed(&self.exe.path)]
     }
 }
 
-impl_std_iocs!(CredsTamperedData);
+impl_std_iocs!(CredsTamperedData<'_>);
 
 def_user_data!(
     pub struct MmapExecData {
