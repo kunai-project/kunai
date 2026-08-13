@@ -52,21 +52,6 @@ fn configure_probes(
         .prio(0)
         .disable_if(!conf.harden);
 
-    programs
-        .expect_mut("creds_security_task_fix_setuid")
-        .min_kernel(kernel!(5, 4))
-        .prio(0);
-
-    programs
-        .expect_mut("creds_security_task_fix_setgid")
-        .min_kernel(kernel!(5, 8))
-        .prio(0);
-
-    programs
-        .expect_mut("creds_security_capset")
-        .min_kernel(kernel!(5, 4))
-        .prio(0);
-
     // Other probes
     programs.expect_mut("execve_security_bprm_check").prio(1);
 
