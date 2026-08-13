@@ -1,8 +1,32 @@
+use aya_ebpf::helpers::bpf_probe_read_kernel;
+
 use super::gen::{self, *};
 use super::{rust_shim_kernel_impl, CoRe};
 
 #[allow(non_camel_case_types)]
 pub type cred = CoRe<gen::cred>;
+
+#[allow(non_camel_case_types)]
+pub type kernel_cap_t = CoRe<gen::kernel_cap_t>;
+
+impl kernel_cap_t {
+    /// Capability set packed into a u64.
+    ///
+    /// This one cannot go through a CO-RE shim: in kernel BTF the only type
+    /// named `kernel_cap_t` is a TYPEDEF pointing to an anonymous STRUCT,
+    /// so there is no named struct a relocation could be anchored on.
+    ///
+    /// A plain read is enough anyway: both layouts are 8 bytes wide,
+    /// `__u32 cap[2]` before 6.3 and `__u64 val` from 6.3 onwards, and
+    /// little-endian packs `cap[0]`/`cap[1]` exactly like `val`.
+    #[inline(always)]
+    pub unsafe fn caps(&self) -> Option<u64> {
+        if self.is_null() {
+            return None;
+        }
+        bpf_probe_read_kernel(self.as_ptr() as *const u64).ok()
+    }
+}
 
 impl cred {
     rust_shim_kernel_impl!(cred, uid, u32);
