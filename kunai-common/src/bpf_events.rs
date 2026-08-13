@@ -1,4 +1,5 @@
 use crate::buffer::Buffer;
+use crate::creds::CredSnapshot;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
 use crate::option::BpfOption;
@@ -82,8 +83,8 @@ pub enum Type {
     Kill,
     #[str("ptrace")]
     Ptrace,
-    #[str("set_creds")]
-    SetCreds,
+    #[str("commit_creds")]
+    CommitCreds,
     #[str("creds_tampered")]
     CredsTampered,
 
@@ -201,9 +202,7 @@ pub struct TaskInfo {
     pub zombie: bool,
     pub flags: u32,
     pub comm: [u8; COMM_SIZE],
-    pub uid: u32,
-    pub gid: u32,
-    pub cap_effective: u64,
+    pub creds: CredSnapshot,
     // task group id in kernel or pid in userland
     // when program is single threaded tgid == pid
     pub tgid: i32,

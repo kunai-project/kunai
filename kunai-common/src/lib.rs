@@ -40,3 +40,5 @@ pub mod version;
 pub mod io_uring;
 
 pub mod option;
+
+pub mod creds;
