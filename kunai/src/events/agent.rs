@@ -1,9 +1,7 @@
 use std::{ffi::OsString, io};
 
 use kunai_common::{
-    bpf_events::{self, TaskInfo, Type, COMM_SIZE},
-    option::BpfOption,
-    uuid::ProcUuid,
+    bpf_events::{self, COMM_SIZE, TaskInfo, Type}, creds::Creds, option::BpfOption, uuid::ProcUuid,
 };
 use thiserror::Error;
 
@@ -55,11 +53,19 @@ impl AgentEventInfo {
             flags: stat.flags,
             pid: stat.pid,
             tgid: status.tgid,
-            uid: status.euid,
-            gid: status.egid,
-            // Read CapEff from /proc/<pid>/status so the loader's self-info
-            // starts with a correct capability baseline.
-            cap_effective: status.capeff,
+            creds: Creds {
+                uid: status.ruid,
+                gid: status.rgid,
+                euid: status.euid,
+                egid: status.egid,
+                suid: status.suid,
+                sgid: status.sgid,
+                fsuid: status.fuid,
+                fsgid: status.fgid,
+                cap_effective: status.capeff,
+                cap_permitted: status.capprm,
+                cap_inheritable: status.capinh,
+            },
             tg_uuid: ProcUuid::new(start_time, 0, status.tgid as u32),
             namespaces: BpfOption::Some(bpf_events::Namespaces {
                 mnt: mnt.identifier as u32,
