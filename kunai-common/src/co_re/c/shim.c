@@ -123,6 +123,11 @@ struct kernel_cap_t
 	};
 } __attribute__((preserve_access_index));
 
+// NOTE: no standalone shim is defined for kernel_cap_t. In kernel BTF the only
+// type named kernel_cap_t is a TYPEDEF pointing to an anonymous STRUCT (and it
+// was struct kernel_cap_struct before 6.3), so there is no named struct CO-RE
+// could anchor a relocation on.
+
 struct cred
 {
 	struct kuid_t uid;
@@ -158,6 +163,7 @@ SHIM_WITH_NAME(cred, cap_permitted.cap[1], cap_permitted_cap_hi);
 SHIM_WITH_NAME(cred, cap_inheritable.val,    cap_inheritable_val);
 SHIM_WITH_NAME(cred, cap_inheritable.cap[0], cap_inheritable_cap_lo);
 SHIM_WITH_NAME(cred, cap_inheritable.cap[1], cap_inheritable_cap_hi);
+
 
 struct qstr
 {
