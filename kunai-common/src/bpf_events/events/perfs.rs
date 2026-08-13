@@ -5,6 +5,7 @@ pub const KUNAI_STATS_MAP: &str = "KUNAI_STATS";
 mod bpf {
     use crate::bpf_events::{Event, LogEvent, Type};
     use aya_ebpf::{
+        helpers::generated::bpf_ktime_get_ns,
         macros::map,
         maps::{HashMap, PerfEventByteArray},
         EbpfContext,
@@ -21,7 +22,7 @@ mod bpf {
         EVENTS.output(ctx, e.encode(), 0);
     }
 
-    pub unsafe fn pipe_event<C: EbpfContext, T>(ctx: &C, e: &Event<T>) {
+    pub unsafe fn pipe_event<C: EbpfContext, T>(ctx: &C, e: &mut Event<T>) {
         match STATS.get_ptr_mut(&e.ty()) {
             Some(e) => *e += 1,
             None => {
@@ -29,6 +30,9 @@ mod bpf {
                 let _ = STATS.insert(&e.ty(), &1, 0);
             }
         }
+
+        e.info.timestamp = bpf_ktime_get_ns();
+
         EVENTS.output(ctx, e.encode(), 0);
     }
 }
