@@ -99,6 +99,25 @@ impl<P> CoRe<P> {
     }
 }
 
+/// Generates a safe accessor for kernel struct fields.
+///
+/// Creates an `unsafe fn` that reads a field via shim functions, returning
+/// `Option<$ret>`. Returns `None` if the pointer is null or the field doesn't
+/// exist in the current kernel version.
+///
+/// The function checks `self.is_null()`, then calls `shim_$struct_$member_exists`
+/// and `shim_$struct_$member` to safely read the field.
+///
+/// # Patterns
+///
+/// - `rust_shim_kernel_impl!(task_struct, flags, u32)` - public method named `flags`
+/// - `rust_shim_kernel_impl!(pub, task_struct, tgid, pid_t)` - explicit visibility
+/// - `rust_shim_kernel_impl!(pub, my_name, task_struct, comm, *mut u8)` - custom name
+///
+/// # Safety
+///
+/// The generated function is `unsafe`. Callers must ensure the `CoRe` pointer
+/// is valid and the kernel struct is not modified during access.
 macro_rules! rust_shim_kernel_impl {
     ($struct:ident, $member:ident, $ret:ty) => {
         rust_shim_kernel_impl! (pub, $member, $struct, $member, $ret);
@@ -124,6 +143,20 @@ macro_rules! rust_shim_kernel_impl {
 
 pub(crate) use rust_shim_kernel_impl;
 
+/// Generates a userspace accessor for kernel struct fields.
+///
+/// Similar to [`rust_shim_kernel_impl`] but generates functions with `_user` suffix
+/// that use userspace-compatible shim functions.
+///
+/// # Patterns
+///
+/// - `rust_shim_user_impl!(pub, task_struct, tgid, pid_t)` - explicit visibility
+/// - `rust_shim_user_impl!(pub, my_name, task_struct, comm, *mut u8)` - custom name with `_user` suffix
+///
+/// # Safety
+///
+/// The generated function is `unsafe`. Callers must ensure the `CoRe` pointer
+/// is valid and the kernel struct is not modified during access.
 macro_rules! rust_shim_user_impl {
     ($pub:vis, $struct:ident, $member:ident, $ret:ty) => {
         rust_shim_user_impl! ($pub, $member, $struct, $member, $ret);

@@ -116,7 +116,7 @@ macro_rules! error {
             $msg,
             $crate::option::BpfOption::Some($err),
             $crate::bpf_events::log::Level::Error
-        );
+        )
     };
 }
 
@@ -138,7 +138,7 @@ macro_rules! warn {
             "",
             $crate::option::BpfOption::Some($err),
             $crate::bpf_events::log::Level::Warn
-        );
+        )
     };
 
     ($ctx:expr, $msg:literal, $err:expr) => {
@@ -147,6 +147,6 @@ macro_rules! warn {
             $msg,
             $crate::option::BpfOption::Some($err),
             $crate::bpf_events::log::Level::Warn
-        );
+        )
     };
 }

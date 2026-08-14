@@ -112,15 +112,58 @@ struct kuid_t
 
 // Defining shim for cred struct
 // We just need to define the fields we need to access
+//
+//   pre-6.3:  struct kernel_cap_struct { __u32 cap[2]; }
+//   >= 6.3:   typedef struct { __u64 val; } kernel_cap_t;
+struct kernel_cap_t
+{
+	union {
+		__u32 cap[2];
+		__u64 val;
+	};
+} __attribute__((preserve_access_index));
+
+// NOTE: no standalone shim is defined for kernel_cap_t. In kernel BTF the only
+// type named kernel_cap_t is a TYPEDEF pointing to an anonymous STRUCT (and it
+// was struct kernel_cap_struct before 6.3), so there is no named struct CO-RE
+// could anchor a relocation on.
 
 struct cred
 {
 	struct kuid_t uid;
 	struct kgid_t gid;
+	struct kuid_t suid;
+	struct kgid_t sgid;
+	struct kuid_t euid;
+	struct kgid_t egid;
+	struct kuid_t fsuid;
+	struct kgid_t fsgid;
+	struct kernel_cap_t cap_inheritable;
+	struct kernel_cap_t cap_permitted;
+	struct kernel_cap_t cap_effective;
 } __attribute__((preserve_access_index));
 
-_SHIM_GETTER_BPF_CORE_READ(uid_t, shim_cred_uid(struct cred *pcred), pcred, uid.val);
-_SHIM_GETTER_BPF_CORE_READ(gid_t, shim_cred_gid(struct cred *pcred), pcred, gid.val);
+SHIM_WITH_NAME(cred, uid.val,    uid);
+SHIM_WITH_NAME(cred, gid.val,    gid);
+SHIM_WITH_NAME(cred, euid.val,   euid);
+SHIM_WITH_NAME(cred, egid.val,   egid);
+SHIM_WITH_NAME(cred, suid.val,   suid);
+SHIM_WITH_NAME(cred, sgid.val,   sgid);
+SHIM_WITH_NAME(cred, fsuid.val,  fsuid);
+SHIM_WITH_NAME(cred, fsgid.val,  fsgid);
+
+SHIM_WITH_NAME(cred, cap_effective.val,    cap_effective_val);
+SHIM_WITH_NAME(cred, cap_effective.cap[0], cap_effective_cap_lo);
+SHIM_WITH_NAME(cred, cap_effective.cap[1], cap_effective_cap_hi);
+
+SHIM_WITH_NAME(cred, cap_permitted.val,    cap_permitted_val);
+SHIM_WITH_NAME(cred, cap_permitted.cap[0], cap_permitted_cap_lo);
+SHIM_WITH_NAME(cred, cap_permitted.cap[1], cap_permitted_cap_hi);
+
+SHIM_WITH_NAME(cred, cap_inheritable.val,    cap_inheritable_val);
+SHIM_WITH_NAME(cred, cap_inheritable.cap[0], cap_inheritable_cap_lo);
+SHIM_WITH_NAME(cred, cap_inheritable.cap[1], cap_inheritable_cap_hi);
+
 
 struct qstr
 {

@@ -20,6 +20,7 @@ mod bpf;
 mod bpf_socket;
 mod clone;
 mod connect;
+mod creds;
 mod dns;
 mod execve;
 mod exit;

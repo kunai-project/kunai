@@ -35,6 +35,7 @@ pub fn execve_security_bprm_check(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
+
     let linux_binprm = co_re::linux_binprm::from_ptr(ctx.arg(0).unwrap_or(core::ptr::null()));
     let current = co_re::task_struct::current();
     let task_uuid = current.uuid();

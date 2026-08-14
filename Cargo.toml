@@ -27,6 +27,7 @@ env_logger = "0.10"
 firo = "0.3"
 flate2 = "1.0"
 fs-walk = "0.1.0"
+flaglet   = "0.1.2"
 gene = { version = ">=0.7.2" }
 gene_derive = { version = ">=0.7.2" }
 hex = "0.4.3"

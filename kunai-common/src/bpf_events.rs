@@ -1,4 +1,5 @@
 use crate::buffer::Buffer;
+use crate::creds::Creds;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
 use crate::option::BpfOption;
@@ -31,6 +32,12 @@ pub enum Error {
     TgidFieldMissing,
     #[error("cred field is missing")]
     CredFieldMissing,
+    #[error("cred field is missing uid")]
+    CredFieldMissingUid,
+    #[error("cred field is missing gid")]
+    CredFieldMissingGid,
+    #[error("cred field is missing cap_effective")]
+    CredFieldMissingCapEffective,
     #[error("real_parent field is missing")]
     RealParentFieldMissing,
     #[error("boot time field is missing")]
@@ -76,6 +83,10 @@ pub enum Type {
     Kill,
     #[str("ptrace")]
     Ptrace,
+    #[str("commit_creds")]
+    CommitCreds,
+    #[str("creds_tampered")]
+    CredsTampered,
 
     // stuff loaded in kernel
     #[str("init_module")]
@@ -191,8 +202,7 @@ pub struct TaskInfo {
     pub zombie: bool,
     pub flags: u32,
     pub comm: [u8; COMM_SIZE],
-    pub uid: u32,
-    pub gid: u32,
+    pub creds: Creds,
     // task group id in kernel or pid in userland
     // when program is single threaded tgid == pid
     pub tgid: i32,

@@ -1107,6 +1107,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "flaglet"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16d007108685021290baa749dca70158f919e8fbc9e54753a8052b0c10e983c2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "flagset"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1586,6 +1597,7 @@ dependencies = [
  "aya-ebpf",
  "base64ct",
  "bindgen",
+ "flaglet",
  "kunai-macros",
  "paste",
  "serde",

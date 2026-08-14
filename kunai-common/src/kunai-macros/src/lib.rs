@@ -113,7 +113,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
 
     let data_enum = match input.data {
         syn::Data::Enum(data_enum) => data_enum,
-        _ => panic!("This macro only supports enums."),
+        _ => return quote! {}.into(),
     };
 
     let mut as_str_arms = vec![];
