@@ -80,15 +80,27 @@ mod test {
     }
 
     #[test]
-    fn test_caps_to_string_all_caps() {
+    fn test_caps_to_string_all_known_caps() {
+        // deliberately go up to (not through) CAP_LAST_CAP, so this bitmask can
+        // never equal Capability::cap_full_set() and always exercises the
+        // per-capability enumeration path, whatever the live kernel's
+        // /proc/sys/kernel/cap_last_cap happens to be.
+        let last = *CAP_LAST_CAP as u32;
         let mut all_bits = 0u64;
-        for i in 0..=40 {
+        for i in 0..last {
             all_bits |= 1u64 << i;
         }
         let result = caps_to_str_vec(all_bits);
-        assert_eq!(result.len(), 41);
+        assert_eq!(result.len(), last as usize);
         assert_eq!(result[0], Cow::Borrowed("CAP_CHOWN"));
-        assert_eq!(result[40], Cow::Borrowed("CAP_CHECKPOINT_RESTORE"));
+    }
+
+    #[test]
+    fn test_caps_to_string_full_set_shortcut() {
+        assert_eq!(
+            caps_to_str_vec(Capability::cap_full_set()),
+            vec![Cow::Borrowed("CAP_FULL_SET")]
+        );
     }
 
     #[test]
