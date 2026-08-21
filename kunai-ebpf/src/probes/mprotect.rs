@@ -1,32 +1,21 @@
 use super::*;
-use aya_ebpf::programs::TracePointContext;
-use kunai_common::syscalls::SysEnterArgs;
+use aya_ebpf::programs::RawTracePointContext;
+use kunai_common::syscalls::RawSysEnterContext;
 
-// print fmt: "0x%lx", REC->ret
-// name: sys_enter_mprotect
-// ID: 594
-// format:
-// field:unsigned short common_type;	offset:0;	size:2;	signed:0;
-// field:unsigned char common_flags;	offset:2;	size:1;	signed:0;
-// field:unsigned char common_preempt_count;	offset:3;	size:1;	signed:0;
-// field:int common_pid;	offset:4;	size:4;	signed:1;
+#[cfg(bpf_target_arch = "x86_64")]
+pub const SYS_MPROTECT: i64 = 10;
+#[cfg(bpf_target_arch = "aarch64")]
+pub const SYS_MPROTECT: i64 = 226;
 
-// field:int __syscall_nr;	offset:8;	size:4;	signed:1;
-// field:unsigned long start;	offset:16;	size:8;	signed:0;
-// field:size_t len;	offset:24;	size:8;	signed:0;
-// field:unsigned long prot;	offset:32;	size:8;	signed:0;
-
-#[repr(C)]
-pub struct MprotectArgs {
-    pub start: u64,
-    pub len: u64,
-    pub prot: u64,
-}
-
-#[tracepoint(name = "sys_enter_mprotect", category = "syscalls")]
-pub fn syscalls_sys_enter_mprotect(ctx: TracePointContext) -> u32 {
+#[raw_tracepoint(tracepoint = "sys_enter")]
+pub fn syscalls_sys_enter_mprotect(ctx: RawTracePointContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
+    }
+
+    let ctx = RawSysEnterContext::from(ctx);
+    if ctx.sys_nr() != SYS_MPROTECT {
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_sys_enter_mprotect(&ctx) } {
@@ -38,24 +27,24 @@ pub fn syscalls_sys_enter_mprotect(ctx: TracePointContext) -> u32 {
     }
 }
 
-unsafe fn try_sys_enter_mprotect(ctx: &TracePointContext) -> ProbeResult<()> {
+unsafe fn try_sys_enter_mprotect(ctx: &RawSysEnterContext) -> ProbeResult<()> {
     // early return if event is disabled
     if_disabled_return!(Type::MprotectExec, ());
 
-    let args = SysEnterArgs::<MprotectArgs>::from_context(ctx)?.args;
-    if args.prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
+    let start: u64 = ctx.arg(0).unwrap_or_default();
+    let len: u64 = ctx.arg(1).unwrap_or_default();
+    let prot: u64 = ctx.arg(2).unwrap_or_default();
+
+    if prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
         alloc::init()?;
         let event = alloc::alloc_zero::<MprotectEvent>()?;
 
         event.init_from_current_task(Type::MprotectExec)?;
 
         // setting event data
-        event.data.start = args.start;
-        event.data.prot = args.prot;
-        event.data.len = args.len;
-
-        // todo: work on section identification
-        //copy_ascii_str(event.data.section, "?");
+        event.data.start = start;
+        event.data.prot = prot;
+        event.data.len = len;
 
         pipe_event(ctx, event);
     }
