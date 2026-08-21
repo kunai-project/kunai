@@ -165,7 +165,7 @@ unsafe fn limit_eps_with_context<C: EbpfContext>(ctx: &C) -> ProbeResult<bool> {
 #[kprobe(function = "vfs_read")]
 pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_vfs_read(&ctx) } {
@@ -183,7 +183,7 @@ pub fn fs_vfs_read(ctx: ProbeContext) -> u32 {
 #[kprobe(function = "vfs_readv")]
 pub fn fs_vfs_readv(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_vfs_read(&ctx) } {
@@ -245,7 +245,7 @@ unsafe fn try_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kprobe(function = "vfs_write")]
 pub fn fs_vfs_write(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_vfs_write(&ctx) } {
@@ -262,7 +262,7 @@ pub fn fs_vfs_write(ctx: ProbeContext) -> u32 {
 #[kprobe(function = "vfs_writev")]
 pub fn fs_vfs_writev(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_vfs_write(&ctx) } {
@@ -325,7 +325,7 @@ unsafe fn try_vfs_write(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kprobe(function = "security_path_rename")]
 pub fn fs_security_path_rename(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_security_path_rename(&ctx) } {
@@ -396,7 +396,7 @@ static mut PATHS: LruHashMap<u128, Path> = LruHashMap::with_max_entries(4096, 0)
 #[kprobe(function = "security_path_unlink")]
 pub fn fs_security_path_unlink(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_security_path_unlink(&ctx) } {
@@ -443,7 +443,7 @@ unsafe fn try_security_path_unlink(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(function = "vfs_unlink")]
 pub fn fs_exit_vfs_unlink(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_vfs_unlink(&ctx) } {
@@ -504,7 +504,7 @@ unsafe fn try_vfs_unlink(ctx: &RetProbeContext) -> ProbeResult<()> {
 #[kprobe(function = "fput")]
 pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_enter_fput(&ctx) } {
@@ -524,7 +524,7 @@ pub fn fs_enter_fput(ctx: ProbeContext) -> u32 {
 #[kprobe(function = "__fput_sync")]
 pub fn fs_enter_fput_sync(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_enter_fput(&ctx) } {
@@ -609,7 +609,7 @@ const FMODE_CREATED: u32 = 0x100000;
 #[kprobe(function = "security_file_open")]
 pub fn fs_security_file_open(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_security_file_open(&ctx) } {
