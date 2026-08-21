@@ -14,7 +14,7 @@ static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
 #[kprobe(function = "mod_sysfs_setup")]
 pub fn lkm_mod_sysfs_setup(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_mod_sysfs_setup(&ctx) } {

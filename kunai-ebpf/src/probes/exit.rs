@@ -7,7 +7,7 @@ use kunai_common::syscalls::{SysEnterArgs, Syscall};
 #[tracepoint(name = "sys_enter_exit", category = "syscalls")]
 pub fn syscalls_sys_enter_exit(ctx: TracePointContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_sys_enter_exit(&ctx, Type::Exit) } {
