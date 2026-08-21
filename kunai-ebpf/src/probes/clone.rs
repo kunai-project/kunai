@@ -9,7 +9,7 @@ use super::*;
 #[kprobe(function = "security_task_alloc")]
 pub fn clone_enter_security_task_alloc(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     // we just save kprobe context
@@ -22,7 +22,7 @@ pub fn clone_enter_security_task_alloc(ctx: ProbeContext) -> u32 {
 #[kprobe(function = "wake_up_new_task")]
 pub fn clone_enter_wake_up_new_task(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     let rc = match unsafe { try_enter_wake_up_new_task(&ctx) } {

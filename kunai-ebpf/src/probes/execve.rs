@@ -2,10 +2,9 @@ use super::*;
 
 use aya_ebpf::cty::c_int;
 use aya_ebpf::maps::LruHashMap;
-use aya_ebpf::programs::{ProbeContext, RetProbeContext, TracePointContext};
+use aya_ebpf::programs::{ProbeContext, RetProbeContext};
 use aya_ebpf::EbpfContext;
 use co_re::task_struct;
-use kunai_common::syscalls::SysExitArgs;
 
 const MAP_SIZE: u32 = 2048;
 
@@ -22,7 +21,7 @@ static mut EXECVE_TRACKING: LruHashMap<u128, ExecveEvent> =
 #[kprobe(function = "security_bprm_check")]
 pub fn execve_security_bprm_check(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_security_bprm_check(&ctx) } {
@@ -78,8 +77,8 @@ unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
 static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
     LruHashMap::with_max_entries(MAP_SIZE, 0);
 
-/// for kernel < 5.9 bprm_execve does not exists, we must replace the hook
-/// by __do_execve_file (done in program loader)
+/// for kernel < 5.9 bprm_execve does not exist, we fallback on hooking
+/// do_execveat_common instead (see execve_exit_do_execveat_common below)
 ///
 /// match-proto:v5.9:fs/exec.c:static int bprm_execve(struct linux_binprm *bprm, int fd, struct filename *filename, int flags)
 /// match-proto:v6.8:fs/exec.c:static int bprm_execve(struct linux_binprm *bprm)
@@ -87,10 +86,10 @@ static mut BPRM_EXECVE_ARGS: LruHashMap<u64, co_re::linux_binprm> =
 #[kretprobe(function = "bprm_execve")]
 pub fn execve_exit_bprm_execve(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
-    match unsafe { try_bprm_execve(&ctx) } {
+    match unsafe { try_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
@@ -101,7 +100,7 @@ pub fn execve_exit_bprm_execve(ctx: RetProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
-    let linux_binprm = BPRM_EXECVE_ARGS
+    let linux_binprm = *BPRM_EXECVE_ARGS
         .get(&bpf_task_tracking_id())
         .ok_or(MapError::GetFailure)?;
 
@@ -156,7 +155,7 @@ unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
     Ok(())
 }
 
-unsafe fn try_bprm_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
+unsafe fn try_exit_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
     let rc: c_int = ctx.ret();
 
     // execve failed
@@ -167,44 +166,23 @@ unsafe fn try_bprm_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
     execve_event(ctx, rc)
 }
 
-#[tracepoint(name = "sys_exit_execve", category = "syscalls")]
-pub fn syscalls_sys_exit_execve(ctx: TracePointContext) -> u32 {
+/// do_execveat_common is the common exit point for the execve and execveat
+/// syscalls (and their compat variants) on kernel < 5.9, where bprm_execve
+/// does not exist yet.
+///
+/// match-proto:v5.4:fs/exec.c:static int do_execveat_common(int fd, struct filename *filename, struct user_arg_ptr argv, struct user_arg_ptr envp, int flags)
+/// match-proto:latest:fs/exec.c:static int do_execveat_common(int fd, struct filename *filename, struct user_arg_ptr argv, struct user_arg_ptr envp, int flags)
+#[kretprobe(function = "do_execveat_common")]
+pub fn execve_exit_do_execveat_common(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
-    match unsafe { try_sys_exit_execve(&ctx) } {
+    match unsafe { try_exit_execve(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
             error!(&ctx, s);
             errors::BPF_PROG_FAILURE
         }
     }
-}
-
-#[tracepoint(name = "sys_exit_execveat", category = "syscalls")]
-pub fn syscalls_sys_exit_execveat(ctx: TracePointContext) -> u32 {
-    if is_current_loader_task() {
-        return 0;
-    }
-
-    match unsafe { try_sys_exit_execve(&ctx) } {
-        Ok(_) => errors::BPF_PROG_SUCCESS,
-        Err(s) => {
-            error!(&ctx, s);
-            errors::BPF_PROG_FAILURE
-        }
-    }
-}
-
-#[inline(always)]
-pub unsafe fn try_sys_exit_execve(ctx: &TracePointContext) -> Result<(), ProbeError> {
-    let args = SysExitArgs::from_context(ctx)?;
-    let rc = args.ret as i32;
-
-    if rc < 0 {
-        return Ok(());
-    }
-
-    execve_event(ctx, rc)
 }

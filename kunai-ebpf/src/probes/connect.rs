@@ -15,7 +15,7 @@ use kunai_common::{
 #[kprobe(function = "__sys_connect")]
 pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     unsafe { ignore_result!(ProbeFn::net_sys_connect.save_ctx(&ctx)) }
@@ -27,7 +27,7 @@ pub fn net_enter_sys_connect(ctx: ProbeContext) -> u32 {
 #[kretprobe(function = "__sys_connect")]
 pub fn net_exit_sys_connect(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     let rc = match unsafe {

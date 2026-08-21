@@ -1,8 +1,18 @@
 use super::*;
 
 use aya_ebpf::maps::LruHashMap;
-use aya_ebpf::programs::{ProbeContext, TracePointContext};
-use kunai_common::syscalls::{SysEnterArgs, SysExitArgs};
+use aya_ebpf::programs::{ProbeContext, RawTracePointContext};
+use kunai_common::syscalls::{RawSysEnterContext, RawSysExitContext};
+
+#[cfg(bpf_target_arch = "x86_64")]
+pub const SYS_INIT_MODULE: i64 = 175;
+#[cfg(bpf_target_arch = "x86_64")]
+pub const SYS_FINIT_MODULE: i64 = 313;
+
+#[cfg(bpf_target_arch = "aarch64")]
+pub const SYS_INIT_MODULE: i64 = 105;
+#[cfg(bpf_target_arch = "aarch64")]
+pub const SYS_FINIT_MODULE: i64 = 273;
 
 #[map]
 static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
@@ -14,7 +24,7 @@ static mut INIT_MODULE_TRACKING: LruHashMap<u64, InitModuleEvent> =
 #[kprobe(function = "mod_sysfs_setup")]
 pub fn lkm_mod_sysfs_setup(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_mod_sysfs_setup(&ctx) } {
@@ -43,10 +53,16 @@ unsafe fn try_mod_sysfs_setup(ctx: &ProbeContext) -> ProbeResult<()> {
     Ok(())
 }
 
-#[tracepoint(name = "sys_enter_init_module", category = "syscalls")]
-pub fn lkm_syscalls_sys_enter_init_module(ctx: TracePointContext) -> u32 {
+#[raw_tracepoint(tracepoint = "sys_enter")]
+pub fn lkm_syscalls_sys_enter_init_module(ctx: RawTracePointContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
+    }
+
+    let ctx = RawSysEnterContext::from(ctx);
+
+    if ctx.sys_nr() != SYS_INIT_MODULE {
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_sys_enter_init_module(&ctx) } {
@@ -58,15 +74,25 @@ pub fn lkm_syscalls_sys_enter_init_module(ctx: TracePointContext) -> u32 {
     }
 }
 
-unsafe fn try_sys_enter_init_module(ctx: &TracePointContext) -> ProbeResult<()> {
-    let args = SysEnterArgs::<Init>::from_context(ctx)?.args;
+unsafe fn try_sys_enter_init_module(ctx: &RawSysEnterContext) -> ProbeResult<()> {
+    let args = Init {
+        umod: ctx.arg(0).unwrap_or_default(),
+        len: ctx.arg(1).unwrap_or_default(),
+        uargs: ctx.arg(2).unwrap_or_default(),
+    };
+
     handle_init_module(ctx, args.into())
 }
 
-#[tracepoint(name = "sys_enter_finit_module", category = "syscalls")]
-pub fn lkm_syscalls_sys_enter_finit_module(ctx: TracePointContext) -> u32 {
+#[raw_tracepoint(tracepoint = "sys_enter")]
+pub fn lkm_syscalls_sys_enter_finit_module(ctx: RawTracePointContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
+    }
+
+    let ctx = RawSysEnterContext::from(ctx);
+    if ctx.sys_nr() != SYS_FINIT_MODULE {
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_sys_enter_finit_module(&ctx) } {
@@ -78,12 +104,16 @@ pub fn lkm_syscalls_sys_enter_finit_module(ctx: TracePointContext) -> u32 {
     }
 }
 
-unsafe fn try_sys_enter_finit_module(ctx: &TracePointContext) -> ProbeResult<()> {
-    let args = SysEnterArgs::<FInit>::from_context(ctx)?.args;
+unsafe fn try_sys_enter_finit_module(ctx: &RawSysEnterContext) -> ProbeResult<()> {
+    let args = FInit {
+        fd: ctx.arg(0).unwrap_or_default(),
+        uargs: ctx.arg(1).unwrap_or_default(),
+        flags: ctx.arg(2).unwrap_or_default(),
+    };
     handle_init_module(ctx, args.into())
 }
 
-unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> ProbeResult<()> {
+unsafe fn handle_init_module(ctx: &RawSysEnterContext, args: InitModuleArgs) -> ProbeResult<()> {
     // initialize allocator
     alloc::init()?;
     let key = bpf_task_tracking_id();
@@ -113,10 +143,17 @@ unsafe fn handle_init_module(ctx: &TracePointContext, args: InitModuleArgs) -> P
     Ok(())
 }
 
-#[tracepoint(name = "sys_exit_init_module", category = "syscalls")]
-pub fn lkm_syscalls_sys_exit_init_module(ctx: TracePointContext) -> u32 {
+#[raw_tracepoint(tracepoint = "sys_exit")]
+pub fn lkm_syscalls_sys_exit_init_module(ctx: RawTracePointContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
+    }
+
+    let ctx = RawSysExitContext::from(ctx);
+    unsafe {
+        if !matches!(ctx.sys_nr(), Some(SYS_FINIT_MODULE) | Some(SYS_INIT_MODULE)) {
+            return errors::BPF_PROG_SUCCESS;
+        }
     }
 
     match unsafe { try_sys_exit_init_module(&ctx) } {
@@ -128,24 +165,8 @@ pub fn lkm_syscalls_sys_exit_init_module(ctx: TracePointContext) -> u32 {
     }
 }
 
-#[tracepoint(name = "sys_exit_finit_module", category = "syscalls")]
-pub fn lkm_syscalls_sys_exit_finit_module(ctx: TracePointContext) -> u32 {
-    if is_current_loader_task() {
-        return 0;
-    }
-
-    match unsafe { try_sys_exit_init_module(&ctx) } {
-        Ok(_) => errors::BPF_PROG_SUCCESS,
-        Err(s) => {
-            error!(&ctx, s);
-            errors::BPF_PROG_FAILURE
-        }
-    }
-}
-
-unsafe fn try_sys_exit_init_module(ctx: &TracePointContext) -> ProbeResult<()> {
+unsafe fn try_sys_exit_init_module(ctx: &RawSysExitContext) -> ProbeResult<()> {
     let key = bpf_task_tracking_id();
-    let args = SysExitArgs::from_context(ctx)?;
 
     if let Some(event) = INIT_MODULE_TRACKING.get_ptr_mut(&key) {
         let event = &mut (*event);
@@ -153,7 +174,7 @@ unsafe fn try_sys_exit_init_module(ctx: &TracePointContext) -> ProbeResult<()> {
         if event.data.name.is_empty() {
             ignore_result!(event.data.name.push_char('?'));
         }
-        event.data.loaded = args.ret == 0;
+        event.data.loaded = ctx.ret() == 0;
         pipe_event(ctx, event);
     }
 

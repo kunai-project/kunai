@@ -7,7 +7,7 @@ use super::*;
 #[kprobe(function = "security_task_kill")]
 pub fn enter_security_task_kill(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_enter_security_task_kill(&ctx) } {

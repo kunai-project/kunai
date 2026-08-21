@@ -1,7 +1,7 @@
 use aya::{
     programs::{
-        self, kprobe::KProbeLinkId, lsm::LsmLinkId, trace_point::TracePointLinkId, ProgramError,
-        ProgramType,
+        self, kprobe::KProbeLinkId, lsm::LsmLinkId, raw_trace_point::RawTracePointLinkId,
+        trace_point::TracePointLinkId, ProgramError, ProgramType,
     },
     Btf, Ebpf,
 };
@@ -102,6 +102,7 @@ impl<'a> Programs<'a> {
 pub enum LinkId {
     KProbe(KProbeLinkId),
     Tracepoint(TracePointLinkId),
+    RawTracepoint(RawTracePointLinkId),
     Lsm(LsmLinkId),
 }
 
@@ -120,6 +121,16 @@ impl TryFrom<LinkId> for TracePointLinkId {
     fn try_from(value: LinkId) -> Result<Self, Self::Error> {
         match value {
             LinkId::Tracepoint(l) => Ok(l),
+            _ => Err(Error::WrongLinkId),
+        }
+    }
+}
+
+impl TryFrom<LinkId> for RawTracePointLinkId {
+    type Error = Error;
+    fn try_from(value: LinkId) -> Result<Self, Self::Error> {
+        match value {
+            LinkId::RawTracepoint(l) => Ok(l),
             _ => Err(Error::WrongLinkId),
         }
     }
@@ -289,6 +300,9 @@ impl<'a> Program<'a> {
             programs::Program::TracePoint(p) => {
                 p.load()?;
             }
+            programs::Program::RawTracePoint(p) => {
+                p.load()?;
+            }
             programs::Program::KProbe(p) => {
                 p.load()?;
             }
@@ -309,6 +323,9 @@ impl<'a> Program<'a> {
 
         match program {
             programs::Program::TracePoint(p) => {
+                p.unload()?;
+            }
+            programs::Program::RawTracePoint(p) => {
                 p.unload()?;
             }
             programs::Program::KProbe(p) => {
@@ -338,6 +355,10 @@ impl<'a> Program<'a> {
                 let attach = kernel_attach_fn.ok_or(Error::NoAttachFn(program_name))?;
                 self.link_id = Some(LinkId::Tracepoint(p.attach(&cat, &attach)?));
             }
+            programs::Program::RawTracePoint(p) => {
+                let attach = kernel_attach_fn.ok_or(Error::NoAttachFn(program_name))?;
+                self.link_id = Some(LinkId::RawTracepoint(p.attach(&attach)?));
+            }
             programs::Program::KProbe(p) => {
                 let attach = kernel_attach_fn.ok_or(Error::NoAttachFn(program_name))?;
                 self.link_id = Some(LinkId::KProbe(p.attach(attach, 0)?));
@@ -362,6 +383,7 @@ impl<'a> Program<'a> {
         if let Some(link_id) = self.link_id.take() {
             match self.prog_mut() {
                 programs::Program::TracePoint(p) => p.detach(link_id.try_into()?)?,
+                programs::Program::RawTracePoint(p) => p.detach(link_id.try_into()?)?,
                 programs::Program::KProbe(p) => p.detach(link_id.try_into()?)?,
                 programs::Program::Lsm(p) => p.detach(link_id.try_into()?)?,
                 _ => {
