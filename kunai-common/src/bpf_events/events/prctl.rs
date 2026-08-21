@@ -4,6 +4,7 @@ use kunai_macros::StrEnum;
 pub type PrctlEvent = Event<PrctlData>;
 
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct PrctlData {
     pub option: u64,
     pub arg2: u64,
