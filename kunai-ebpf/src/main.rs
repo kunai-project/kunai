@@ -1,5 +1,6 @@
 #![deny(unused_imports)]
 #![allow(static_mut_refs)]
+#![allow(unexpected_cfgs)]
 #![no_std]
 #![no_main]
 
