@@ -56,7 +56,7 @@ fn configure_probes(
     programs.expect_mut("execve_security_bprm_check").prio(1);
 
     programs.expect_mut("execve_exit_bprm_execve").prio(20);
-    programs.expect_mut("syscalls_sys_exit_execve").prio(20);
+    programs.expect_mut("execve_exit_do_execveat_common").prio(20);
 
     // bprm_execve does not exists before 5.9
     programs
@@ -64,11 +64,7 @@ fn configure_probes(
         .min_kernel(kernel!(5, 9));
 
     programs
-        .expect_mut("syscalls_sys_exit_execve")
-        .max_kernel(kernel!(5, 9));
-
-    programs
-        .expect_mut("syscalls_sys_exit_execveat")
+        .expect_mut("execve_exit_do_execveat_common")
         .max_kernel(kernel!(5, 9));
 
     // bpf probes
