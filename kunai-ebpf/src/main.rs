@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 
-// bringing probes into main
+// bringing probes into main
 #[cfg(target_arch = "bpf")]
 mod probes;
 
