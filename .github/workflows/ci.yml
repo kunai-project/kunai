@@ -46,16 +46,19 @@ jobs:
           sudo apt update -y
           sudo apt install -y musl-tools libbpf-dev clang lld
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Install Rust Tools
         run: |
-          cargo install bpf-linker
+          cargo binstall -y bpf-linker
 
           rustup toolchain install nightly-${{ matrix.arch }}-unknown-linux-gnu
           rustup component add rust-src --toolchain nightly-${{ matrix.arch }}-unknown-linux-gnu
 
       - name: Run clippy on full project
         run: cargo clippy -- -D warnings
-        
+
       - name: Run cargo test
         run: cargo test --all-features
 
