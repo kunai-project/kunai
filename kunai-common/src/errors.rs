@@ -59,6 +59,8 @@ pub enum ProbeError {
     CoReFieldRead,
     #[error("failed to get kprobe arg")]
     KProbeArgFailure,
+    #[error("failed to get raw syscall arg")]
+    RawSyscallArgFailure,
     #[error("unexpected null pointer")]
     NullPointer,
     #[error("file not found")]

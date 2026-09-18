@@ -31,8 +31,8 @@ unsafe fn try_sys_enter_mmap(ctx: &RawSysEnterContext) -> ProbeResult<()> {
     // early return if event is disabled
     if_disabled_return!(Type::MmapExec, ());
 
-    let prot: u64 = ctx.arg(2).unwrap_or_default();
-    let fd: i32 = ctx.arg(4).unwrap_or_default();
+    let prot: u64 = ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?;
+    let fd: i32 = ctx.arg(4).ok_or(ProbeError::RawSyscallArgFailure)?;
 
     if fd >= 0 && prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
         let current = task_struct::current();

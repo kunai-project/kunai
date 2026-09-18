@@ -31,9 +31,9 @@ unsafe fn try_sys_enter_mprotect(ctx: &RawSysEnterContext) -> ProbeResult<()> {
     // early return if event is disabled
     if_disabled_return!(Type::MprotectExec, ());
 
-    let start: u64 = ctx.arg(0).unwrap_or_default();
-    let len: u64 = ctx.arg(1).unwrap_or_default();
-    let prot: u64 = ctx.arg(2).unwrap_or_default();
+    let start: u64 = ctx.arg(0).ok_or(ProbeError::RawSyscallArgFailure)?;
+    let len: u64 = ctx.arg(1).ok_or(ProbeError::RawSyscallArgFailure)?;
+    let prot: u64 = ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?;
 
     if prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
         alloc::init()?;
