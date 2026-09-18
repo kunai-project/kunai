@@ -143,6 +143,7 @@ impl page {
     /// Converts this `struct page` pointer to its virtual address.
     ///
     /// Returns a null pointer on unsupported architectures.
+    #[inline(always)]
     pub fn page_to_virt(&self) -> Option<*const c_void> {
         cfg_select! {
            bpf_target_arch = "x86_64" => Some(self.page_to_virt_x86_64()),

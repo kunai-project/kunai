@@ -61,6 +61,23 @@ Using anonymous structs seems to make the linking fail
 	_SHIM_GETTER_BPF_CORE_READ_USER(typeof(((struct struc *)0)->memb), shim_##struc##_##memb##_user(struct struc *struc), struc, memb) \
 	_FIELD_EXISTS_DEF(struc, memb, memb)
 
+// Like SHIM, but writes the result through an out-pointer instead of
+// returning it by value. Required for types larger than a register (e.g.
+// struct timespec64): rustc and clang can silently disagree on the
+// by-value aggregate-return ABI for the bpf target (hidden sret arg vs.
+// not), so returning through an explicit pointer sidesteps that ABI
+// entirely on both sides of the Rust/C boundary.
+#define SHIM_OUT(struc, memb)                                                                                                                  \
+	__attribute__((always_inline)) void shim_##struc##_##memb(struct struc *struc, typeof(((struct struc *)0)->memb) * out)                    \
+	{                                                                                                                                            \
+		*out = BPF_CORE_READ(struc, memb);                                                                                                      \
+	}                                                                                                                                            \
+	__attribute__((always_inline)) void shim_##struc##_##memb##_user(struct struc *struc, typeof(((struct struc *)0)->memb) * out)              \
+	{                                                                                                                                            \
+		*out = BPF_CORE_READ_USER(struc, memb);                                                                                                 \
+	}                                                                                                                                            \
+	_FIELD_EXISTS_DEF(struc, memb, memb)
+
 #define SHIM_WITH_NAME(struc, memb, memb_name)                                                                                              \
 	_SHIM_GETTER_BPF_CORE_READ(typeof(((struct struc *)0)->memb), shim_##struc##_##memb_name(struct struc *struc), struc, memb)             \
 	_SHIM_GETTER_BPF_CORE_READ_USER(typeof(((struct struc *)0)->memb), shim_##struc##_##memb_name##_user(struct struc *struc), struc, memb) \
@@ -255,16 +272,16 @@ SHIM(inode, i_ino);
 SHIM(inode, i_mode);
 SHIM(inode, i_sb);
 SHIM(inode, i_size);
-SHIM(inode, i_atime);
-SHIM(inode, __i_atime);
+SHIM_OUT(inode, i_atime);
+SHIM_OUT(inode, __i_atime);
 SHIM(inode, i_atime_sec);
 SHIM(inode, i_atime_nsec);
-SHIM(inode, i_mtime);
-SHIM(inode, __i_mtime);
+SHIM_OUT(inode, i_mtime);
+SHIM_OUT(inode, __i_mtime);
 SHIM(inode, i_mtime_sec);
 SHIM(inode, i_mtime_nsec);
-SHIM(inode, i_ctime);
-SHIM(inode, __i_ctime);
+SHIM_OUT(inode, i_ctime);
+SHIM_OUT(inode, __i_ctime);
 SHIM(inode, i_ctime_sec);
 SHIM(inode, i_ctime_nsec);
 

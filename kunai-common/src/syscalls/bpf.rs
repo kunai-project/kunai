@@ -1,48 +1,92 @@
-use super::Error;
-use aya_ebpf::{helpers::bpf_probe_read, EbpfContext};
+use super::pt_regs::{arg, PtRegsKernelRead};
 
-/// To read the input parameters for a tracepoint conveniently, define a struct
-/// to hold the input arguments. Refer to to
-/// `/sys/kernel/debug/tracing/events/<category>/<tracepoint>/format`
-/// for information about a specific tracepoint.
-#[repr(C, packed(1))]
-pub struct TracepointCommonArgs {
-    pub ctype: u16,
-    pub flags: u8,
-    pub preempt_count: u8,
-    pub pid: i32,
+use aya_ebpf::{
+    bindings::pt_regs, cty::c_long, programs::RawTracePointContext, Argument, EbpfContext,
+};
+
+/// A raw_tracepoint attached to "sys_enter" receives its arguments as
+/// declared in the kernel's `TP_PROTO(struct pt_regs *regs, long id)` for
+/// that tracepoint: `args[0]` is `regs`, `args[1]` is `id` (the syscall
+/// number). This is what tells us `ctx.arg(0)` is the `pt_regs` pointer
+/// and `ctx.arg(1)` is the syscall number below.
+///
+/// https://elixir.bootlin.com/linux/v7.2/source/include/trace/events/syscalls.h#L18
+#[repr(C)]
+pub struct RawSysEnterContext {
+    ctx: RawTracePointContext,
+    pt_regs: *const pt_regs,
+    sys_nr: c_long,
 }
 
-#[repr(C, packed(1))]
-pub struct Syscall {
-    pub sys_nr: i32,
-    pad: u32,
-}
-
-#[repr(C, packed(1))]
-pub struct SysExitArgs {
-    pub common: TracepointCommonArgs,
-    pub syscall: Syscall,
-    pub ret: i64,
-}
-
-impl SysExitArgs {
-    pub fn from_context<C: EbpfContext>(c: &C) -> Result<Self, Error> {
-        unsafe { bpf_probe_read(c.as_ptr() as *const SysExitArgs) }
-            .map_err(|_| Error::FailedToReadExitArgs)
+impl From<RawTracePointContext> for RawSysEnterContext {
+    fn from(ctx: RawTracePointContext) -> Self {
+        let pt_regs = ctx.arg::<*const pt_regs>(0);
+        let sys_nr: i64 = ctx.arg(1);
+        Self {
+            ctx,
+            pt_regs,
+            sys_nr,
+        }
     }
 }
 
-#[repr(C, packed(1))]
-pub struct SysEnterArgs<A> {
-    pub common: TracepointCommonArgs,
-    pub syscall: Syscall,
-    pub args: A,
+impl EbpfContext for RawSysEnterContext {
+    #[inline(always)]
+    fn as_ptr(&self) -> *mut aya_ebpf::cty::c_void {
+        self.ctx.as_ptr()
+    }
 }
 
-impl<A> SysEnterArgs<A> {
-    pub fn from_context<C: EbpfContext>(c: &C) -> Result<Self, Error> {
-        unsafe { bpf_probe_read(c.as_ptr() as *const SysEnterArgs<A>) }
-            .map_err(|_| Error::FailedToReadEnterArgs)
+impl RawSysEnterContext {
+    #[inline(always)]
+    pub unsafe fn arg<T: Argument>(&self, n: usize) -> Option<T> {
+        arg(self.pt_regs, n)
+    }
+
+    #[inline(always)]
+    pub fn sys_nr(&self) -> i64 {
+        self.sys_nr
+    }
+}
+
+/// A raw_tracepoint attached to "sys_exit" receives its arguments as
+/// declared in the kernel's `TP_PROTO(struct pt_regs *regs, long ret)` for
+/// that tracepoint: `args[0]` is `regs`, `args[1]` is `ret` (the syscall
+/// return value). Note there is no syscall number argument here (unlike
+/// sys_enter), which is why `sys_nr()` below has to read it back out of
+/// `regs` instead of taking it straight from an arg.
+///
+/// https://elixir.bootlin.com/linux/v7.2/source/include/trace/events/syscalls.h#L46
+#[repr(C)]
+pub struct RawSysExitContext {
+    ctx: RawTracePointContext,
+    pt_regs: *const pt_regs,
+    ret: c_long,
+}
+
+impl From<RawTracePointContext> for RawSysExitContext {
+    fn from(ctx: RawTracePointContext) -> Self {
+        let pt_regs = ctx.arg::<*const pt_regs>(0);
+        let ret: i64 = ctx.arg(1);
+        Self { ctx, pt_regs, ret }
+    }
+}
+
+impl EbpfContext for RawSysExitContext {
+    #[inline(always)]
+    fn as_ptr(&self) -> *mut aya_ebpf::cty::c_void {
+        self.ctx.as_ptr()
+    }
+}
+
+impl RawSysExitContext {
+    #[inline(always)]
+    pub fn ret(&self) -> c_long {
+        self.ret
+    }
+
+    #[inline(always)]
+    pub unsafe fn sys_nr(&self) -> Option<i64> {
+        self.pt_regs.sys_nr()
     }
 }

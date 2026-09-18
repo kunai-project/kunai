@@ -18,7 +18,7 @@ static mut BPF_PROG_TRACK: LruHashMap<u64, co_re::bpf_prog> = LruHashMap::with_m
 #[kprobe(function = "security_bpf_prog")]
 pub fn entry_security_bpf_prog(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_security_bpf_prog(&ctx) } {
@@ -46,7 +46,7 @@ unsafe fn try_security_bpf_prog(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(function = "bpf_prog_load")]
 pub fn exit_bpf_prog_load(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_bpf_prog_load(&ctx) } {

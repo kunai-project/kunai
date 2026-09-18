@@ -42,7 +42,7 @@ fn mount(src: &str, target: &str, filesystem_type: &str) -> anyhow::Result<()> {
 }
 
 fn integration() -> anyhow::Result<()> {
-    let verifier_level = VerifierLogLevel::STATS;
+    let verifier_level = VerifierLogLevel::DEBUG;
 
     let current_kernel = Utsname::kernel_version()?;
     info!("linux kernel: {current_kernel}");

@@ -34,7 +34,7 @@ pub fn io_uring_enter_io_poll_issue(ctx: ProbeContext) -> u32 {
 #[inline(always)]
 fn handle_issue_sqe(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_io_issue_sqe(&ctx) } {
@@ -69,7 +69,7 @@ unsafe fn try_io_issue_sqe(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kprobe(function = "__io_submit_sqe")]
 pub fn enter_io_submit_sqe(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_io_submit_sqe(&ctx) } {
