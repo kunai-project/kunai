@@ -4,6 +4,13 @@ use aya_ebpf::{
     bindings::pt_regs, cty::c_long, programs::RawTracePointContext, Argument, EbpfContext,
 };
 
+/// A raw_tracepoint attached to "sys_enter" receives its arguments as
+/// declared in the kernel's `TP_PROTO(struct pt_regs *regs, long id)` for
+/// that tracepoint: `args[0]` is `regs`, `args[1]` is `id` (the syscall
+/// number). This is what tells us `ctx.arg(0)` is the `pt_regs` pointer
+/// and `ctx.arg(1)` is the syscall number below.
+///
+/// https://elixir.bootlin.com/linux/v7.2/source/include/trace/events/syscalls.h#L18
 #[repr(C)]
 pub struct RawSysEnterContext {
     ctx: RawTracePointContext,
@@ -42,6 +49,14 @@ impl RawSysEnterContext {
     }
 }
 
+/// A raw_tracepoint attached to "sys_exit" receives its arguments as
+/// declared in the kernel's `TP_PROTO(struct pt_regs *regs, long ret)` for
+/// that tracepoint: `args[0]` is `regs`, `args[1]` is `ret` (the syscall
+/// return value). Note there is no syscall number argument here (unlike
+/// sys_enter), which is why `sys_nr()` below has to read it back out of
+/// `regs` instead of taking it straight from an arg.
+///
+/// https://elixir.bootlin.com/linux/v7.2/source/include/trace/events/syscalls.h#L46
 #[repr(C)]
 pub struct RawSysExitContext {
     ctx: RawTracePointContext,
