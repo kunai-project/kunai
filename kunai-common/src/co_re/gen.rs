@@ -344,19 +344,19 @@ unsafe extern "C" {
     pub fn shim_inode_i_size_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_inode_i_atime(inode: *mut inode) -> timespec64;
+    pub fn shim_inode_i_atime(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
-    pub fn shim_inode_i_atime_user(inode: *mut inode) -> timespec64;
+    pub fn shim_inode_i_atime_user(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
     pub fn shim_inode_i_atime_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_inode___i_atime(inode: *mut inode) -> timespec64;
+    pub fn shim_inode___i_atime(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
-    pub fn shim_inode___i_atime_user(inode: *mut inode) -> timespec64;
+    pub fn shim_inode___i_atime_user(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
     pub fn shim_inode___i_atime_exists(inode: *mut inode) -> bool;
@@ -380,19 +380,19 @@ unsafe extern "C" {
     pub fn shim_inode_i_atime_nsec_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_inode_i_mtime(inode: *mut inode) -> timespec64;
+    pub fn shim_inode_i_mtime(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
-    pub fn shim_inode_i_mtime_user(inode: *mut inode) -> timespec64;
+    pub fn shim_inode_i_mtime_user(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
     pub fn shim_inode_i_mtime_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_inode___i_mtime(inode: *mut inode) -> timespec64;
+    pub fn shim_inode___i_mtime(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
-    pub fn shim_inode___i_mtime_user(inode: *mut inode) -> timespec64;
+    pub fn shim_inode___i_mtime_user(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
     pub fn shim_inode___i_mtime_exists(inode: *mut inode) -> bool;
@@ -416,19 +416,19 @@ unsafe extern "C" {
     pub fn shim_inode_i_mtime_nsec_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_inode_i_ctime(inode: *mut inode) -> timespec64;
+    pub fn shim_inode_i_ctime(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
-    pub fn shim_inode_i_ctime_user(inode: *mut inode) -> timespec64;
+    pub fn shim_inode_i_ctime_user(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
     pub fn shim_inode_i_ctime_exists(inode: *mut inode) -> bool;
 }
 unsafe extern "C" {
-    pub fn shim_inode___i_ctime(inode: *mut inode) -> timespec64;
+    pub fn shim_inode___i_ctime(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
-    pub fn shim_inode___i_ctime_user(inode: *mut inode) -> timespec64;
+    pub fn shim_inode___i_ctime_user(inode: *mut inode, out: *mut timespec64);
 }
 unsafe extern "C" {
     pub fn shim_inode___i_ctime_exists(inode: *mut inode) -> bool;
