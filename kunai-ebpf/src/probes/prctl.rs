@@ -38,11 +38,11 @@ unsafe fn try_enter_prctl(ctx: &RawSysEnterContext) -> ProbeResult<()> {
 
     // we need it for kernel 5.4 to prove entire memory is written
     let mut args = core::mem::zeroed::<PrctlData>();
-    args.option = ctx.arg(0).unwrap_or_default();
-    args.arg2 = ctx.arg(1).unwrap_or_default();
-    args.arg3 = ctx.arg(2).unwrap_or_default();
-    args.arg4 = ctx.arg(3).unwrap_or_default();
-    args.arg5 = ctx.arg(4).unwrap_or_default();
+    args.option = ctx.arg(0).ok_or(ProbeError::RawSyscallArgFailure)?;
+    args.arg2 = ctx.arg(1).ok_or(ProbeError::RawSyscallArgFailure)?;
+    args.arg3 = ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?;
+    args.arg4 = ctx.arg(3).ok_or(ProbeError::RawSyscallArgFailure)?;
+    args.arg5 = ctx.arg(4).ok_or(ProbeError::RawSyscallArgFailure)?;
     args.success = false;
 
     // we ignore result as we can check something went wrong when we try to insert argument

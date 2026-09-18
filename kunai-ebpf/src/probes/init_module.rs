@@ -76,9 +76,9 @@ pub fn lkm_syscalls_sys_enter_init_module(ctx: RawTracePointContext) -> u32 {
 
 unsafe fn try_sys_enter_init_module(ctx: &RawSysEnterContext) -> ProbeResult<()> {
     let args = Init {
-        umod: ctx.arg(0).unwrap_or_default(),
-        len: ctx.arg(1).unwrap_or_default(),
-        uargs: ctx.arg(2).unwrap_or_default(),
+        umod: ctx.arg(0).ok_or(ProbeError::RawSyscallArgFailure)?,
+        len: ctx.arg(1).ok_or(ProbeError::RawSyscallArgFailure)?,
+        uargs: ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?,
     };
 
     handle_init_module(ctx, args.into())
@@ -106,9 +106,9 @@ pub fn lkm_syscalls_sys_enter_finit_module(ctx: RawTracePointContext) -> u32 {
 
 unsafe fn try_sys_enter_finit_module(ctx: &RawSysEnterContext) -> ProbeResult<()> {
     let args = FInit {
-        fd: ctx.arg(0).unwrap_or_default(),
-        uargs: ctx.arg(1).unwrap_or_default(),
-        flags: ctx.arg(2).unwrap_or_default(),
+        fd: ctx.arg(0).ok_or(ProbeError::RawSyscallArgFailure)?,
+        uargs: ctx.arg(1).ok_or(ProbeError::RawSyscallArgFailure)?,
+        flags: ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?,
     };
     handle_init_module(ctx, args.into())
 }
