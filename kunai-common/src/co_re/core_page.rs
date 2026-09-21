@@ -68,7 +68,7 @@ fn page_offset_base() -> u64 {
 #[inline(always)]
 fn mem_layout_aarch64(page_ptr: u64) -> (u64, u64) {
     unsafe {
-        if PAGE_OFFSET_BASE == 0 || PAGE_OFFSET_BASE == 0 {
+        if VMEMMAP_BASE == 0 || PAGE_OFFSET_BASE == 0 {
             (VMEMMAP_BASE, PAGE_OFFSET_BASE) =
                 find_mem_layout_aarch64(page_ptr).unwrap_or_default();
         }
@@ -143,11 +143,12 @@ impl page {
     /// Converts this `struct page` pointer to its virtual address.
     ///
     /// Returns a null pointer on unsupported architectures.
+    #[inline(always)]
     pub fn page_to_virt(&self) -> Option<*const c_void> {
         cfg_select! {
-           bpf_target_arch = "x86_64" => Some(self.page_to_virt_x86_64()),
-           bpf_target_arch = "aarch64" => Some(self.page_to_virt_aarch64()),
-           _ => None
+            bpf_target_arch = "x86_64" => Some(self.page_to_virt_x86_64()),
+            bpf_target_arch = "aarch64" => Some(self.page_to_virt_aarch64()),
+            _ => None,
         }
     }
 

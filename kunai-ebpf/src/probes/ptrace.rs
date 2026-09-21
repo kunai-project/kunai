@@ -7,7 +7,7 @@ use super::*;
 #[kprobe(function = "security_ptrace_access_check")]
 pub fn kprobe_ptrace_access_check(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_ptrace_access_check(&ctx) } {

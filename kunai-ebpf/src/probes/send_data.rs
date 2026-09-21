@@ -19,7 +19,7 @@ use kunai_common::{
 #[kprobe(function = "security_socket_sendmsg")]
 pub fn net_security_socket_sendmsg(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_sock_send_data(&ctx) } {

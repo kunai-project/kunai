@@ -105,7 +105,7 @@ unsafe fn is_dns_dst(sock: &co_re::sock) -> Result<bool, ProbeError> {
 #[kprobe(function = "vfs_read")]
 pub fn net_dns_enter_vfs_read(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_enter_vfs_read(&ctx) } {
@@ -148,7 +148,7 @@ unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(function = "vfs_read")]
 pub fn net_dns_exit_vfs_read(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     let rc = match unsafe { try_exit_vfs_read(&ctx) } {
@@ -204,7 +204,7 @@ unsafe fn try_exit_vfs_read(ctx: &RetProbeContext) -> ProbeResult<()> {
 #[kprobe(function = "__sys_recvfrom")]
 pub fn net_dns_enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_enter_sys_recvfrom(&ctx) } {
@@ -254,7 +254,7 @@ unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(function = "__sys_recvfrom")]
 pub fn net_dns_exit_sys_recvfrom(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     let rc = match unsafe { try_exit_sys_recvfrom(&ctx) } {
@@ -320,7 +320,7 @@ unsafe fn try_exit_sys_recvfrom(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
 #[kprobe(function = "__sys_recvmsg")]
 pub fn net_dns_enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     match unsafe { try_enter_sys_recvmsg(&ctx) } {
@@ -369,7 +369,7 @@ unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
 #[kretprobe(function = "__sys_recvmsg")]
 pub fn net_dns_exit_sys_recvmsg(ctx: RetProbeContext) -> u32 {
     if is_current_loader_task() {
-        return 0;
+        return errors::BPF_PROG_SUCCESS;
     }
 
     let rc = match unsafe { try_exit_recvmsg(&ctx) } {

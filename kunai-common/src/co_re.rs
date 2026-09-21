@@ -55,6 +55,9 @@ pub use core_page::*;
 mod core_io_uring;
 pub use core_io_uring::*;
 
+mod core_pt_regs;
+pub use core_pt_regs::*;
+
 #[derive(Clone, Copy)]
 pub struct CoRe<P> {
     ptr: *const P,
@@ -99,6 +102,45 @@ impl<P> CoRe<P> {
     }
 }
 
+/// Like [`rust_shim_kernel_impl`], but for accessors backed by a C shim
+/// defined with `SHIM_OUT` instead of `SHIM`: one that writes its result
+/// through an out-pointer parameter instead of returning it by value.
+///
+/// Use this instead of [`rust_shim_kernel_impl`] whenever `$ret` doesn't
+/// fit in a single 64-bit register: rustc and clang aren't guaranteed to
+/// agree on the by-value aggregate-return ABI for the `bpf` target
+/// across versions, and an out-pointer sidesteps it entirely.
+///
+/// `$ret` must be a type for which the all-zero bit pattern is valid: the
+/// buffer is briefly `core::mem::zeroed()` before the shim call fills it.
+macro_rules! rust_shim_kernel_impl_out {
+    ($struct:ident, $member:ident, $ret:ty) => {
+        rust_shim_kernel_impl_out! (pub, $member, $struct, $member, $ret);
+    };
+
+    ($pub:vis, $struct:ident, $member:ident, $ret:ty) => {
+        rust_shim_kernel_impl_out! ($pub, $member, $struct, $member, $ret);
+    };
+
+    ($pub:vis, $fn_name:ident, $struct: ident, $member:ident, $ret:ty) => {
+        #[inline(always)]
+        #[allow(clippy::len_without_is_empty)]
+        $pub unsafe fn $fn_name(&self) -> Option<$ret> {
+            if !self.is_null()
+                && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())
+            {
+                let mut out: $ret = core::mem::zeroed();
+                let shim = paste::paste! {[<shim_ $struct _ $member>]};
+                shim(self.as_ptr_mut(), &mut out);
+                return Some(out);
+            }
+            None
+        }
+    };
+}
+
+pub(crate) use rust_shim_kernel_impl_out;
+
 macro_rules! rust_shim_kernel_impl {
     ($struct:ident, $member:ident, $ret:ty) => {
         rust_shim_kernel_impl! (pub, $member, $struct, $member, $ret);
@@ -112,6 +154,12 @@ macro_rules! rust_shim_kernel_impl {
         #[inline(always)]
         #[allow(clippy::len_without_is_empty)]
         $pub unsafe fn $fn_name(&self) -> Option<$ret> {
+            const {
+                assert!(
+                    core::mem::size_of::<$ret>() <= 8,
+                    "return type doesn't fit in a register, use the out-pointer variant instead"
+                )
+            };
             if !self.is_null()
                 && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())
             {
@@ -133,6 +181,12 @@ macro_rules! rust_shim_user_impl {
         paste::item!{
         #[inline(always)]
         $pub unsafe fn [<$fn_name _user>] (&self) -> Option<$ret> {
+            const {
+                assert!(
+                    core::mem::size_of::<$ret>() <= 8,
+                    "return type doesn't fit in a register, use the out-pointer variant instead"
+                )
+            };
             if !self.is_null()
                 && [<shim_ $struct _ $member _exists>](self.as_ptr_mut())
             {
