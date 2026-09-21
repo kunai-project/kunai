@@ -90,7 +90,7 @@ unsafe fn try_exit_prctl(ctx: &RawSysExitContext) -> ProbeResult<()> {
 
     event.data = entry_args;
     // on error returns -1
-    event.data.success = ctx.ret() != -1;
+    event.data.success = ctx.ret() >= 0;
 
     pipe_event(ctx, event);
 
