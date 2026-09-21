@@ -1,8 +1,6 @@
-use super::pt_regs::{arg, PtRegsKernelRead};
+use crate::co_re::pt_regs;
 
-use aya_ebpf::{
-    bindings::pt_regs, cty::c_long, programs::RawTracePointContext, Argument, EbpfContext,
-};
+use aya_ebpf::{cty::c_long, programs::RawTracePointContext, Argument, EbpfContext};
 
 /// A raw_tracepoint attached to "sys_enter" receives its arguments as
 /// declared in the kernel's `TP_PROTO(struct pt_regs *regs, long id)` for
@@ -14,13 +12,13 @@ use aya_ebpf::{
 #[repr(C)]
 pub struct RawSysEnterContext {
     ctx: RawTracePointContext,
-    pt_regs: *const pt_regs,
+    pt_regs: pt_regs,
     sys_nr: c_long,
 }
 
 impl From<RawTracePointContext> for RawSysEnterContext {
     fn from(ctx: RawTracePointContext) -> Self {
-        let pt_regs = ctx.arg::<*const pt_regs>(0);
+        let pt_regs = pt_regs::from_ptr(ctx.arg(0));
         let sys_nr: i64 = ctx.arg(1);
         Self {
             ctx,
@@ -40,7 +38,7 @@ impl EbpfContext for RawSysEnterContext {
 impl RawSysEnterContext {
     #[inline(always)]
     pub unsafe fn arg<T: Argument>(&self, n: usize) -> Option<T> {
-        arg(self.pt_regs, n)
+        self.pt_regs.syscall_arg(n)
     }
 
     #[inline(always)]
@@ -60,13 +58,13 @@ impl RawSysEnterContext {
 #[repr(C)]
 pub struct RawSysExitContext {
     ctx: RawTracePointContext,
-    pt_regs: *const pt_regs,
+    pt_regs: pt_regs,
     ret: c_long,
 }
 
 impl From<RawTracePointContext> for RawSysExitContext {
     fn from(ctx: RawTracePointContext) -> Self {
-        let pt_regs = ctx.arg::<*const pt_regs>(0);
+        let pt_regs = pt_regs::from_ptr(ctx.arg(0));
         let ret: i64 = ctx.arg(1);
         Self { ctx, pt_regs, ret }
     }

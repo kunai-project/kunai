@@ -117,6 +117,47 @@ Using anonymous structs seems to make the linking fail
 		return bpf_core_type_size(struct struc);                     \
 	}
 
+// pt_regs, read via CO-RE so a kernel layout change
+// fails the load instead of silently reading the wrong bytes.
+#if defined(BPF_TARGET_ARCH_X86_64)
+struct pt_regs
+{
+	unsigned long di;
+	unsigned long si;
+	unsigned long dx;
+	unsigned long r10;
+	unsigned long r8;
+	unsigned long r9;
+	unsigned long ax;
+	unsigned long orig_ax;
+} __attribute__((preserve_access_index));
+
+SHIM(pt_regs, di);
+SHIM(pt_regs, si);
+SHIM(pt_regs, dx);
+SHIM(pt_regs, r10);
+SHIM(pt_regs, r8);
+SHIM(pt_regs, r9);
+SHIM(pt_regs, ax);
+SHIM(pt_regs, orig_ax);
+#elif defined(BPF_TARGET_ARCH_AARCH64)
+struct pt_regs
+{
+	unsigned long regs[8];
+	__s32 syscallno;
+} __attribute__((preserve_access_index));
+
+SHIM_WITH_NAME(pt_regs, regs[0], reg0);
+SHIM_WITH_NAME(pt_regs, regs[1], reg1);
+SHIM_WITH_NAME(pt_regs, regs[2], reg2);
+SHIM_WITH_NAME(pt_regs, regs[3], reg3);
+SHIM_WITH_NAME(pt_regs, regs[4], reg4);
+SHIM_WITH_NAME(pt_regs, regs[5], reg5);
+SHIM_WITH_NAME(pt_regs, regs[6], reg6);
+SHIM_WITH_NAME(pt_regs, regs[7], reg7);
+SHIM(pt_regs, syscallno);
+#endif
+
 struct kgid_t
 {
 	gid_t val;

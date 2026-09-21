@@ -2,8 +2,6 @@
 mod bpf;
 #[cfg(target_arch = "bpf")]
 pub use bpf::*;
-#[cfg(target_arch = "bpf")]
-mod pt_regs;
 
 use kunai_macros::BpfError;
 

@@ -55,6 +55,9 @@ pub use core_page::*;
 mod core_io_uring;
 pub use core_io_uring::*;
 
+mod core_pt_regs;
+pub use core_pt_regs::*;
+
 #[derive(Clone, Copy)]
 pub struct CoRe<P> {
     ptr: *const P,
@@ -107,6 +110,9 @@ impl<P> CoRe<P> {
 /// fit in a single 64-bit register: rustc and clang aren't guaranteed to
 /// agree on the by-value aggregate-return ABI for the `bpf` target
 /// across versions, and an out-pointer sidesteps it entirely.
+///
+/// `$ret` must be a type for which the all-zero bit pattern is valid: the
+/// buffer is briefly `core::mem::zeroed()` before the shim call fills it.
 macro_rules! rust_shim_kernel_impl_out {
     ($struct:ident, $member:ident, $ret:ty) => {
         rust_shim_kernel_impl_out! (pub, $member, $struct, $member, $ret);
@@ -156,7 +162,7 @@ macro_rules! rust_shim_kernel_impl {
             };
             if !self.is_null()
                 && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())
-            {          
+            {
                 return Some(paste::paste! {[<shim_ $struct _ $member>]}(self.as_ptr_mut()).into());
             }
             None
