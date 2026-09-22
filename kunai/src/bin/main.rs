@@ -299,6 +299,16 @@ struct EventConsumer<'s> {
     scan_events_enabled: bool,
 }
 
+/// True if `current` diverges from `baseline` and that divergence hasn't
+/// already been reported as `last_reported`.
+#[inline(always)]
+fn creds_diverged(baseline: creds::Creds, current: creds::Creds, last_reported: Option<creds::Creds>) -> bool {
+    if baseline == current {
+        return false;
+    }
+    !last_reported.is_some_and(|reported| reported == current)
+}
+
 impl EventConsumer<'_> {
     fn prepare_output(config: &Config) -> anyhow::Result<Output> {
         let output = match &config.output.path.as_str() {
@@ -2166,22 +2176,13 @@ impl EventConsumer<'_> {
         let info = evt.info();
         let tk = TaskKey::from(&info.process);
         // If we don't have a Task entry yet — silently no-op.
-        let Some(baseline) = self.tasks.get(&tk).map(|t| t.expected_creds) else {
+        let Some(task) = self.tasks.get(&tk) else {
             return;
         };
+        let baseline = task.expected_creds;
+        let current = info.process.creds;
 
-        if baseline == info.process.creds {
-            return;
-        }
-
-        // we already reported that very divergence, a further change of the
-        // tampered credentials still gets reported
-        if self
-            .tasks
-            .get(&tk)
-            .and_then(|t| t.reported_creds)
-            .is_some_and(|reported| reported == info.process.creds)
-        {
+        if !creds_diverged(baseline, current, task.reported_creds) {
             return;
         }
 
@@ -2194,7 +2195,7 @@ impl EventConsumer<'_> {
         // it must keep holding what commit_creds() last installed, otherwise
         // a single divergence poisons it and cascades into further events.
         if let Some(t) = self.tasks.get_mut(&tk) {
-            t.reported_creds = Some(info.process.creds);
+            t.reported_creds = Some(current);
         }
     }
 
@@ -4349,5 +4350,47 @@ fn main() -> Result<(), anyhow::Error> {
         Some(Command::Logs(o)) => Command::logs(o),
         Some(Command::Run(o)) => Command::run(Some(o), verifier_level),
         None => Command::run(None, verifier_level),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn creds(uid: u32) -> creds::Creds {
+        creds::Creds {
+            uid,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_divergence_never_fires() {
+        assert!(!creds_diverged(creds(0), creds(0), None));
+        assert!(!creds_diverged(creds(0), creds(0), Some(creds(1000))));
+    }
+
+    #[test]
+    fn new_divergence_fires_when_nothing_reported_yet() {
+        assert!(creds_diverged(creds(0), creds(1000), None));
+    }
+
+    #[test]
+    fn same_divergence_does_not_refire() {
+        assert!(!creds_diverged(creds(0), creds(1000), Some(creds(1000))));
+    }
+
+    #[test]
+    fn different_divergence_fires_again() {
+        // previously reported uid=1000, task has since drifted to uid=1001:
+        // a new divergence, must fire even though one was already reported
+        assert!(creds_diverged(creds(0), creds(1001), Some(creds(1000))));
+    }
+
+    #[test]
+    fn reported_value_equal_to_baseline_still_fires() {
+        // last_reported happens to equal the baseline itself (not current):
+        // still a live divergence, must fire
+        assert!(creds_diverged(creds(0), creds(1000), Some(creds(0))));
     }
 }
