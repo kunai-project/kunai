@@ -37,7 +37,6 @@ hex = { workspace = true }
 huby = { workspace = true, features = ["serde"] }
 humantime = { workspace = true }
 ip_network = { workspace = true }
-lazy-cache = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 lru-st = { workspace = true, features = ["sync"] }
