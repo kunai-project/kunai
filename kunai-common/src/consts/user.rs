@@ -38,8 +38,14 @@ pub fn caps_to_str_vec(mut bits: u64) -> Vec<Cow<'static, str>> {
 
 impl Capability {
     // ref: https://elixir.bootlin.com/linux/v7.1.7/source/include/linux/capability.h#L67
+    //
+    // a u64 bitmask can only ever represent capabilities 0..=63; clamp so the
+    // shift below never overflows
     fn cap_full_set() -> u64 {
-        (1 << (1 + *CAP_LAST_CAP)) - 1
+        let last = (*CAP_LAST_CAP).min(63) as u32;
+        1u64.checked_shl(last + 1)
+            .map(|full| full - 1)
+            .unwrap_or(u64::MAX)
     }
 }
 
