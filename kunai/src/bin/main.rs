@@ -2233,7 +2233,6 @@ impl EventConsumer<'_> {
                 let correlation_event = bpf_events::CorrelationEvent::from(e.as_ref());
                 self.handle_correlation_event(std_info.clone(), correlation_event.data);
 
-
                 if self.filter.is_enabled(std_info.bpf.etype) {
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
