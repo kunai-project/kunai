@@ -8,7 +8,7 @@ use crate::co_re::core_read_kernel;
 use crate::co_re::task_struct;
 use crate::option::BpfOption;
 use crate::uuid::Uuid;
-use aya_ebpf::helpers::{bpf_get_current_task, bpf_ktime_get_ns};
+use aya_ebpf::helpers::bpf_get_current_task;
 
 impl<T> Event<T> {
     #[inline(always)]
@@ -39,8 +39,6 @@ impl EventInfo {
             self.parent
                 .from_task(task.real_parent().ok_or(Error::RealParentFieldMissing)?)?;
         }
-
-        self.timestamp = bpf_ktime_get_ns();
 
         Ok(())
     }
@@ -73,8 +71,10 @@ impl TaskInfo {
         self.comm = task.comm_array().ok_or(Error::CommMissing)?;
 
         // if task_struct is valid cannot be null
-        self.uid = task.cred().ok_or(Error::CredFieldMissing)?.uid();
-        self.gid = task.cred().ok_or(Error::CredFieldMissing)?.gid();
+        let cred = task.cred().ok_or(Error::CredFieldMissing)?;
+        self.creds
+            .from_cred(cred)
+            .map_err(|_| Error::CredFieldMissing)?;
 
         if let Some(nsproxy) = core_read_kernel!(task, nsproxy) {
             // it may happen that under some very specific conditions nsproxy

@@ -35,7 +35,7 @@ pub fn lsm_task_kill(ctx: LsmContext) -> i32 {
 unsafe fn try_lsm_security_task_kill(ctx: &LsmContext) -> Result<LsmStatus, ProbeError> {
     let target = co_re::task_struct::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
     let sig: c_int = ctx.arg(2);
-    // previous hook return code
+    // previous hook return code
     let ret: c_int = ctx.arg(4);
 
     // signal can be 0 but no signal is actually sent to the target
@@ -70,7 +70,7 @@ pub fn lsm_ptrace_access_check(ctx: LsmContext) -> i32 {
 #[inline(always)]
 unsafe fn try_ptrace_access_check(ctx: &LsmContext) -> Result<LsmStatus, ProbeError> {
     let target = co_re::task_struct::from_ptr(ctx.arg::<*const c_void>(0) as *const _);
-    // previous hook return code
+    // previous hook return code
     let ret: c_int = ctx.arg(2);
 
     let target_tgid = core_read_kernel!(target, tgid)?;

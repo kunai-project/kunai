@@ -1,3 +1,4 @@
+use crate::creds;
 use crate::kprobe;
 
 #[cfg(target_arch = "bpf")]
@@ -85,6 +86,8 @@ pub enum ProbeError {
     CgroupError(cgroup::Error),
     #[wrap]
     KprobeCtxError(kprobe::Error),
+    #[wrap]
+    CredError(creds::Error),
 }
 
 pub type ProbeResult<T> = core::result::Result<T, ProbeError>;

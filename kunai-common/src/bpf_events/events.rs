@@ -37,6 +37,8 @@ mod kill;
 pub use kill::*;
 mod ptrace;
 pub use ptrace::*;
+mod creds;
+pub use creds::*;
 pub mod error;
 pub use error::*;
 mod loss;
@@ -75,6 +77,7 @@ const fn max_bpf_event_size() -> usize {
             Type::Prctl => PrctlEvent::size_of(),
             Type::Kill => KillEvent::size_of(),
             Type::Ptrace => PtraceEvent::size_of(),
+            Type::CommitCreds => CommitCredsEvent::size_of(),
             Type::InitModule => InitModuleEvent::size_of(),
             Type::BpfProgLoad => BpfProgLoadEvent::size_of(),
             Type::BpfSocketFilter => BpfSocketFilterEvent::size_of(),
@@ -103,7 +106,8 @@ const fn max_bpf_event_size() -> usize {
             | Type::Correlation
             | Type::CacheHash
             | Type::Max
-            | Type::FileScan => 0,
+            | Type::FileScan
+            | Type::CredsTampered => 0,
             // never handle _ pattern otherwise this function loses all interest
         };
         if size > max {
