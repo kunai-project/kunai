@@ -26,9 +26,10 @@ pub fn caps_to_str_vec(mut bits: u64) -> Vec<Cow<'static, str>> {
             break;
         }
 
-        // Err should never happen as we already tested bit is in range
         if let Ok(cap) = Capability::try_from_uint(bit) {
             out.push(Cow::Borrowed(cap.as_str()))
+        } else {
+            out.push(Cow::Owned(format!("CAP_UNKNOWN_{bit}")))
         }
 
         bits &= !(1 << bit); // Clear the bit
