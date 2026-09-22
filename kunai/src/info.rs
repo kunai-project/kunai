@@ -41,6 +41,16 @@ pub enum KeyError {
     ProcFs(#[from] procfs::ProcError),
     #[error("io: {0}")]
     Io(#[from] io::Error),
+    #[error("CLK_TCK is 0, cannot scale ticks to seconds")]
+    InvalidClkTck,
+}
+
+/// Scales a `starttime` expressed in `CLK_TCK` ticks (as reported by procfs) down
+/// to seconds, the unit [ProcKey] and [TaskKey] compare on.
+#[inline(always)]
+fn start_time_sec_from_ticks(ticks: u64) -> Result<u64, KeyError> {
+    let clk_tck = get_clk_tck()? as u64;
+    ticks.checked_div(clk_tck).ok_or(KeyError::InvalidClkTck)
 }
 
 impl TryFrom<&procfs::process::Process> for ProcKey {
@@ -48,11 +58,9 @@ impl TryFrom<&procfs::process::Process> for ProcKey {
     #[inline(always)]
     fn try_from(p: &procfs::process::Process) -> Result<Self, Self::Error> {
         let stat = p.stat()?;
-        // panic here if we cannot get CLK_TCK
-        let clk_tck = get_clk_tck()? as u64;
 
         Ok(Self {
-            start_time_sec: stat.starttime / clk_tck,
+            start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
             pid: p.pid as u32,
         })
     }
@@ -85,11 +93,9 @@ impl TryFrom<&procfs::process::Process> for TaskKey {
     #[inline(always)]
     fn try_from(p: &procfs::process::Process) -> Result<Self, Self::Error> {
         let stat = p.stat()?;
-        // panic here if we cannot get CLK_TCK
-        let clk_tck = get_clk_tck()? as u64;
 
         Ok(Self {
-            start_time_sec: stat.starttime / clk_tck,
+            start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
             pid: p.pid,
         })
     }
