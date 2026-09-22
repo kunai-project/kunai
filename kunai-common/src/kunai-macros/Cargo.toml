@@ -3,7 +3,6 @@ name = "kunai-macros"
 edition = "2021"
 description = "Package providing proc-macro specific to Kunai"
 version.workspace = true
-authors.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false

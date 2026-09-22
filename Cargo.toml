@@ -5,11 +5,9 @@ default-members = ["kunai", "kunai-common"]
 
 [workspace.package]
 version = "0.7.0-rc.1"
-authors = ["Quentin JEROME <qjerome@rawsec.lu>"]
 edition = "2021"
 repository = "https://github.com/kunai-project/kunai"
 license = "GPL-3.0"
-license-file = "LICENSE"
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }

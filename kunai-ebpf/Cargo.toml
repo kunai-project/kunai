@@ -1,8 +1,7 @@
 [package]
 name = "kunai-ebpf"
 version = "0.7.0-rc.1"
-authors.workspace = true
-edition = "2021"
+edition.workspace = true
 description = "Package containing eBPF code used by Kunai"
 repository = "https://github.com/kunai-project/kunai"
 license = "GPL-3.0"
