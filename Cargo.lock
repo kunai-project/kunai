@@ -1648,7 +1648,6 @@ dependencies = [
  "aya-ebpf",
  "base64ct",
  "bindgen",
- "flaglet",
  "kunai-macros",
  "paste",
  "serde",
