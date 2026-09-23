@@ -89,3 +89,4 @@ fi
 
 tail -n 30 $kernel_logs | grep 'SUCCESS' > /dev/null
 
+rm $tmp_dir/init
