@@ -1,16 +1,12 @@
+[env]
+ARCH = { script = ["uname -m"] }
+
 [tasks.clippy-ebpf-json]
 workspace = false
-env = { AYA_BUILD_SKIP = true }
+env = { AYA_BUILD_SKIP = true, RUSTFLAGS = "--cfg bpf_target_arch=\"${ARCH}\"" }
 toolchain = "nightly"
 command = "cargo"
-args = [
-  "clippy",
-  "-Zbuild-std",
-  "--release",
-  "--target=bpfel-unknown-none",
-  "--manifest-path=kunai-ebpf/Cargo.toml",
-  "--message-format=json"
-]
+args = ["clippy", "-Zbuild-std", "--release", "--target=bpfel-unknown-none", "--manifest-path=kunai-ebpf/Cargo.toml", "--message-format=json"]
 
 [tasks.clippy-json]
 workspace = false
@@ -21,16 +17,10 @@ args = ["clippy", "--all-targets", "--message-format=json"]
 
 [tasks.clippy-ebpf]
 workspace = false
-env = { AYA_BUILD_SKIP = true }
+env = { AYA_BUILD_SKIP = true, RUSTFLAGS = "--cfg bpf_target_arch=\"${ARCH}\"" }
 toolchain = "nightly"
 command = "cargo"
-args = [
-  "clippy",
-  "-Zbuild-std",
-  "--release",
-  "--target=bpfel-unknown-none",
-  "--manifest-path=kunai-ebpf/Cargo.toml",
-]
+args = ["clippy", "-Zbuild-std", "--release", "--target=bpfel-unknown-none", "--manifest-path=kunai-ebpf/Cargo.toml"]
 
 [tasks.clippy]
 workspace = false
