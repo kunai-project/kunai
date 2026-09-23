@@ -6,7 +6,11 @@
           "overrideCommand": ["cargo", "make", "clippy-json"],
         },
         "cargo": {
-          "cfgs": ["debug_assertions", "target_arch=bpf"],
+          "cfgs": [
+            "debug_assertions",
+            "target_arch=bpf",
+            "bpf_target_arch=x86_64",
+          ],
         },
       },
     },
