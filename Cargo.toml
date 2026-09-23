@@ -25,7 +25,6 @@ env_logger = "0.10"
 firo = "0.3"
 flate2 = "1.0"
 fs-walk = "0.1.0"
-flaglet = "0.1.2"
 gene = { version = ">=0.7.2" }
 gene_derive = { version = ">=0.7.2" }
 hex = "0.4.3"
@@ -34,28 +33,27 @@ humantime = "2.3.0"
 ip_network = "0.4"
 kunai-common = { path = "kunai-common" }
 kunai-macros = { path = "kunai-common/src/kunai-macros" }
-lazy-cache = "0.1"
 libc = "0.2"
 log = "0.4"
 lru-st = "0.2"
-magic-db = "0.5"
+magic-db = "0.6"
 object = "0.34.0"
 paste = "1.0"
 procfs = "0.16"
-pure-magic = "0.3"
+pure-magic = "0.4"
 serde = "1.0.164"
 serde_json = "1.0.108"
 serde_yaml = "0.9"
-simple-dns = "0.11.2"
+simple-dns = "0.12.0"
 thiserror = "1.0"
 tokio = "1.43"
 uuid = "1.6.1"
-yara-x = "1.16.0"
+yara-x = "1.20.0"
 
 # crypto
-md-5 = "0.10.5"
-sha1 = "0.10.5"
-sha2 = "0.10.6"
+md-5 = "0.11.0"
+sha1 = "0.11.0"
+sha2 = "0.11.0"
 
 [profile.dev]
 opt-level = 2
