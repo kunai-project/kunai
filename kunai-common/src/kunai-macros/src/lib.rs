@@ -144,7 +144,10 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
         // we generate a match arm delivering the good error name
         if v.fields.is_empty() {
             as_str_arms.push(quote!(Self::#name => #args,));
-            c_str_arms.push(quote!(Self::#name => concat!(#args, '\0'),));
+            let cstring = std::ffi::CString::new(args.as_str())
+                .expect("str attribute value must not contain an embedded nul byte");
+            let c_lit = syn::LitCStr::new(&cstring, proc_macro2::Span::call_site());
+            c_str_arms.push(quote!(Self::#name => #c_lit,));
             from_str_arms.push(quote!(#args => Ok(Self::#name),));
             variants.push(quote!(Self::#name));
             try_from_uint_arms.push(quote!(ty if Self::#name as u64 == ty => Ok(Self::#name),));
@@ -199,7 +202,7 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
             }
 
             #[inline(always)]
-            pub const fn as_str_with_null(&self) -> &'static str{
+            pub const fn as_cstr(&self) -> &'static core::ffi::c_str::CStr{
                 match self {
                     #(#c_str_arms)*
                 }

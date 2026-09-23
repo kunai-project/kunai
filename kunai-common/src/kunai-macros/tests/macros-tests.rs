@@ -94,3 +94,27 @@ fn test_named_enum() {
 
     assert!(MyError::try_from_uint(42u8).is_err());
 }
+
+#[allow(dead_code)]
+#[test]
+fn test_as_cstr() {
+    #[repr(u32)]
+    #[derive(StrEnum, Debug, PartialEq, Eq)]
+    enum MyError {
+        #[str("foo")]
+        Variant0 = 0,
+        #[str("variant1")]
+        Variant1,
+        // no #[str(...)] attribute: falls back to the variant identifier
+        Variant2,
+    }
+
+    assert_eq!(MyError::Variant0.as_cstr(), c"foo");
+    assert_eq!(MyError::Variant1.as_cstr(), c"variant1");
+    assert_eq!(MyError::Variant2.as_cstr(), c"Variant2");
+
+    // as_cstr is generated as a `const fn`, so it must be usable in a
+    // const context.
+    const AS_CSTR: &core::ffi::CStr = MyError::Variant0.as_cstr();
+    assert_eq!(AS_CSTR, c"foo");
+}
