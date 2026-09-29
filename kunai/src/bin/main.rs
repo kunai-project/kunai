@@ -302,7 +302,11 @@ struct EventConsumer<'s> {
 /// True if `current` diverges from `baseline` and that divergence hasn't
 /// already been reported as `last_reported`.
 #[inline(always)]
-fn creds_diverged(baseline: creds::Creds, current: creds::Creds, last_reported: Option<creds::Creds>) -> bool {
+fn creds_diverged(
+    baseline: creds::Creds,
+    current: creds::Creds,
+    last_reported: Option<creds::Creds>,
+) -> bool {
     if baseline == current {
         return false;
     }
@@ -4195,7 +4199,7 @@ WantedBy=sysinit.target"#,
         if o.unit.exists() {
             println!(
                 "Following service will be stopped and uninstalled: {} -> {}",
-                &unit_name,
+                unit_name,
                 o.unit.to_string_lossy()
             );
         }
@@ -4216,7 +4220,7 @@ WantedBy=sysinit.target"#,
 
         // if any we must stop service first
         if o.unit.exists() {
-            println!("Uninstall systemd service: {}", &unit_name);
+            println!("Uninstall systemd service: {}", unit_name);
 
             // stop and disable unit
             Self::run_command("systemctl", &["stop", &unit_name])?;
