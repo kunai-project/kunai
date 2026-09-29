@@ -3,6 +3,7 @@ use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
+    sync::Arc,
 };
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
@@ -574,17 +575,17 @@ macro_rules! def_user_data {
         }
 
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
-pub struct ExecveData {
-    pub ancestors: String,
+pub struct ExecveData<'d> {
+    pub ancestors: Vec<Cow<'d, str>>,
     pub parent_command_line: String,
     pub parent_exe: String,
     pub command_line: String,
-    pub exe: Hashes,
+    pub exe: Arc<Hashes>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub interpreter: Option<Hashes>,
+    pub interpreter: Option<Arc<Hashes>>,
 }
 
-impl Scannable for ExecveData {
+impl Scannable for ExecveData<'_> {
     #[inline]
     fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
         let mut v = vec![Cow::Borrowed(&self.exe.path)];
@@ -595,7 +596,7 @@ impl Scannable for ExecveData {
     }
 }
 
-impl IocGetter for ExecveData {
+impl IocGetter for ExecveData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         // parent_exe path
         let mut v = vec![self.parent_exe.as_str().into()];
@@ -813,7 +814,7 @@ impl_std_iocs!(CredsTamperedData<'_>);
 
 def_user_data!(
     pub struct MmapExecData {
-        pub mapped: Hashes,
+        pub mapped: Arc<Hashes>,
     }
 );
 
@@ -1259,7 +1260,7 @@ pub struct FileScanData {
 }
 
 impl FileScanData {
-    pub fn from_hashes(h: Hashes) -> Self {
+    pub fn from_hashes(h: Arc<Hashes>) -> Self {
         let p = h.path.clone();
         Self {
             path: p,

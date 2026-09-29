@@ -66,16 +66,16 @@ pub struct FileMeta {
     pub error: Option<String>,
 }
 
-impl From<Hashes> for FileMeta {
-    fn from(value: Hashes) -> Self {
+impl From<Arc<Hashes>> for FileMeta {
+    fn from(value: Arc<Hashes>) -> Self {
         Self {
-            magic: value.magic,
-            md5: value.md5,
-            sha1: value.sha1,
-            sha256: value.sha256,
-            sha512: value.sha512,
+            magic: value.magic.clone(),
+            md5: value.md5.clone(),
+            sha1: value.sha1.clone(),
+            sha256: value.sha256.clone(),
+            sha512: value.sha512.clone(),
             size: value.size,
-            error: value.error,
+            error: value.error.clone(),
         }
     }
 }
@@ -324,7 +324,7 @@ unsafe impl Sync for Key {}
 
 pub struct Cache {
     mnt_namespaces: LruHashMap<Mnt, namespace::Switcher<Mnt>>,
-    hashes: LruHashMap<Key, Hashes>,
+    hashes: LruHashMap<Key, Arc<Hashes>>,
     users: LruHashMap<Key, Arc<Users>>,
     groups: LruHashMap<Key, Arc<Groups>>,
     // since hashes and signatures are not computed
@@ -481,7 +481,7 @@ impl Cache {
         ns: Mnt,
         path: &Path,
         magic_db: &MagicDb,
-    ) -> Result<Hashes, Error> {
+    ) -> Result<Arc<Hashes>, Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
@@ -492,7 +492,7 @@ impl Cache {
             let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 
             if !self.hashes.contains_key(&key) {
-                let h = Hashes::from_path_ref(pb, magic_db);
+                let h = Arc::new(Hashes::from_path_ref(pb, magic_db));
                 self.hashes.insert(key.clone(), h);
             }
 

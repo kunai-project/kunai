@@ -279,24 +279,31 @@ impl std::fmt::Display for Action {
     }
 }
 
-struct EventConsumer<'s> {
-    system_info: SystemInfo,
+/// State needed to scan, act on and print events, kept apart from
+/// [`EventConsumer`] so that events borrowing process tracking state
+/// can be processed while it is still borrowed.
+struct EventSink<'s> {
     config: Config,
-    filter: Filter,
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
-    random: u32,
     cache: cache::Cache,
-    processes: HashMap<ProcKey, Process>,
-    tasks: HashMap<TaskKey, Task>,
-    resolved: HashMap<IpAddr, String>,
     killed_tasks: LruHashSet<String>,
-    exited_tasks: u64,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
     magic_db: MagicDb,
     // used to check if we must generate FileScan events
     scan_events_enabled: bool,
+}
+
+struct EventConsumer<'s> {
+    system_info: SystemInfo,
+    filter: Filter,
+    random: u32,
+    processes: HashMap<ProcKey, Process>,
+    tasks: HashMap<TaskKey, Task>,
+    resolved: HashMap<IpAddr, String>,
+    exited_tasks: u64,
+    sink: EventSink<'s>,
 }
 
 /// True if `current` diverges from `baseline` and that divergence hasn't
@@ -311,6 +318,260 @@ fn creds_diverged(
         return false;
     }
     !last_reported.is_some_and(|reported| reported == current)
+}
+
+impl EventSink<'_> {
+    #[inline(always)]
+    fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Arc<Hashes> {
+        if let Some(ns) = ns {
+            match self.cache.get_hashes_in_ns(ns, p, &self.magic_db) {
+                Ok(h) => h,
+                Err(e) => {
+                    let meta = FileMeta {
+                        error: Some(format!("{e}")),
+                        ..Default::default()
+                    };
+                    Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
+                }
+            }
+        } else {
+            let meta = FileMeta {
+                error: Some("unknown namespace".into()),
+                ..Default::default()
+            };
+            Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
+        }
+    }
+
+    #[inline(always)]
+    fn scan<T>(&mut self, event: &mut T) -> ScanResult
+    where
+        T: for<'e> KunaiEvent<'e>,
+    {
+        let mut scan_result = if !self.engine.is_empty() {
+            match self.engine.scan(event) {
+                Ok(sr) => ScanResult::from(sr),
+                Err(b) => {
+                    let (sr, e) = *b;
+                    error!("event scanning error: {e}");
+                    ScanResult::from(sr)
+                }
+            }
+        } else {
+            ScanResult::default()
+        };
+
+        // no need to scan for IoC if not necessary
+        if !self.iocs.is_empty() {
+            let iocs = event.iocs();
+
+            let mut matching_iocs = iocs
+                .iter()
+                .flat_map(|ioc| {
+                    self.iocs
+                        .get_key_value(&ioc.to_string())
+                        .map(|(i, s)| (i, *s))
+                })
+                .peekable();
+
+            if matching_iocs.peek().is_some() {
+                // we add ioc matching to the list of matching rules
+                scan_result.update_iocs(matching_iocs);
+            }
+        }
+
+        scan_result
+    }
+
+    #[inline(always)]
+    fn handle_actions<T>(&mut self, event: &T, actions: &HashSet<String>, is_detection: bool)
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
+        // some actions are allowed only for detections
+        #[allow(clippy::collapsible_if)]
+        if is_detection {
+            // for the moment we only support killing the
+            // task itself and not its parent. Additional
+            // care must be taken to the parent as we need
+            // to be sure we are not killing something critical.
+            // Generally speaking killing action must be done with
+            // care as sending a SIGKILL to a critical process
+            // might impact the system.
+            if actions.contains(Action::Kill.as_str()) {
+                let pid = event.info().task.pid;
+                let guuid = &event.info().task.guuid;
+                // don't kill ourself: this check is redundant because kunai
+                // events aren't supposed to arrive until here but it is a cheap test
+                if pid as u32 != process::id() && !self.killed_tasks.contains(guuid) {
+                    // this is the kind of information we want to have
+                    // at all time so we put this as a warning not to
+                    // be disabled by the default logging policy
+                    warn!("sending SIGKILL to PID={pid}");
+                    if let Err(e) = kill(pid, libc::SIGKILL) {
+                        error!("error sending SIGKILL to PID={pid}: {e}")
+                    } else {
+                        self.killed_tasks.insert(guuid.clone());
+                    }
+                }
+            }
+        }
+
+        // if action contains scan-file and if scan events are enabled
+        if self.scan_events_enabled && actions.contains(Action::ScanFiles.as_str()) {
+            let _ = self
+                .action_scan_files(event)
+                .inspect_err(|e| error!("{} action failed: {e}", Action::ScanFiles));
+        }
+    }
+
+    #[inline(always)]
+    fn file_scan_event<'a, T>(
+        &mut self,
+        event: &'a T,
+        ns: Mnt,
+        p: &Path,
+    ) -> UserEvent<'a, FileScanData>
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
+        // if the scanner is None, signatures will be an empty Vec
+        let (sigs, err) = match self.file_scanner.as_mut() {
+            Some(s) => match self
+                .cache
+                .get_sig_in_ns(ns, &cache::Path::from(p.to_path_buf()), s)
+            {
+                Ok((sigs, msg)) => (sigs, msg),
+                Err(e) => (vec![], Some(format!("{e}"))),
+            },
+            None => (vec![], None),
+        };
+
+        let pos = sigs.len();
+        let mut data = FileScanData::from_hashes(
+            self.get_hashes_in_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
+        );
+        data.source_event = event.info().event.uuid.clone();
+        data.signatures = sigs;
+        data.positives = pos;
+        data.scan_error = err;
+
+        let info = EventInfo::from_other_with_type(event.info().clone(), Type::FileScan);
+        UserEvent::with_data_and_info(data, info)
+    }
+
+    #[inline(always)]
+    fn action_scan_files<T>(&mut self, event: &T) -> anyhow::Result<()>
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
+        // this check prevents infinite loop for FileScan events
+        if event.info().event.id == Type::FileScan.id() {
+            return Ok(());
+        }
+
+        let ns = match event.info().task.namespaces.as_ref() {
+            Some(ns) => Mnt::from_inum(ns.mnt),
+            None => return Err(anyhow!("namespace not found")),
+        };
+
+        for p in event
+            .scannable_files()
+            .iter()
+            // we don't scan file paths being ?
+            .filter(|&p| p != &PathBuf::from("?").into())
+        {
+            let mut event = self.file_scan_event(event, ns, p);
+            // print a warning if a positive scan happens so that a trace
+            // is kept in system logs
+            if event.data.positives > 0 {
+                warn!(
+                    "file={} matches detection signatures={:?} triggered by event uuid={}",
+                    p.to_string_lossy(),
+                    event.data.signatures,
+                    event.info().event.uuid,
+                );
+            }
+
+            // we run through event scanning engine
+            let got_printed = self.scan_and_print(&mut event);
+
+            // - we can force printing positive scans even if there is no filtering rule for it
+            // - an attempt to print the event if there is an error was made but it generates
+            // noisy events. A better way to handle scan errors is to create a filtering rule
+            if !got_printed
+                && self.config.scanner.show_positive_file_scan
+                && event.data.positives > 0
+            {
+                match serde_json::to_string(&event) {
+                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
+                    Err(e) => error!("failed to serialize event to json: {e}"),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn serialize_print<T: Serialize>(&mut self, event: &mut T) -> bool {
+        match serde_json::to_string(event) {
+            Ok(ser) => {
+                writeln!(self.output, "{ser}").expect("failed to write json event");
+                // if output is unbuffered we flush it
+                // unbuffered output allow to have logs written in near
+                // real-time into output file
+                if !self.config.output.buffered {
+                    self.output.flush().expect("failed to flush output");
+                }
+                return true;
+            }
+            Err(e) => error!("failed to serialize event to json: {e}"),
+        }
+        false
+    }
+
+    #[inline(always)]
+    fn scan_and_print<T>(&mut self, event: &mut T) -> bool
+    where
+        T: for<'e> KunaiEvent<'e> + Serialize,
+    {
+        let mut printed = false;
+
+        // default: we have neither rules nor iocs
+        // to scan for so we print event
+        if self.iocs.is_empty() && self.engine.is_empty() {
+            return self.serialize_print(event);
+        }
+
+        // scan for iocs and filter/matching rules
+        let sr = self.scan(event);
+        if let Some(d) = sr.detection {
+            let severity = d.severity;
+            event.set_detection(d);
+
+            // we print event only if needed
+            printed = if severity >= self.config.scanner.min_severity {
+                self.serialize_print(event)
+            } else {
+                false
+            };
+
+            // get_detection will always be false for filters
+            if let Some(d) = event.get_detection() {
+                self.handle_actions(event, &d.actions, true)
+            }
+        }
+        if let Some(f) = sr.filter {
+            event.set_filter(f);
+            printed = self.serialize_print(event);
+            if let Some(f) = event.get_filter() {
+                self.handle_actions(event, &f.actions, false)
+            }
+        }
+
+        printed
+    }
 }
 
 impl EventConsumer<'_> {
@@ -373,21 +634,23 @@ impl EventConsumer<'_> {
 
         let mut ep = Self {
             system_info,
-            config,
             filter,
-            engine: Engine::new(),
-            iocs: HashMap::new(),
             random: util::getrandom::<u32>()?,
-            cache: Cache::with_max_entries(10000),
             processes: HashMap::with_capacity(512),
             tasks: HashMap::with_capacity(512),
-            killed_tasks: LruHashSet::with_max_entries(512),
             exited_tasks: 0,
             resolved: HashMap::new(),
-            output,
-            file_scanner: None,
-            magic_db: magic_db::load().map_err(|e| anyhow!("failed to open magic-db: {e}"))?,
-            scan_events_enabled,
+            sink: EventSink {
+                config,
+                engine: Engine::new(),
+                iocs: HashMap::new(),
+                cache: Cache::with_max_entries(10000),
+                killed_tasks: LruHashSet::with_max_entries(512),
+                output,
+                file_scanner: None,
+                magic_db: magic_db::load().map_err(|e| anyhow!("failed to open magic-db: {e}"))?,
+                scan_events_enabled,
+            },
         };
 
         // initializing yara rules
@@ -423,7 +686,7 @@ impl EventConsumer<'_> {
         let mut c = yara_x::Compiler::new();
 
         let mut files_loaded = 0;
-        for p in self.config.scanner.yara.iter() {
+        for p in self.sink.config.scanner.yara.iter() {
             debug!("looking for yara rules in: {}", p.to_string_lossy());
             let w = wo.clone().walk(p);
             for r in w {
@@ -447,7 +710,7 @@ impl EventConsumer<'_> {
         if let Ok(mut s) = scanner.lock() {
             s.max_scan_size(FILE_SIZE_SCAN_LIMIT as usize);
         }
-        self.file_scanner = Some(scanner);
+        self.sink.file_scanner = Some(scanner);
 
         Ok(())
     }
@@ -528,7 +791,7 @@ impl EventConsumer<'_> {
         let mut compiler = Compiler::new();
 
         // loading rules in the engine
-        if self.config.scanner.rules.is_empty() {
+        if self.sink.config.scanner.rules.is_empty() {
             return Ok(compiler);
         }
 
@@ -554,7 +817,7 @@ impl EventConsumer<'_> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.scanner.rules.clone().iter() {
+        for p in self.sink.config.scanner.rules.clone().iter() {
             if !p.exists() {
                 error!(
                     "kunai rule loader: no such file or directory {}",
@@ -583,17 +846,17 @@ impl EventConsumer<'_> {
     }
 
     fn init_event_scanner(&mut self) -> anyhow::Result<()> {
-        self.engine = Engine::try_from(self.compile_kunai_rules()?)?;
+        self.sink.engine = Engine::try_from(self.compile_kunai_rules()?)?;
         info!(
             "detection engine initialized rules={}",
-            self.engine.rules_count()
+            self.sink.engine.rules_count()
         );
         Ok(())
     }
 
     fn init_iocs(&mut self) -> anyhow::Result<()> {
         // loading iocs
-        if self.config.scanner.iocs.is_empty() {
+        if self.sink.config.scanner.iocs.is_empty() {
             return Ok(());
         }
 
@@ -606,7 +869,7 @@ impl EventConsumer<'_> {
             // don't go recursive
             .max_depth(0);
 
-        for p in self.config.scanner.iocs.clone().iter() {
+        for p in self.sink.config.scanner.iocs.clone().iter() {
             if !p.exists() {
                 error!(
                     "ioc file loader: no such file or directory {}",
@@ -626,7 +889,7 @@ impl EventConsumer<'_> {
             }
         }
 
-        info!("number of IoCs loaded: {}", self.iocs.len());
+        info!("number of IoCs loaded: {}", self.sink.iocs.len());
 
         Ok(())
     }
@@ -638,7 +901,8 @@ impl EventConsumer<'_> {
         for line in f.lines() {
             let line = line?;
             let ioc: IoC = serde_json::from_str(&line)?;
-            self.iocs
+            self.sink
+                .iocs
                 .entry(ioc.value)
                 .and_modify(|e| *e = max(*e, ioc.severity))
                 .or_insert(ioc.severity);
@@ -828,8 +1092,50 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
+    fn get_all_ancestors(
+        processes: &HashMap<ProcKey, Process>,
+        mut tk: ProcKey,
+        mut skip: u16,
+    ) -> Vec<Cow<'_, str>> {
+        let mut ancestors = vec![];
+        let mut last = None;
+
+        while let Some(task) = processes.get(&tk) {
+            last = Some(task);
+            if skip == 0 {
+                ancestors.insert(0, task.image.to_string_lossy());
+            } else {
+                skip -= 1;
+            }
+
+            tk = match task.real_parent_key {
+                Some(v) => v,
+                None => {
+                    break;
+                }
+            };
+        }
+
+        if let Some(last) = last {
+            if last.pid != 1 && !last.is_kthread() && skip == 0 {
+                ancestors.insert(0, "?".into());
+            }
+        }
+
+        ancestors
+    }
+
+    #[inline(always)]
     fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
         self.get_ancestors(i.process_key(), 1).join("|")
+    }
+
+    #[inline(always)]
+    fn get_task_ancestors<'p>(
+        processes: &'p HashMap<ProcKey, Process>,
+        i: &StdEventInfo,
+    ) -> Vec<Cow<'p, str>> {
+        Self::get_all_ancestors(processes, i.process_key(), 1)
     }
 
     #[inline(always)]
@@ -901,28 +1207,6 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Hashes {
-        if let Some(ns) = ns {
-            match self.cache.get_hashes_in_ns(ns, p, &self.magic_db) {
-                Ok(h) => h,
-                Err(e) => {
-                    let meta = FileMeta {
-                        error: Some(format!("{e}")),
-                        ..Default::default()
-                    };
-                    Hashes::with_meta(p.to_path_buf().clone(), meta)
-                }
-            }
-        } else {
-            let meta = FileMeta {
-                error: Some("unknown namespace".into()),
-                ..Default::default()
-            };
-            Hashes::with_meta(p.to_path_buf().clone(), meta)
-        }
-    }
-
-    #[inline(always)]
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
         ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt)).into()
     }
@@ -962,29 +1246,23 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn execve_event<'a>(
-        &mut self,
+    fn execve_event<'a, 'p>(
+        &self,
         info: &'a StdEventInfo,
-        bpf_data: bpf_events::ExecveData,
-    ) -> UserEvent<'a, ExecveData> {
-        let ancestors = self.get_ancestors_string(info);
+        ancestors: Vec<Cow<'p, str>>,
+        exe_hashes: Arc<Hashes>,
+        interp_hashes: Option<Arc<Hashes>>,
+    ) -> UserEvent<'a, ExecveData<'p>> {
         let cli = self.get_command_line(info.process_key());
 
-        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-
-        let mut data = ExecveData {
+        let data = ExecveData {
             ancestors,
             parent_command_line: self.get_parent_command_line(info),
             parent_exe: self.get_parent_image(info),
             command_line: cli,
-            exe: self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.executable)),
-            interpreter: None,
+            exe: exe_hashes,
+            interpreter: interp_hashes,
         };
-
-        if bpf_data.executable != bpf_data.interpreter {
-            data.interpreter =
-                Some(self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.interpreter)))
-        }
 
         UserEvent::new(data, info)
     }
@@ -1147,7 +1425,9 @@ impl EventConsumer<'_> {
     ) -> UserEvent<'a, kunai::events::MmapExecData> {
         let filename = bpf_data.filename;
         let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-        let mmapped_hashes = self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
+        let mmapped_hashes = self
+            .sink
+            .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
 
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
@@ -1589,10 +1869,10 @@ impl EventConsumer<'_> {
         let self_exe = PathBuf::from("/proc/self/exe");
         data.kunai.exe = Hashes::from_path_ref(
             self_exe.clone().canonicalize().unwrap_or(self_exe),
-            &self.magic_db,
+            &self.sink.magic_db,
         );
 
-        data.kunai.config.sha256 = self.config.sha256().ok().unwrap_or("?".into());
+        data.kunai.config.sha256 = self.sink.config.sha256().ok().unwrap_or("?".into());
 
         // setting up uptime and boottime
         if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
@@ -1793,7 +2073,8 @@ impl EventConsumer<'_> {
     #[inline(always)]
     fn handle_hash_event(&mut self, info: StdEventInfo, bpf_data: bpf_events::HashData) {
         let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-        self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.path));
+        self.sink
+            .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.path));
     }
 
     #[inline(always)]
@@ -1844,12 +2125,14 @@ impl EventConsumer<'_> {
         mnt_ns: Mnt,
         ti: &bpf_events::TaskInfo,
     ) -> TaskAdditionalInfo {
-        let res = match self.cache.get_user_group_in_ns(mnt_ns) {
+        let res = match self.sink.cache.get_user_group_in_ns(mnt_ns) {
             Ok(o) => Ok(o),
             Err(e) => match e {
                 Error::Namespace(ns) => {
                     if ns.is_other_and_io_kind(io::ErrorKind::NotFound) {
-                        self.cache.get_user_group_in_ns(self.system_info.mount_ns)
+                        self.sink
+                            .cache
+                            .get_user_group_in_ns(self.system_info.mount_ns)
                     } else {
                         Err(ns.into())
                     }
@@ -1926,247 +2209,17 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn scan<T>(&mut self, event: &mut T) -> ScanResult
-    where
-        T: for<'e> KunaiEvent<'e>,
-    {
-        let mut scan_result = if !self.engine.is_empty() {
-            match self.engine.scan(event) {
-                Ok(sr) => ScanResult::from(sr),
-                Err(b) => {
-                    let (sr, e) = *b;
-                    error!("event scanning error: {e}");
-                    ScanResult::from(sr)
-                }
-            }
-        } else {
-            ScanResult::default()
-        };
-
-        // no need to scan for IoC if not necessary
-        if !self.iocs.is_empty() {
-            let iocs = event.iocs();
-
-            let mut matching_iocs = iocs
-                .iter()
-                .flat_map(|ioc| {
-                    self.iocs
-                        .get_key_value(&ioc.to_string())
-                        .map(|(i, s)| (i, *s))
-                })
-                .peekable();
-
-            if matching_iocs.peek().is_some() {
-                // we add ioc matching to the list of matching rules
-                scan_result.update_iocs(matching_iocs);
-            }
-        }
-
-        scan_result
-    }
-
-    #[inline(always)]
-    fn handle_actions<T>(&mut self, event: &T, actions: &HashSet<String>, is_detection: bool)
-    where
-        T: for<'e> KunaiEvent<'e> + Serialize,
-    {
-        // some actions are allowed only for detections
-        #[allow(clippy::collapsible_if)]
-        if is_detection {
-            // for the moment we only support killing the
-            // task itself and not its parent. Additional
-            // care must be taken to the parent as we need
-            // to be sure we are not killing something critical.
-            // Generally speaking killing action must be done with
-            // care as sending a SIGKILL to a critical process
-            // might impact the system.
-            if actions.contains(Action::Kill.as_str()) {
-                let pid = event.info().task.pid;
-                let guuid = &event.info().task.guuid;
-                // don't kill ourself: this check is redundant because kunai
-                // events aren't supposed to arrive until here but it is a cheap test
-                if pid as u32 != process::id() && !self.killed_tasks.contains(guuid) {
-                    // this is the kind of information we want to have
-                    // at all time so we put this as a warning not to
-                    // be disabled by the default logging policy
-                    warn!("sending SIGKILL to PID={pid}");
-                    if let Err(e) = kill(pid, libc::SIGKILL) {
-                        error!("error sending SIGKILL to PID={pid}: {e}")
-                    } else {
-                        self.killed_tasks.insert(guuid.clone());
-                    }
-                }
-            }
-        }
-
-        // if action contains scan-file and if scan events are enabled
-        if self.scan_events_enabled && actions.contains(Action::ScanFiles.as_str()) {
-            let _ = self
-                .action_scan_files(event)
-                .inspect_err(|e| error!("{} action failed: {e}", Action::ScanFiles));
-        }
-    }
-
-    #[inline(always)]
-    fn file_scan_event<'a, T>(
-        &mut self,
-        event: &'a T,
-        ns: Mnt,
-        p: &Path,
-    ) -> UserEvent<'a, FileScanData>
-    where
-        T: for<'e> KunaiEvent<'e> + Serialize,
-    {
-        // if the scanner is None, signatures will be an empty Vec
-        let (sigs, err) = match self.file_scanner.as_mut() {
-            Some(s) => match self
-                .cache
-                .get_sig_in_ns(ns, &cache::Path::from(p.to_path_buf()), s)
-            {
-                Ok((sigs, msg)) => (sigs, msg),
-                Err(e) => (vec![], Some(format!("{e}"))),
-            },
-            None => (vec![], None),
-        };
-
-        let pos = sigs.len();
-        let mut data = FileScanData::from_hashes(
-            self.get_hashes_in_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
-        );
-        data.source_event = event.info().event.uuid.clone();
-        data.signatures = sigs;
-        data.positives = pos;
-        data.scan_error = err;
-
-        let info = EventInfo::from_other_with_type(event.info().clone(), Type::FileScan);
-        UserEvent::with_data_and_info(data, info)
-    }
-
-    #[inline(always)]
-    fn action_scan_files<T>(&mut self, event: &T) -> anyhow::Result<()>
-    where
-        T: for<'e> KunaiEvent<'e> + Serialize,
-    {
-        // this check prevents infinite loop for FileScan events
-        if event.info().event.id == Type::FileScan.id() {
-            return Ok(());
-        }
-
-        let ns = match event.info().task.namespaces.as_ref() {
-            Some(ns) => Mnt::from_inum(ns.mnt),
-            None => return Err(anyhow!("namespace not found")),
-        };
-
-        for p in event
-            .scannable_files()
-            .iter()
-            // we don't scan file paths being ?
-            .filter(|&p| p != &PathBuf::from("?").into())
-        {
-            let mut event = self.file_scan_event(event, ns, p);
-            // print a warning if a positive scan happens so that a trace
-            // is kept in system logs
-            if event.data.positives > 0 {
-                warn!(
-                    "file={} matches detection signatures={:?} triggered by event uuid={}",
-                    p.to_string_lossy(),
-                    &event.data.signatures,
-                    &event.info().event.uuid,
-                );
-            }
-
-            // we run through event scanning engine
-            let got_printed = self.scan_and_print(&mut event);
-
-            // - we can force printing positive scans even if there is no filtering rule for it
-            // - an attempt to print the event if there is an error was made but it generates
-            // noisy events. A better way to handle scan errors is to create a filtering rule
-            if !got_printed
-                && self.config.scanner.show_positive_file_scan
-                && event.data.positives > 0
-            {
-                match serde_json::to_string(&event) {
-                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
-                    Err(e) => error!("failed to serialize event to json: {e}"),
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn serialize_print<T: Serialize>(&mut self, event: &mut T) -> bool {
-        match serde_json::to_string(event) {
-            Ok(ser) => {
-                writeln!(self.output, "{ser}").expect("failed to write json event");
-                // if output is unbuffered we flush it
-                // unbuffered output allow to have logs written in near
-                // real-time into output file
-                if !self.config.output.buffered {
-                    self.output.flush().expect("failed to flush output");
-                }
-                return true;
-            }
-            Err(e) => error!("failed to serialize event to json: {e}"),
-        }
-        false
-    }
-
-    #[inline(always)]
-    fn scan_and_print<T>(&mut self, event: &mut T) -> bool
-    where
-        T: for<'e> KunaiEvent<'e> + Serialize,
-    {
-        let mut printed = false;
-
-        // default: we have neither rules nor iocs
-        // to scan for so we print event
-        if self.iocs.is_empty() && self.engine.is_empty() {
-            return self.serialize_print(event);
-        }
-
-        // scan for iocs and filter/matching rules
-        let sr = self.scan(event);
-        if let Some(d) = sr.detection {
-            let severity = d.severity;
-            event.set_detection(d);
-
-            // we print event only if needed
-            printed = if severity >= self.config.scanner.min_severity {
-                self.serialize_print(event)
-            } else {
-                false
-            };
-
-            // get_detection will always be false for filters
-            if let Some(d) = event.get_detection() {
-                self.handle_actions(event, &d.actions, true)
-            }
-        }
-        if let Some(f) = sr.filter {
-            event.set_filter(f);
-            printed = self.serialize_print(event);
-            if let Some(f) = event.get_filter() {
-                self.handle_actions(event, &f.actions, false)
-            }
-        }
-
-        printed
-    }
-
-    #[inline(always)]
     fn cache_namespaces(&mut self, i: &bpf_events::EventInfo) {
         if let Some(t_mnt_ns) = Self::task_mnt_ns(i) {
             let pid = i.process.pid;
-            if let Err(e) = self.cache.cache_mnt_ns(pid, t_mnt_ns) {
+            if let Err(e) = self.sink.cache.cache_mnt_ns(pid, t_mnt_ns) {
                 debug!("failed to cache namespace pid={pid} ns={t_mnt_ns}: {e}");
             }
         }
 
         if let Some(p_mnt_ns) = Self::parent_mnt_ns(i) {
             let pid = i.parent.pid;
-            if let Err(e) = self.cache.cache_mnt_ns(pid, p_mnt_ns) {
+            if let Err(e) = self.sink.cache.cache_mnt_ns(pid, p_mnt_ns) {
                 debug!("failed to cache namespace pid={pid} ns={p_mnt_ns}: {e}");
             }
         }
@@ -2192,7 +2245,7 @@ impl EventConsumer<'_> {
 
         let std_info = self.build_std_event_info(*info);
         let mut tampered = self.creds_tampered_event(&std_info, baseline);
-        self.scan_and_print(&mut tampered);
+        self.sink.scan_and_print(&mut tampered);
 
         // we only keep track of what we reported so that we don't re-fire on
         // every subsequent event. The baseline is left untouched on purpose,
@@ -2242,9 +2295,25 @@ impl EventConsumer<'_> {
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
                     let std_info = self.build_std_event_info(std_info.bpf);
-                    let mut e = self.execve_event(&std_info, e.data);
+                    let bpf_data = &e.data;
+                    let opt_mnt_ns = Self::task_mnt_ns(&std_info.bpf);
+                    let exe_hashes = self
+                        .sink
+                        .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.executable));
 
-                    self.scan_and_print(&mut e);
+                    let interp_hashes = if bpf_data.executable != bpf_data.interpreter {
+                        Some(self.sink.get_hashes_in_ns(
+                            opt_mnt_ns,
+                            &cache::Path::from(&bpf_data.interpreter),
+                        ))
+                    } else {
+                        None
+                    };
+
+                    let ancestors = Self::get_task_ancestors(&self.processes, &std_info);
+                    let mut e = self.execve_event(&std_info, ancestors, exe_hashes, interp_hashes);
+
+                    self.sink.scan_and_print(&mut e);
                 }
             }
 
@@ -2271,14 +2340,14 @@ impl EventConsumer<'_> {
                     // information
                     let std_info = self.build_std_event_info(std_info.bpf);
                     let mut e = self.clone_event(&std_info, e.data);
-                    self.scan_and_print(&mut e);
+                    self.sink.scan_and_print(&mut e);
                 }
             }
 
             EbpfEvent::Prctl(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.prctl_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Kill(e) => {
@@ -2287,7 +2356,7 @@ impl EventConsumer<'_> {
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
                 let mut e = self.kill_event(&std_info, &target_tai, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Ptrace(e) => {
@@ -2296,7 +2365,7 @@ impl EventConsumer<'_> {
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
                 let mut e = self.ptrace_event(&std_info, &target_tai, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::CommitCreds(e) => {
@@ -2311,74 +2380,74 @@ impl EventConsumer<'_> {
                     },
                 );
                 let mut e = self.commit_creds_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::MmapExec(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.mmap_exec_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Mprotect(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.mprotect_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Connect(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.connect_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::DnsQuery(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 for e in self.dns_query_events(&std_info, e.data).iter_mut() {
-                    self.scan_and_print(e);
+                    self.sink.scan_and_print(e);
                 }
             }
 
             EbpfEvent::SendEntropy(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.send_data_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::InitModule(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.init_module_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::File(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.file_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Unlink(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.unlink_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::FileRename(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.file_rename_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfProgLoad(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.bpf_prog_load_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfSocketFilter(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.bpf_socket_filter_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Exit(e) => {
@@ -2389,20 +2458,20 @@ impl EventConsumer<'_> {
                 // to clean up the processes HashMap. So we need to check if we want
                 // to display those only now.
                 if self.filter.is_enabled(ty) {
-                    self.scan_and_print(&mut e);
+                    self.sink.scan_and_print(&mut e);
                 }
             }
 
             EbpfEvent::IoUringSqe(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.io_uring_sqe_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Error(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.error_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Correlation(e) => {
@@ -2424,13 +2493,13 @@ impl EventConsumer<'_> {
             EbpfEvent::Start(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut se = self.start_event(&std_info);
-                self.serialize_print(&mut se);
+                self.sink.serialize_print(&mut se);
             }
 
             EbpfEvent::Loss(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut evt = self.loss_event(&std_info, e.data);
-                self.serialize_print(&mut evt);
+                self.sink.serialize_print(&mut evt);
             }
 
             EbpfEvent::SysCoreResume(_) => { /*  just ignore it */ }
@@ -3367,7 +3436,7 @@ fn time_it<F: FnMut()>(mut f: F) -> Duration {
 // Enum used to deserialize and process events for
 // replay and test commands.
 enum ReplayEvent {
-    Execve(UserEvent<'static, ExecveData>),
+    Execve(UserEvent<'static, ExecveData<'static>>),
     Clone(UserEvent<'static, CloneData>),
     Prctl(UserEvent<'static, PrctlData>),
     Kill(UserEvent<'static, KillData<'static>>),
@@ -3399,28 +3468,28 @@ impl ReplayEvent {
     #[inline]
     fn scan(&mut self, c: &mut EventConsumer) -> ScanResult {
         match self {
-            Self::Execve(u) => c.scan(u),
-            Self::Clone(u) => c.scan(u),
-            Self::Prctl(u) => c.scan(u),
-            Self::Kill(u) => c.scan(u),
-            Self::Ptrace(u) => c.scan(u),
-            Self::CommitCreds(u) => c.scan(u),
-            Self::CredsTampered(u) => c.scan(u),
-            Self::MmapExec(u) => c.scan(u),
-            Self::MprotectExec(u) => c.scan(u),
-            Self::Connect(u) => c.scan(u),
-            Self::DnsQuery(u) => c.scan(u),
-            Self::SendData(u) => c.scan(u),
-            Self::InitModule(u) => c.scan(u),
-            Self::File(u) => c.scan(u),
-            Self::FileUnlink(u) => c.scan(u),
-            Self::FileRename(u) => c.scan(u),
-            Self::BpfProgLoad(u) => c.scan(u),
-            Self::BpfSocketFilter(u) => c.scan(u),
-            Self::Exit(u) => c.scan(u),
-            Self::IoUringSqe(u) => c.scan(u),
-            Self::FileScan(u) => c.scan(u),
-            Self::Error(u) => c.scan(u),
+            Self::Execve(u) => c.sink.scan(u),
+            Self::Clone(u) => c.sink.scan(u),
+            Self::Prctl(u) => c.sink.scan(u),
+            Self::Kill(u) => c.sink.scan(u),
+            Self::Ptrace(u) => c.sink.scan(u),
+            Self::CommitCreds(u) => c.sink.scan(u),
+            Self::CredsTampered(u) => c.sink.scan(u),
+            Self::MmapExec(u) => c.sink.scan(u),
+            Self::MprotectExec(u) => c.sink.scan(u),
+            Self::Connect(u) => c.sink.scan(u),
+            Self::DnsQuery(u) => c.sink.scan(u),
+            Self::SendData(u) => c.sink.scan(u),
+            Self::InitModule(u) => c.sink.scan(u),
+            Self::File(u) => c.sink.scan(u),
+            Self::FileUnlink(u) => c.sink.scan(u),
+            Self::FileRename(u) => c.sink.scan(u),
+            Self::BpfProgLoad(u) => c.sink.scan(u),
+            Self::BpfSocketFilter(u) => c.sink.scan(u),
+            Self::Exit(u) => c.sink.scan(u),
+            Self::IoUringSqe(u) => c.sink.scan(u),
+            Self::FileScan(u) => c.sink.scan(u),
+            Self::Error(u) => c.sink.scan(u),
             // not scannable events
             Self::Start(_) | Self::Loss(_) => ScanResult::default(),
         }
@@ -3429,28 +3498,28 @@ impl ReplayEvent {
     #[inline]
     fn scan_and_print(&mut self, c: &mut EventConsumer) -> bool {
         match self {
-            Self::Execve(u) => c.scan_and_print(u),
-            Self::Clone(u) => c.scan_and_print(u),
-            Self::Prctl(u) => c.scan_and_print(u),
-            Self::Kill(u) => c.scan_and_print(u),
-            Self::Ptrace(u) => c.scan_and_print(u),
-            Self::CommitCreds(u) => c.scan_and_print(u),
-            Self::CredsTampered(u) => c.scan_and_print(u),
-            Self::MmapExec(u) => c.scan_and_print(u),
-            Self::MprotectExec(u) => c.scan_and_print(u),
-            Self::Connect(u) => c.scan_and_print(u),
-            Self::DnsQuery(u) => c.scan_and_print(u),
-            Self::SendData(u) => c.scan_and_print(u),
-            Self::InitModule(u) => c.scan_and_print(u),
-            Self::File(u) => c.scan_and_print(u),
-            Self::FileUnlink(u) => c.scan_and_print(u),
-            Self::FileRename(u) => c.scan_and_print(u),
-            Self::BpfProgLoad(u) => c.scan_and_print(u),
-            Self::BpfSocketFilter(u) => c.scan_and_print(u),
-            Self::Exit(u) => c.scan_and_print(u),
-            Self::IoUringSqe(u) => c.scan_and_print(u),
-            Self::FileScan(u) => c.scan_and_print(u),
-            Self::Error(u) => c.scan_and_print(u),
+            Self::Execve(u) => c.sink.scan_and_print(u),
+            Self::Clone(u) => c.sink.scan_and_print(u),
+            Self::Prctl(u) => c.sink.scan_and_print(u),
+            Self::Kill(u) => c.sink.scan_and_print(u),
+            Self::Ptrace(u) => c.sink.scan_and_print(u),
+            Self::CommitCreds(u) => c.sink.scan_and_print(u),
+            Self::CredsTampered(u) => c.sink.scan_and_print(u),
+            Self::MmapExec(u) => c.sink.scan_and_print(u),
+            Self::MprotectExec(u) => c.sink.scan_and_print(u),
+            Self::Connect(u) => c.sink.scan_and_print(u),
+            Self::DnsQuery(u) => c.sink.scan_and_print(u),
+            Self::SendData(u) => c.sink.scan_and_print(u),
+            Self::InitModule(u) => c.sink.scan_and_print(u),
+            Self::File(u) => c.sink.scan_and_print(u),
+            Self::FileUnlink(u) => c.sink.scan_and_print(u),
+            Self::FileRename(u) => c.sink.scan_and_print(u),
+            Self::BpfProgLoad(u) => c.sink.scan_and_print(u),
+            Self::BpfSocketFilter(u) => c.sink.scan_and_print(u),
+            Self::Exit(u) => c.sink.scan_and_print(u),
+            Self::IoUringSqe(u) => c.sink.scan_and_print(u),
+            Self::FileScan(u) => c.sink.scan_and_print(u),
+            Self::Error(u) => c.sink.scan_and_print(u),
             // not scannable events
             Self::Start(_) | Self::Loss(_) => false,
         }
@@ -3544,6 +3613,7 @@ impl Command {
             .ends_with(".jsonl.gz");
 
         let mut rule_names = c
+            .sink
             .engine
             .compiled_rules()
             .iter()
