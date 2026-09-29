@@ -282,6 +282,313 @@ impl Processes {
 
         UserEvent::new(data, info)
     }
+
+    #[inline(always)]
+    fn clone_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::CloneData,
+    ) -> UserEvent<'a, CloneData> {
+        let data = CloneData {
+            ancestors: self.get_ancestors_string(info),
+            exe: bpf_data.executable.to_path_buf().into(),
+            command_line: self.get_command_line(info.process_key()),
+            flags: bpf_data.flags,
+        };
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn prctl_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::PrctlData,
+    ) -> UserEvent<'a, PrctlData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let option = PrctlOption::try_from_uint(bpf_data.option)
+            .map(|o| o.as_str().into())
+            .unwrap_or(format!("unknown({})", bpf_data.option))
+            .to_string();
+
+        let data = PrctlData {
+            ancestors: self.get_ancestors_string(info),
+            exe: exe.into(),
+            command_line,
+            option,
+            arg2: bpf_data.arg2,
+            arg3: bpf_data.arg3,
+            arg4: bpf_data.arg4,
+            arg5: bpf_data.arg5,
+            success: bpf_data.success,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn commit_creds_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::CommitCredsData,
+    ) -> UserEvent<'a, CommitCredsData<'a>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = CommitCredsData {
+            ancestors: self.get_ancestors_string(info),
+            exe: exe.into(),
+            command_line,
+            old: Creds::from_bpf_and_additions(bpf_data.old, &info.additional.task, false),
+            new: Creds::from_bpf_and_additions(bpf_data.new, &info.additional.task, false),
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn creds_tampered_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        baseline: creds::Creds,
+    ) -> UserEvent<'a, CredsTamperedData<'a>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+        // `baseline` carries the per-process values we previously recorded;
+        // `info.task_info()` carries what the task is reporting right now.
+        // A creds_tampered event is emitted precisely because the two differ
+        // on at least one of (uid, gid, cap_effective).
+        let actual = info.task_info();
+
+        let data = CredsTamperedData {
+            ancestors: self.get_ancestors_string(info),
+            exe: exe.into(),
+            command_line,
+            actual: Creds::from_bpf_and_additions(actual.creds, &info.additional.task, false),
+            expected: Creds::from_bpf_and_additions(baseline, &info.additional.task, false),
+        };
+
+        UserEvent::new(data, info).with_type(Type::CredsTampered)
+    }
+
+    #[inline(always)]
+    fn file_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::FileData,
+    ) -> UserEvent<'a, FileData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = FileData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            path: bpf_data.path.to_path_buf(),
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn unlink_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::UnlinkData,
+    ) -> UserEvent<'a, UnlinkData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = UnlinkData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            path: bpf_data.path.into(),
+            success: bpf_data.success,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn bpf_prog_load_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::BpfProgData,
+    ) -> UserEvent<'a, BpfProgLoadData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let mut data = BpfProgLoadData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            id: bpf_data.id,
+            prog_type: BpfProgTypeInfo {
+                id: bpf_data.prog_type,
+                name: util::bpf::bpf_type_to_string(bpf_data.prog_type),
+            },
+            tag: hex::encode(bpf_data.tag),
+            attached_func: bpf_data.attached_func_name.into(),
+            name: bpf_data.name.into(),
+            ksym: bpf_data.ksym.into(),
+            bpf_prog: kunai::events::BpfProgInfo {
+                md5: "?".into(),
+                sha1: "?".into(),
+                sha256: "?".into(),
+                sha512: "?".into(),
+                size: 0,
+            },
+            verified_insns: bpf_data.verified_insns.into(),
+            loaded: bpf_data.loaded,
+        };
+
+        if let BpfOption::Some(h) = &bpf_data.hashes {
+            data.bpf_prog.md5 = h.md5.into();
+            data.bpf_prog.sha1 = h.sha1.into();
+            data.bpf_prog.sha256 = h.sha256.into();
+            data.bpf_prog.sha512 = h.sha512.into();
+            data.bpf_prog.size = h.size;
+        }
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn bpf_socket_filter_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::BpfSocketFilterData,
+    ) -> UserEvent<'a, BpfSocketFilterData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = BpfSocketFilterData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            socket: SocketInfo::from(bpf_data.socket_info),
+            filter: FilterInfo {
+                md5: md5_data(bpf_data.filter.as_slice()),
+                sha1: sha1_data(bpf_data.filter.as_slice()),
+                sha256: sha256_data(bpf_data.filter.as_slice()),
+                sha512: sha512_data(bpf_data.filter.as_slice()),
+                len: bpf_data.filter_len, // size in filter sock_filter blocks
+                size: bpf_data.filter.len(), // size in bytes
+            },
+            attached: bpf_data.attached,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn mprotect_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::MprotectData,
+    ) -> UserEvent<'a, MprotectData> {
+        let (exe, cmd_line) = self.get_exe_and_command_line(info);
+
+        let data = MprotectData {
+            ancestors: self.get_ancestors_string(info),
+            command_line: cmd_line,
+            exe: exe.into(),
+            addr: bpf_data.start,
+            prot: bpf_data.prot,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn init_module_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::InitModuleData,
+    ) -> UserEvent<'a, InitModuleData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = InitModuleData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            syscall: bpf_data.args.syscall_name().into(),
+            module_name: bpf_data.name.to_string(),
+            args: bpf_data.uargs.to_string(),
+            loaded: bpf_data.loaded,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn file_rename_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::FileRenameData,
+    ) -> UserEvent<'a, FileRenameData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = FileRenameData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            old: bpf_data.old_name.into(),
+            new: bpf_data.new_name.into(),
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn io_uring_sqe_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::IoUringSqeData,
+    ) -> UserEvent<'a, IoUringSqeData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let opcode = io_uring_op::try_from_uint(bpf_data.opcode)
+            .ok()
+            .map(|o| o.as_str());
+
+        let data = IoUringSqeData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            op: IoUringOp {
+                code: bpf_data.opcode,
+                name: String::from(opcode.unwrap_or("?")),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn error_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::ErrorData,
+    ) -> UserEvent<'a, ErrorData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let ti = info.task_info();
+        // we always display a warning on stderr
+        warn!(
+            "comm={} pid={} tgid={} guuid={}: {}",
+            ti.comm_str(),
+            ti.pid,
+            ti.tgid,
+            ti.tg_uuid.into_uuid(),
+            bpf_data.error.as_str(),
+        );
+
+        let data = ErrorData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            code: bpf_data.error as u64,
+            message: String::from(bpf_data.error.as_str()),
+        };
+
+        UserEvent::new(data, info)
+    }
 }
 
 /// Per-task (as opposed to per-thread-group) state.
@@ -1265,49 +1572,6 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn clone_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::CloneData,
-    ) -> UserEvent<'a, CloneData> {
-        let data = CloneData {
-            ancestors: self.processes.get_ancestors_string(info),
-            exe: bpf_data.executable.to_path_buf().into(),
-            command_line: self.processes.get_command_line(info.process_key()),
-            flags: bpf_data.flags,
-        };
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn prctl_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::PrctlData,
-    ) -> UserEvent<'a, PrctlData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let option = PrctlOption::try_from_uint(bpf_data.option)
-            .map(|o| o.as_str().into())
-            .unwrap_or(format!("unknown({})", bpf_data.option))
-            .to_string();
-
-        let data = PrctlData {
-            ancestors: self.processes.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            option,
-            arg2: bpf_data.arg2,
-            arg3: bpf_data.arg3,
-            arg4: bpf_data.arg4,
-            arg5: bpf_data.arg5,
-            success: bpf_data.success,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
     fn kill_event<'a>(
         &mut self,
         info: &'a StdEventInfo,
@@ -1369,49 +1633,6 @@ impl EventConsumer<'_> {
         };
 
         UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn commit_creds_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::CommitCredsData,
-    ) -> UserEvent<'a, CommitCredsData<'a>> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = CommitCredsData {
-            ancestors: self.processes.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            old: Creds::from_bpf_and_additions(bpf_data.old, &info.additional.task, false),
-            new: Creds::from_bpf_and_additions(bpf_data.new, &info.additional.task, false),
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn creds_tampered_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        baseline: creds::Creds,
-    ) -> UserEvent<'a, CredsTamperedData<'a>> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-        // `baseline` carries the per-process values we previously recorded;
-        // `info.task_info()` carries what the task is reporting right now.
-        // A creds_tampered event is emitted precisely because the two differ
-        // on at least one of (uid, gid, cap_effective).
-        let actual = info.task_info();
-
-        let data = CredsTamperedData {
-            ancestors: self.processes.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            actual: Creds::from_bpf_and_additions(actual.creds, &info.additional.task, false),
-            expected: Creds::from_bpf_and_additions(baseline, &info.additional.task, false),
-        };
-
-        UserEvent::new(data, info).with_type(Type::CredsTampered)
     }
 
     #[inline(always)]
@@ -1499,132 +1720,6 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn file_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::FileData,
-    ) -> UserEvent<'a, FileData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = FileData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            path: bpf_data.path.to_path_buf(),
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn unlink_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::UnlinkData,
-    ) -> UserEvent<'a, UnlinkData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = UnlinkData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            path: bpf_data.path.into(),
-            success: bpf_data.success,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn bpf_prog_load_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::BpfProgData,
-    ) -> UserEvent<'a, BpfProgLoadData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let mut data = BpfProgLoadData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            id: bpf_data.id,
-            prog_type: BpfProgTypeInfo {
-                id: bpf_data.prog_type,
-                name: util::bpf::bpf_type_to_string(bpf_data.prog_type),
-            },
-            tag: hex::encode(bpf_data.tag),
-            attached_func: bpf_data.attached_func_name.into(),
-            name: bpf_data.name.into(),
-            ksym: bpf_data.ksym.into(),
-            bpf_prog: kunai::events::BpfProgInfo {
-                md5: "?".into(),
-                sha1: "?".into(),
-                sha256: "?".into(),
-                sha512: "?".into(),
-                size: 0,
-            },
-            verified_insns: bpf_data.verified_insns.into(),
-            loaded: bpf_data.loaded,
-        };
-
-        if let BpfOption::Some(h) = &bpf_data.hashes {
-            data.bpf_prog.md5 = h.md5.into();
-            data.bpf_prog.sha1 = h.sha1.into();
-            data.bpf_prog.sha256 = h.sha256.into();
-            data.bpf_prog.sha512 = h.sha512.into();
-            data.bpf_prog.size = h.size;
-        }
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn bpf_socket_filter_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::BpfSocketFilterData,
-    ) -> UserEvent<'a, BpfSocketFilterData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = BpfSocketFilterData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            socket: SocketInfo::from(bpf_data.socket_info),
-            filter: FilterInfo {
-                md5: md5_data(bpf_data.filter.as_slice()),
-                sha1: sha1_data(bpf_data.filter.as_slice()),
-                sha256: sha256_data(bpf_data.filter.as_slice()),
-                sha512: sha512_data(bpf_data.filter.as_slice()),
-                len: bpf_data.filter_len, // size in filter sock_filter blocks
-                size: bpf_data.filter.len(), // size in bytes
-            },
-            attached: bpf_data.attached,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn mprotect_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::MprotectData,
-    ) -> UserEvent<'a, MprotectData> {
-        let (exe, cmd_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = MprotectData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line: cmd_line,
-            exe: exe.into(),
-            addr: bpf_data.start,
-            prot: bpf_data.prot,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
     fn connect_event<'a>(
         &self,
         info: &'a StdEventInfo,
@@ -1702,46 +1797,6 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn init_module_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::InitModuleData,
-    ) -> UserEvent<'a, InitModuleData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = InitModuleData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            syscall: bpf_data.args.syscall_name().into(),
-            module_name: bpf_data.name.to_string(),
-            args: bpf_data.uargs.to_string(),
-            loaded: bpf_data.loaded,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn file_rename_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::FileRenameData,
-    ) -> UserEvent<'a, FileRenameData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = FileRenameData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            old: bpf_data.old_name.into(),
-            new: bpf_data.new_name.into(),
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
     fn exit_event<'a>(
         &mut self,
         info: &'a StdEventInfo,
@@ -1798,61 +1853,6 @@ impl EventConsumer<'_> {
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
         }
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn io_uring_sqe_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::IoUringSqeData,
-    ) -> UserEvent<'a, IoUringSqeData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let opcode = io_uring_op::try_from_uint(bpf_data.opcode)
-            .ok()
-            .map(|o| o.as_str());
-
-        let data = IoUringSqeData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            op: IoUringOp {
-                code: bpf_data.opcode,
-                name: String::from(opcode.unwrap_or("?")),
-            },
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn error_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::ErrorData,
-    ) -> UserEvent<'a, ErrorData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let ti = info.task_info();
-        // we always display a warning on stderr
-        warn!(
-            "comm={} pid={} tgid={} guuid={}: {}",
-            ti.comm_str(),
-            ti.pid,
-            ti.tgid,
-            ti.tg_uuid.into_uuid(),
-            bpf_data.error.as_str(),
-        );
-
-        let data = ErrorData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            code: bpf_data.error as u64,
-            message: String::from(bpf_data.error.as_str()),
-        };
 
         UserEvent::new(data, info)
     }
@@ -2241,7 +2241,7 @@ impl EventConsumer<'_> {
         }
 
         let std_info = self.build_std_event_info(*info);
-        let mut tampered = self.creds_tampered_event(&std_info, baseline);
+        let mut tampered = self.processes.creds_tampered_event(&std_info, baseline);
         self.sink.scan_and_print(&mut tampered);
 
         // we only keep track of what we reported so that we don't re-fire on
@@ -2322,14 +2322,14 @@ impl EventConsumer<'_> {
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
                     let std_info = self.build_std_event_info(std_info.bpf);
-                    let mut e = self.clone_event(&std_info, e.data);
+                    let mut e = self.processes.clone_event(&std_info, e.data);
                     self.sink.scan_and_print(&mut e);
                 }
             }
 
             EbpfEvent::Prctl(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.prctl_event(&std_info, e.data);
+                let mut e = self.processes.prctl_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2362,7 +2362,7 @@ impl EventConsumer<'_> {
                         reported_creds: None,
                     },
                 );
-                let mut e = self.commit_creds_event(&std_info, e.data);
+                let mut e = self.processes.commit_creds_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2374,7 +2374,7 @@ impl EventConsumer<'_> {
 
             EbpfEvent::Mprotect(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.mprotect_event(&std_info, e.data);
+                let mut e = self.processes.mprotect_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2399,37 +2399,37 @@ impl EventConsumer<'_> {
 
             EbpfEvent::InitModule(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.init_module_event(&std_info, e.data);
+                let mut e = self.processes.init_module_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::File(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.file_event(&std_info, e.data);
+                let mut e = self.processes.file_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Unlink(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.unlink_event(&std_info, e.data);
+                let mut e = self.processes.unlink_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::FileRename(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.file_rename_event(&std_info, e.data);
+                let mut e = self.processes.file_rename_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfProgLoad(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.bpf_prog_load_event(&std_info, e.data);
+                let mut e = self.processes.bpf_prog_load_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfSocketFilter(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.bpf_socket_filter_event(&std_info, e.data);
+                let mut e = self.processes.bpf_socket_filter_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2447,13 +2447,13 @@ impl EventConsumer<'_> {
 
             EbpfEvent::IoUringSqe(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.io_uring_sqe_event(&std_info, e.data);
+                let mut e = self.processes.io_uring_sqe_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Error(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.error_event(&std_info, e.data);
+                let mut e = self.processes.error_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
