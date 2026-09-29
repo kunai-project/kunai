@@ -60,6 +60,7 @@ use std::ffi::OsStr;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
+use std::ops::{Deref, DerefMut};
 
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -138,6 +139,148 @@ impl Process {
         self.resolved.clear();
         self.resolved.shrink_to_fit();
         self.exit = true;
+    }
+}
+
+/// Process table, kept apart from [`EventConsumer`] so that events can
+/// borrow from it while [`EventSink`] is mutably borrowed.
+#[derive(Default)]
+struct Processes(HashMap<ProcKey, Process>);
+
+impl Deref for Processes {
+    type Target = HashMap<ProcKey, Process>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Processes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Processes {
+    #[inline(always)]
+    fn with_capacity(cap: usize) -> Self {
+        Self(HashMap::with_capacity(cap))
+    }
+
+    #[inline(always)]
+    fn get_exe(&self, key: ProcKey) -> PathBuf {
+        let mut exe = PathBuf::from("?");
+        if let Some(task) = self.get(&key) {
+            exe = task.image.clone();
+        }
+        exe
+    }
+
+    #[inline(always)]
+    fn get_command_line(&self, key: ProcKey) -> String {
+        let mut cl = String::from("?");
+        if let Some(t) = self.get(&key) {
+            cl = t.command_line_string();
+        }
+        cl
+    }
+
+    #[inline(always)]
+    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
+        let ck = i.process_key();
+        (self.get_exe(ck), self.get_command_line(ck))
+    }
+
+    /// get the list of ancestors given a [TaskKey]. If skip is 0 the last
+    /// item is the image of the task referenced by `tk`. One can skip ancestors
+    /// by setting `skip` > 0.
+    #[inline(always)]
+    fn get_all_ancestors(&self, mut tk: ProcKey, mut skip: u16) -> Vec<Cow<'_, str>> {
+        let mut ancestors = vec![];
+        let mut last = None;
+
+        while let Some(task) = self.get(&tk) {
+            last = Some(task);
+            if skip == 0 {
+                ancestors.insert(0, task.image.to_string_lossy());
+            } else {
+                skip -= 1;
+            }
+
+            tk = match task.real_parent_key {
+                Some(v) => v,
+                None => {
+                    break;
+                }
+            };
+        }
+
+        if let Some(last) = last {
+            if last.pid != 1 && !last.is_kthread() && skip == 0 {
+                ancestors.insert(0, "?".into());
+            }
+        }
+
+        ancestors
+    }
+
+    #[inline(always)]
+    fn get_task_ancestors(&self, i: &StdEventInfo) -> Vec<Cow<'_, str>> {
+        self.get_all_ancestors(i.process_key(), 1)
+    }
+
+    #[inline(always)]
+    fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
+        self.get_task_ancestors(i).join("|")
+    }
+
+    #[inline(always)]
+    fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
+        let ck = i.process_key();
+        self.get(&ck)
+            .and_then(|t| t.real_parent_key)
+            .and_then(|ptk| self.get(&ptk))
+            .map(|c| c.command_line.join(" "))
+            .unwrap_or("?".into())
+    }
+
+    #[inline(always)]
+    fn get_parent_image(&self, i: &StdEventInfo) -> String {
+        let ck = i.process_key();
+        self.get(&ck)
+            .and_then(|t| t.real_parent_key)
+            .and_then(|ptk| self.get(&ptk))
+            .map(|c| c.image.to_string_lossy().to_string())
+            .unwrap_or("?".into())
+    }
+
+    #[inline(always)]
+    fn execve_event<'a>(
+        &self,
+        sink: &mut EventSink,
+        info: &'a StdEventInfo,
+        bpf_data: &bpf_events::ExecveData,
+    ) -> UserEvent<'a, ExecveData<'_>> {
+        let opt_mnt_ns = EventConsumer::task_mnt_ns(&info.bpf);
+
+        let exe = sink.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.executable));
+
+        let interpreter = if bpf_data.executable != bpf_data.interpreter {
+            Some(sink.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.interpreter)))
+        } else {
+            None
+        };
+
+        let data = ExecveData {
+            ancestors: self.get_task_ancestors(info),
+            parent_command_line: self.get_parent_command_line(info),
+            parent_exe: self.get_parent_image(info),
+            command_line: self.get_command_line(info.process_key()),
+            exe,
+            interpreter,
+        };
+
+        UserEvent::new(data, info)
     }
 }
 
@@ -299,7 +442,7 @@ struct EventConsumer<'s> {
     system_info: SystemInfo,
     filter: Filter,
     random: u32,
-    processes: HashMap<ProcKey, Process>,
+    processes: Processes,
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
     exited_tasks: u64,
@@ -636,7 +779,7 @@ impl EventConsumer<'_> {
             system_info,
             filter,
             random: util::getrandom::<u32>()?,
-            processes: HashMap::with_capacity(512),
+            processes: Processes::with_capacity(512),
             tasks: HashMap::with_capacity(512),
             exited_tasks: 0,
             resolved: HashMap::new(),
@@ -940,8 +1083,10 @@ impl EventConsumer<'_> {
                 }
 
                 // lookup in ancestors
-                let ancestors = self.get_ancestors(parent, 0);
-                if let Some(c) = Container::from_ancestors(&ancestors) {
+                // the borrow of processes must end before we update it
+                let container =
+                    Container::from_ancestors(&self.processes.get_all_ancestors(parent, 0));
+                if let Some(c) = container {
                     self.processes
                         .entry(tk)
                         .and_modify(|task| task.container = Some(c));
@@ -1035,132 +1180,6 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn get_exe(&self, key: ProcKey) -> PathBuf {
-        let mut exe = PathBuf::from("?");
-        if let Some(task) = self.processes.get(&key) {
-            exe = task.image.clone();
-        }
-        exe
-    }
-
-    #[inline(always)]
-    fn get_command_line(&self, key: ProcKey) -> String {
-        let mut cl = String::from("?");
-        if let Some(t) = self.processes.get(&key) {
-            cl = t.command_line_string();
-        }
-        cl
-    }
-
-    #[inline(always)]
-    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
-        let ck = i.process_key();
-        (self.get_exe(ck), self.get_command_line(ck))
-    }
-
-    /// get the list of ancestors given a [TaskKey]. If skip is 0 the last
-    /// item is the image of the task referenced by `tk`. One can skip ancestors
-    /// by setting `skip` > 0.
-    #[inline(always)]
-    fn get_ancestors(&self, mut tk: ProcKey, mut skip: u16) -> Vec<String> {
-        let mut ancestors = vec![];
-        let mut last = None;
-
-        while let Some(task) = self.processes.get(&tk) {
-            last = Some(task);
-            if skip == 0 {
-                ancestors.insert(0, task.image.to_string_lossy().to_string());
-            } else {
-                skip -= 1;
-            }
-
-            tk = match task.real_parent_key {
-                Some(v) => v,
-                None => {
-                    break;
-                }
-            };
-        }
-
-        if let Some(last) = last {
-            if last.pid != 1 && !last.is_kthread() && skip == 0 {
-                ancestors.insert(0, "?".into());
-            }
-        }
-
-        ancestors
-    }
-
-    #[inline(always)]
-    fn get_all_ancestors(
-        processes: &HashMap<ProcKey, Process>,
-        mut tk: ProcKey,
-        mut skip: u16,
-    ) -> Vec<Cow<'_, str>> {
-        let mut ancestors = vec![];
-        let mut last = None;
-
-        while let Some(task) = processes.get(&tk) {
-            last = Some(task);
-            if skip == 0 {
-                ancestors.insert(0, task.image.to_string_lossy());
-            } else {
-                skip -= 1;
-            }
-
-            tk = match task.real_parent_key {
-                Some(v) => v,
-                None => {
-                    break;
-                }
-            };
-        }
-
-        if let Some(last) = last {
-            if last.pid != 1 && !last.is_kthread() && skip == 0 {
-                ancestors.insert(0, "?".into());
-            }
-        }
-
-        ancestors
-    }
-
-    #[inline(always)]
-    fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
-        self.get_ancestors(i.process_key(), 1).join("|")
-    }
-
-    #[inline(always)]
-    fn get_task_ancestors<'p>(
-        processes: &'p HashMap<ProcKey, Process>,
-        i: &StdEventInfo,
-    ) -> Vec<Cow<'p, str>> {
-        Self::get_all_ancestors(processes, i.process_key(), 1)
-    }
-
-    #[inline(always)]
-    fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
-        let ck = i.process_key();
-        self.processes
-            .get(&ck)
-            .and_then(|t| t.real_parent_key)
-            .and_then(|ptk| self.processes.get(&ptk))
-            .map(|c| c.command_line.join(" "))
-            .unwrap_or("?".into())
-    }
-
-    #[inline(always)]
-    fn get_parent_image(&self, i: &StdEventInfo) -> String {
-        let ck = i.process_key();
-        self.processes
-            .get(&ck)
-            .and_then(|t| t.real_parent_key)
-            .and_then(|ptk| self.processes.get(&ptk))
-            .map(|c| c.image.to_string_lossy().to_string())
-            .unwrap_or("?".into())
-    }
-
-    #[inline(always)]
     fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
         // updating loopback resolution is not good
         if ip.is_loopback() {
@@ -1246,37 +1265,15 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn execve_event<'a, 'p>(
-        &self,
-        info: &'a StdEventInfo,
-        ancestors: Vec<Cow<'p, str>>,
-        exe_hashes: Arc<Hashes>,
-        interp_hashes: Option<Arc<Hashes>>,
-    ) -> UserEvent<'a, ExecveData<'p>> {
-        let cli = self.get_command_line(info.process_key());
-
-        let data = ExecveData {
-            ancestors,
-            parent_command_line: self.get_parent_command_line(info),
-            parent_exe: self.get_parent_image(info),
-            command_line: cli,
-            exe: exe_hashes,
-            interpreter: interp_hashes,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
     fn clone_event<'a>(
         &mut self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::CloneData,
     ) -> UserEvent<'a, CloneData> {
         let data = CloneData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             exe: bpf_data.executable.to_path_buf().into(),
-            command_line: self.get_command_line(info.process_key()),
+            command_line: self.processes.get_command_line(info.process_key()),
             flags: bpf_data.flags,
         };
         UserEvent::new(data, info)
@@ -1288,7 +1285,7 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::PrctlData,
     ) -> UserEvent<'a, PrctlData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let option = PrctlOption::try_from_uint(bpf_data.option)
             .map(|o| o.as_str().into())
@@ -1296,7 +1293,7 @@ impl EventConsumer<'_> {
             .to_string();
 
         let data = PrctlData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             exe: exe.into(),
             command_line,
             option,
@@ -1317,7 +1314,7 @@ impl EventConsumer<'_> {
         target_tai: &'a TaskAdditionalInfo,
         bpf_data: bpf_events::KillData,
     ) -> UserEvent<'a, KillData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let signal = Signal::from_uint_to_string(bpf_data.signal);
 
@@ -1329,13 +1326,13 @@ impl EventConsumer<'_> {
         let tk = ProcKey::from(target.tg_uuid);
 
         let data = KillData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             exe: exe.into(),
             command_line,
             signal,
             target: TargetTask {
-                command_line: self.get_command_line(tk),
-                exe: self.get_exe(tk).into(),
+                command_line: self.processes.get_command_line(tk),
+                exe: self.processes.get_exe(tk).into(),
                 task: TaskSection::from_task_info_with_addition(target, target_tai),
             },
         };
@@ -1350,7 +1347,7 @@ impl EventConsumer<'_> {
         target_tai: &'a TaskAdditionalInfo,
         bpf_data: bpf_events::PtraceData,
     ) -> UserEvent<'a, PtraceData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         // we need to set uuid part of target task
         let mut target = bpf_data.target;
@@ -1360,13 +1357,13 @@ impl EventConsumer<'_> {
         let tk = ProcKey::from(target.tg_uuid);
 
         let data = PtraceData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             exe: exe.into(),
             command_line,
             mode: bpf_data.mode,
             target: TargetTask {
-                command_line: self.get_command_line(tk),
-                exe: self.get_exe(tk).into(),
+                command_line: self.processes.get_command_line(tk),
+                exe: self.processes.get_exe(tk).into(),
                 task: TaskSection::from_task_info_with_addition(target, target_tai),
             },
         };
@@ -1380,10 +1377,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::CommitCredsData,
     ) -> UserEvent<'a, CommitCredsData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = CommitCredsData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             exe: exe.into(),
             command_line,
             old: Creds::from_bpf_and_additions(bpf_data.old, &info.additional.task, false),
@@ -1399,7 +1396,7 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         baseline: creds::Creds,
     ) -> UserEvent<'a, CredsTamperedData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
         // `baseline` carries the per-process values we previously recorded;
         // `info.task_info()` carries what the task is reporting right now.
         // A creds_tampered event is emitted precisely because the two differ
@@ -1407,7 +1404,7 @@ impl EventConsumer<'_> {
         let actual = info.task_info();
 
         let data = CredsTamperedData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             exe: exe.into(),
             command_line,
             actual: Creds::from_bpf_and_additions(actual.creds, &info.additional.task, false),
@@ -1429,10 +1426,10 @@ impl EventConsumer<'_> {
             .sink
             .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
 
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = kunai::events::MmapExecData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             mapped: mmapped_hashes,
@@ -1448,7 +1445,7 @@ impl EventConsumer<'_> {
         bpf_data: bpf_events::DnsQueryData,
     ) -> Vec<UserEvent<'a, DnsQueryData>> {
         let mut out = vec![];
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let src: SockAddr = bpf_data.src.into();
         let dst: SockAddr = bpf_data.dst.into();
@@ -1466,7 +1463,7 @@ impl EventConsumer<'_> {
         .base64();
 
         let responses = bpf_data.domain_responses().unwrap_or_default();
-        let ancestors = self.get_ancestors_string(info);
+        let ancestors = self.processes.get_ancestors_string(info);
 
         for r in responses {
             let mut data = DnsQueryData::new();
@@ -1507,10 +1504,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::FileData,
     ) -> UserEvent<'a, FileData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = FileData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             path: bpf_data.path.to_path_buf(),
@@ -1525,10 +1522,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::UnlinkData,
     ) -> UserEvent<'a, UnlinkData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = UnlinkData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             path: bpf_data.path.into(),
@@ -1544,10 +1541,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::BpfProgData,
     ) -> UserEvent<'a, BpfProgLoadData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let mut data = BpfProgLoadData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             id: bpf_data.id,
@@ -1587,10 +1584,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::BpfSocketFilterData,
     ) -> UserEvent<'a, BpfSocketFilterData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = BpfSocketFilterData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             socket: SocketInfo::from(bpf_data.socket_info),
@@ -1614,10 +1611,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::MprotectData,
     ) -> UserEvent<'a, MprotectData> {
-        let (exe, cmd_line) = self.get_exe_and_command_line(info);
+        let (exe, cmd_line) = self.processes.get_exe_and_command_line(info);
 
         let data = MprotectData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line: cmd_line,
             exe: exe.into(),
             addr: bpf_data.start,
@@ -1633,7 +1630,7 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::ConnectData,
     ) -> UserEvent<'a, ConnectData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
         let src: SockAddr = bpf_data.src.into();
         let dst: SockAddr = bpf_data.dst.into();
 
@@ -1646,7 +1643,7 @@ impl EventConsumer<'_> {
         );
 
         let data = ConnectData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             socket: SocketInfo::from(bpf_data.socket),
@@ -1671,7 +1668,7 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::SendEntropyData,
     ) -> UserEvent<'a, SendDataData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
         let dst: SockAddr = bpf_data.dst.into();
         let src: SockAddr = bpf_data.src.into();
 
@@ -1684,7 +1681,7 @@ impl EventConsumer<'_> {
         );
 
         let data = SendDataData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             exe: exe.into(),
             command_line,
             socket: SocketInfo::from(bpf_data.socket),
@@ -1710,10 +1707,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::InitModuleData,
     ) -> UserEvent<'a, InitModuleData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = InitModuleData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             syscall: bpf_data.args.syscall_name().into(),
@@ -1731,10 +1728,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::FileRenameData,
     ) -> UserEvent<'a, FileRenameData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = FileRenameData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             old: bpf_data.old_name.into(),
@@ -1750,10 +1747,10 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::ExitData,
     ) -> UserEvent<'a, ExitData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let data = ExitData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             error_code: bpf_data.error_code,
@@ -1811,14 +1808,14 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::IoUringSqeData,
     ) -> UserEvent<'a, IoUringSqeData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let opcode = io_uring_op::try_from_uint(bpf_data.opcode)
             .ok()
             .map(|o| o.as_str());
 
         let data = IoUringSqeData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             op: IoUringOp {
@@ -1836,7 +1833,7 @@ impl EventConsumer<'_> {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::ErrorData,
     ) -> UserEvent<'a, ErrorData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
 
         let ti = info.task_info();
         // we always display a warning on stderr
@@ -1850,7 +1847,7 @@ impl EventConsumer<'_> {
         );
 
         let data = ErrorData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.processes.get_ancestors_string(info),
             command_line,
             exe: exe.into(),
             code: bpf_data.error as u64,
@@ -2022,8 +2019,8 @@ impl EventConsumer<'_> {
         let mut container_type = Container::from_cgroups(&cgroups);
 
         if container_type.is_none() {
-            let ancestors = self.get_ancestors(parent_key, 0);
-            container_type = Container::from_ancestors(&ancestors);
+            container_type =
+                Container::from_ancestors(&self.processes.get_all_ancestors(parent_key, 0));
         }
 
         let image = {
@@ -2295,23 +2292,9 @@ impl EventConsumer<'_> {
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
                     let std_info = self.build_std_event_info(std_info.bpf);
-                    let bpf_data = &e.data;
-                    let opt_mnt_ns = Self::task_mnt_ns(&std_info.bpf);
-                    let exe_hashes = self
-                        .sink
-                        .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.executable));
-
-                    let interp_hashes = if bpf_data.executable != bpf_data.interpreter {
-                        Some(self.sink.get_hashes_in_ns(
-                            opt_mnt_ns,
-                            &cache::Path::from(&bpf_data.interpreter),
-                        ))
-                    } else {
-                        None
-                    };
-
-                    let ancestors = Self::get_task_ancestors(&self.processes, &std_info);
-                    let mut e = self.execve_event(&std_info, ancestors, exe_hashes, interp_hashes);
+                    let mut e = self
+                        .processes
+                        .execve_event(&mut self.sink, &std_info, &e.data);
 
                     self.sink.scan_and_print(&mut e);
                 }

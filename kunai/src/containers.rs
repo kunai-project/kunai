@@ -101,9 +101,9 @@ impl Container {
     }
 
     #[inline]
-    pub fn from_ancestors(ancestors: &[String]) -> Option<Container> {
-        for a in ancestors {
-            match a.as_str() {
+    pub fn from_ancestors<S: AsRef<str>>(ancestors: &[S]) -> Option<Container> {
+        for a in ancestors.iter().map(AsRef::as_ref) {
+            match a {
                 "/usr/bin/firejail" => return Some(Container::Firejail),
                 "/usr/bin/containerd-shim-runc-v2" => return Some(Container::Docker),
                 "/usr/bin/podman" => return Some(Container::Podman),
