@@ -230,11 +230,6 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
-        self.get_task_ancestors(i).join("|")
-    }
-
-    #[inline(always)]
     fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
         let ck = i.process_key();
         self.get(&ck)
@@ -288,9 +283,9 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::CloneData,
-    ) -> UserEvent<'a, CloneData> {
+    ) -> UserEvent<'a, CloneData<'_>> {
         let data = CloneData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             exe: bpf_data.executable.to_path_buf().into(),
             command_line: self.get_command_line(info.process_key()),
             flags: bpf_data.flags,
@@ -303,7 +298,7 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::PrctlData,
-    ) -> UserEvent<'a, PrctlData> {
+    ) -> UserEvent<'a, PrctlData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let option = PrctlOption::try_from_uint(bpf_data.option)
@@ -312,7 +307,7 @@ impl Processes {
             .to_string();
 
         let data = PrctlData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             exe: exe.into(),
             command_line,
             option,
@@ -328,14 +323,14 @@ impl Processes {
 
     #[inline(always)]
     fn commit_creds_event<'a>(
-        &self,
+        &'a self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::CommitCredsData,
     ) -> UserEvent<'a, CommitCredsData<'a>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = CommitCredsData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             exe: exe.into(),
             command_line,
             old: Creds::from_bpf_and_additions(bpf_data.old, &info.additional.task, false),
@@ -347,7 +342,7 @@ impl Processes {
 
     #[inline(always)]
     fn creds_tampered_event<'a>(
-        &self,
+        &'a self,
         info: &'a StdEventInfo,
         baseline: creds::Creds,
     ) -> UserEvent<'a, CredsTamperedData<'a>> {
@@ -359,7 +354,7 @@ impl Processes {
         let actual = info.task_info();
 
         let data = CredsTamperedData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             exe: exe.into(),
             command_line,
             actual: Creds::from_bpf_and_additions(actual.creds, &info.additional.task, false),
@@ -374,11 +369,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::FileData,
-    ) -> UserEvent<'a, FileData> {
+    ) -> UserEvent<'a, FileData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = FileData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             path: bpf_data.path.to_path_buf(),
@@ -392,11 +387,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::UnlinkData,
-    ) -> UserEvent<'a, UnlinkData> {
+    ) -> UserEvent<'a, UnlinkData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = UnlinkData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             path: bpf_data.path.into(),
@@ -411,11 +406,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::BpfProgData,
-    ) -> UserEvent<'a, BpfProgLoadData> {
+    ) -> UserEvent<'a, BpfProgLoadData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let mut data = BpfProgLoadData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             id: bpf_data.id,
@@ -454,11 +449,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::BpfSocketFilterData,
-    ) -> UserEvent<'a, BpfSocketFilterData> {
+    ) -> UserEvent<'a, BpfSocketFilterData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = BpfSocketFilterData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             socket: SocketInfo::from(bpf_data.socket_info),
@@ -481,11 +476,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::MprotectData,
-    ) -> UserEvent<'a, MprotectData> {
+    ) -> UserEvent<'a, MprotectData<'_>> {
         let (exe, cmd_line) = self.get_exe_and_command_line(info);
 
         let data = MprotectData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line: cmd_line,
             exe: exe.into(),
             addr: bpf_data.start,
@@ -500,11 +495,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::InitModuleData,
-    ) -> UserEvent<'a, InitModuleData> {
+    ) -> UserEvent<'a, InitModuleData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = InitModuleData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             syscall: bpf_data.args.syscall_name().into(),
@@ -521,11 +516,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::FileRenameData,
-    ) -> UserEvent<'a, FileRenameData> {
+    ) -> UserEvent<'a, FileRenameData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = FileRenameData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             old: bpf_data.old_name.into(),
@@ -540,7 +535,7 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::IoUringSqeData,
-    ) -> UserEvent<'a, IoUringSqeData> {
+    ) -> UserEvent<'a, IoUringSqeData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let opcode = io_uring_op::try_from_uint(bpf_data.opcode)
@@ -548,7 +543,7 @@ impl Processes {
             .map(|o| o.as_str());
 
         let data = IoUringSqeData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             op: IoUringOp {
@@ -565,7 +560,7 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::ErrorData,
-    ) -> UserEvent<'a, ErrorData> {
+    ) -> UserEvent<'a, ErrorData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let ti = info.task_info();
@@ -580,7 +575,7 @@ impl Processes {
         );
 
         let data = ErrorData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             code: bpf_data.error as u64,
@@ -618,7 +613,7 @@ impl Processes {
 
     #[inline(always)]
     fn kill_event<'a>(
-        &self,
+        &'a self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::KillData,
         random: u32,
@@ -636,7 +631,7 @@ impl Processes {
         let tk = ProcKey::from(target.tg_uuid);
 
         let data = KillData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             exe: exe.into(),
             command_line,
             signal,
@@ -652,7 +647,7 @@ impl Processes {
 
     #[inline(always)]
     fn ptrace_event<'a>(
-        &self,
+        &'a self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::PtraceData,
         random: u32,
@@ -668,7 +663,7 @@ impl Processes {
         let tk = ProcKey::from(target.tg_uuid);
 
         let data = PtraceData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             exe: exe.into(),
             command_line,
             mode: bpf_data.mode,
@@ -688,7 +683,7 @@ impl Processes {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::MmapExecData,
         sink: &mut EventSink,
-    ) -> UserEvent<'a, kunai::events::MmapExecData> {
+    ) -> UserEvent<'a, kunai::events::MmapExecData<'_>> {
         let filename = bpf_data.filename;
         let opt_mnt_ns = EventConsumer::task_mnt_ns(&info.bpf);
         let mmapped_hashes = sink.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
@@ -696,7 +691,7 @@ impl Processes {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = kunai::events::MmapExecData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             mapped: mmapped_hashes,
@@ -711,7 +706,7 @@ impl Processes {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::ConnectData,
         glob_resolved: &HashMap<IpAddr, String>,
-    ) -> UserEvent<'a, ConnectData> {
+    ) -> UserEvent<'a, ConnectData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
         let src: SockAddr = bpf_data.src.into();
         let dst: SockAddr = bpf_data.dst.into();
@@ -725,7 +720,7 @@ impl Processes {
         );
 
         let data = ConnectData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             socket: SocketInfo::from(bpf_data.socket),
@@ -750,7 +745,7 @@ impl Processes {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::SendEntropyData,
         glob_resolved: &HashMap<IpAddr, String>,
-    ) -> UserEvent<'a, SendDataData> {
+    ) -> UserEvent<'a, SendDataData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
         let dst: SockAddr = bpf_data.dst.into();
         let src: SockAddr = bpf_data.src.into();
@@ -764,7 +759,7 @@ impl Processes {
         );
 
         let data = SendDataData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             exe: exe.into(),
             command_line,
             socket: SocketInfo::from(bpf_data.socket),
@@ -790,7 +785,7 @@ impl Processes {
         info: &'a StdEventInfo,
         bpf_data: bpf_events::DnsQueryData,
         responses: Vec<bpf_events::DomainResponse>,
-    ) -> Vec<UserEvent<'a, DnsQueryData>> {
+    ) -> Vec<UserEvent<'a, DnsQueryData<'_>>> {
         let mut out = vec![];
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
@@ -809,7 +804,7 @@ impl Processes {
         .community_id_v1(0)
         .base64();
 
-        let ancestors = self.get_ancestors_string(info);
+        let ancestors = self.get_task_ancestors(info);
 
         for r in responses {
             let mut data = DnsQueryData::new();
@@ -841,11 +836,11 @@ impl Processes {
         &self,
         info: &'a StdEventInfo,
         bpf_data: bpf_events::ExitData,
-    ) -> UserEvent<'a, ExitData> {
+    ) -> UserEvent<'a, ExitData<'_>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let data = ExitData {
-            ancestors: self.get_ancestors_string(info),
+            ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
             error_code: bpf_data.error_code,
@@ -3454,27 +3449,27 @@ fn time_it<F: FnMut()>(mut f: F) -> Duration {
 // replay and test commands.
 enum ReplayEvent {
     Execve(UserEvent<'static, ExecveData<'static>>),
-    Clone(UserEvent<'static, CloneData>),
-    Prctl(UserEvent<'static, PrctlData>),
+    Clone(UserEvent<'static, CloneData<'static>>),
+    Prctl(UserEvent<'static, PrctlData<'static>>),
     Kill(UserEvent<'static, KillData<'static>>),
     Ptrace(UserEvent<'static, PtraceData<'static>>),
     CommitCreds(UserEvent<'static, CommitCredsData<'static>>),
     CredsTampered(UserEvent<'static, CredsTamperedData<'static>>),
-    MmapExec(UserEvent<'static, MmapExecData>),
-    MprotectExec(UserEvent<'static, MprotectData>),
-    Connect(UserEvent<'static, ConnectData>),
-    DnsQuery(UserEvent<'static, DnsQueryData>),
-    SendData(UserEvent<'static, SendDataData>),
-    InitModule(UserEvent<'static, InitModuleData>),
-    File(UserEvent<'static, FileData>),
-    FileUnlink(UserEvent<'static, UnlinkData>),
-    FileRename(UserEvent<'static, FileRenameData>),
-    BpfProgLoad(UserEvent<'static, BpfProgLoadData>),
-    BpfSocketFilter(UserEvent<'static, BpfSocketFilterData>),
-    Exit(UserEvent<'static, ExitData>),
-    IoUringSqe(UserEvent<'static, IoUringSqeData>),
+    MmapExec(UserEvent<'static, MmapExecData<'static>>),
+    MprotectExec(UserEvent<'static, MprotectData<'static>>),
+    Connect(UserEvent<'static, ConnectData<'static>>),
+    DnsQuery(UserEvent<'static, DnsQueryData<'static>>),
+    SendData(UserEvent<'static, SendDataData<'static>>),
+    InitModule(UserEvent<'static, InitModuleData<'static>>),
+    File(UserEvent<'static, FileData<'static>>),
+    FileUnlink(UserEvent<'static, UnlinkData<'static>>),
+    FileRename(UserEvent<'static, FileRenameData<'static>>),
+    BpfProgLoad(UserEvent<'static, BpfProgLoadData<'static>>),
+    BpfSocketFilter(UserEvent<'static, BpfSocketFilterData<'static>>),
+    Exit(UserEvent<'static, ExitData<'static>>),
+    IoUringSqe(UserEvent<'static, IoUringSqeData<'static>>),
     FileScan(UserEvent<'static, FileScanData>),
-    Error(UserEvent<'static, ErrorData>),
+    Error(UserEvent<'static, ErrorData<'static>>),
     #[allow(dead_code)]
     Start(UserEvent<'static, StartData>),
     #[allow(dead_code)]
