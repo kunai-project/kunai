@@ -34,7 +34,7 @@ use kunai::util::{
 use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, EbpfEvent, PrctlOption, Signal, TaskInfo, Type, MAX_BPF_EVENT_SIZE,
+    self, DomainResponse, EbpfEvent, PrctlOption, Signal, TaskInfo, Type, MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::Filter;
 use kunai_common::io_uring::io_uring_op;
@@ -779,6 +779,76 @@ impl Processes {
             community_id: flow.community_id_v1(0).base64(),
             data_entropy: bpf_data.shannon_entropy(),
             data_size: bpf_data.real_data_size,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn dns_query_events<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::DnsQueryData,
+        responses: Vec<bpf_events::DomainResponse>,
+    ) -> Vec<UserEvent<'a, DnsQueryData>> {
+        let mut out = vec![];
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let src: SockAddr = bpf_data.src.into();
+        let dst: SockAddr = bpf_data.dst.into();
+        let si = SocketInfo::from(bpf_data.socket);
+
+        let community_id = Flow::new(
+            // this is valid to cast as a u8
+            Protocol::from(bpf_data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        )
+        .community_id_v1(0)
+        .base64();
+
+        let ancestors = self.get_ancestors_string(info);
+
+        for r in responses {
+            let mut data = DnsQueryData::new();
+            data.ancestors = ancestors.clone();
+            data.command_line = command_line.clone();
+            data.exe = exe.clone().into();
+            data.query = r.qname.clone();
+            data.query_type = r.qtype;
+            data.response = r.records;
+            data.socket = si.clone();
+            data.src = src;
+            data.dns_server = NetworkInfo {
+                hostname: None,
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
+            };
+            data.community_id = community_id.clone();
+
+            out.push(UserEvent::new(data, info));
+        }
+
+        out
+    }
+
+    #[inline(always)]
+    fn exit_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::ExitData,
+    ) -> UserEvent<'a, ExitData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = ExitData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            error_code: bpf_data.error_code,
         };
 
         UserEvent::new(data, info)
@@ -1744,80 +1814,22 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn dns_query_events<'a>(
+    fn update_dns_resolved(
         &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::DnsQueryData,
-    ) -> Vec<UserEvent<'a, DnsQueryData>> {
-        let mut out = vec![];
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let src: SockAddr = bpf_data.src.into();
-        let dst: SockAddr = bpf_data.dst.into();
-        let si = SocketInfo::from(bpf_data.socket);
-
-        let community_id = Flow::new(
-            // this is valid to cast as a u8
-            Protocol::from(bpf_data.socket.proto as u8),
-            src.ip,
-            src.port,
-            dst.ip,
-            dst.port,
-        )
-        .community_id_v1(0)
-        .base64();
-
-        let responses = bpf_data.domain_responses().unwrap_or_default();
-        let ancestors = self.processes.get_ancestors_string(info);
-
+        info: &StdEventInfo,
+        responses: &[bpf_events::DomainResponse],
+    ) {
         for r in responses {
-            let mut data = DnsQueryData::new();
-            data.ancestors = ancestors.clone();
-            data.command_line = command_line.clone();
-            data.exe = exe.clone().into();
-            data.query = r.qname.clone();
-            data.query_type = r.qtype;
-            data.response = r.records;
-            data.socket = si.clone();
-            data.src = src;
-            data.dns_server = NetworkInfo {
-                hostname: None,
-                ip: dst.ip,
-                port: dst.port,
-                public: is_public_ip(dst.ip),
-                is_v6: dst.ip.is_ipv6(),
-            };
-            data.community_id = community_id.clone();
-
-            // update the resolution map
-            data.response.iter().for_each(|a| {
-                // if we manage to parse IpAddr
+            for a in r.records.iter() {
                 if let Ok(ip) = a.parse::<IpAddr>() {
                     self.update_resolved(ip, &r.qname, info);
                 }
-            });
-
-            out.push(UserEvent::new(data, info));
+            }
         }
-
-        out
     }
 
     #[inline(always)]
-    fn exit_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::ExitData,
-    ) -> UserEvent<'a, ExitData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = ExitData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            error_code: bpf_data.error_code,
-        };
-
+    fn exit_cleanup(&mut self, info: &StdEventInfo) {
         // this task's creds baseline is no longer of any use, regardless of
         // whether it is the thread-group leader or a plain thread exiting
         self.tasks.remove(&TaskKey::from(info.task_info()));
@@ -1860,8 +1872,6 @@ impl EventConsumer<'_> {
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
         }
-
-        UserEvent::new(data, info)
     }
 
     #[inline(always)]
@@ -2401,7 +2411,14 @@ impl EventConsumer<'_> {
 
             EbpfEvent::DnsQuery(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                for e in self.dns_query_events(&std_info, e.data).iter_mut() {
+                // force typing here because of RA not detecting it properly
+                let responses: Vec<DomainResponse> = e.data.domain_responses().unwrap_or_default();
+                self.update_dns_resolved(&std_info, &responses);
+                for e in self
+                    .processes
+                    .dns_query_events(&std_info, e.data, responses)
+                    .iter_mut()
+                {
                     self.sink.scan_and_print(e);
                 }
             }
@@ -2452,14 +2469,14 @@ impl EventConsumer<'_> {
 
             EbpfEvent::Exit(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let ty = std_info.bpf.etype;
-                let mut e = self.exit_event(&std_info, e.data);
                 // exit and exit_group will always reach consumer as they are used
                 // to clean up the processes HashMap. So we need to check if we want
                 // to display those only now.
-                if self.filter.is_enabled(ty) {
+                if self.filter.is_enabled(std_info.bpf.etype) {
+                    let mut e = self.processes.exit_event(&std_info, e.data);
                     self.sink.scan_and_print(&mut e);
                 }
+                self.exit_cleanup(&std_info);
             }
 
             EbpfEvent::IoUringSqe(e) => {
