@@ -97,20 +97,20 @@ impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
-pub struct TaskSection<'s> {
+pub struct TaskSection<'src> {
     pub name: String,
     pub pid: i32,
     pub tgid: i32,
     pub guuid: String,
-    pub creds: Creds<'s>,
+    pub creds: Creds<'src>,
     pub namespaces: Option<NamespaceInfo>,
     #[serde(with = "u32_hex")]
     pub flags: u32,
     pub zombie: bool,
 }
 
-impl<'s> TaskSection<'s> {
-    pub fn from_task_info_with_addition(ti: TaskInfo, add: &'s TaskAdditionalInfo) -> Self {
+impl<'src> TaskSection<'src> {
+    pub fn from_task_info_with_addition(ti: TaskInfo, add: &'src TaskAdditionalInfo) -> Self {
         Self {
             name: ti.comm_string(),
             pid: ti.pid,
@@ -544,7 +544,7 @@ mod u64_hex {
 ///
 /// ```rust,ignore
 /// def_user_data!(
-///    pub struct CloneData<'d> {
+///    pub struct CloneData<'src> {
 ///        #[serde(serialize_with = "u64_hex")]
 ///        pub flags: u64,
 ///    }
@@ -575,8 +575,8 @@ macro_rules! def_user_data {
         }
 
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
-pub struct ExecveData<'d> {
-    pub ancestors: Vec<Cow<'d, str>>,
+pub struct ExecveData<'src> {
+    pub ancestors: Vec<Cow<'src, str>>,
     pub parent_command_line: String,
     pub parent_exe: String,
     pub command_line: String,
@@ -614,7 +614,7 @@ impl IocGetter for ExecveData<'_> {
 }
 
 def_user_data!(
-    pub struct CloneData<'d> {
+    pub struct CloneData<'src> {
         #[serde(with = "u64_hex")]
         pub flags: u64,
     }
@@ -630,7 +630,7 @@ impl Scannable for CloneData<'_> {
 impl_std_iocs!(CloneData<'_>);
 
 def_user_data!(
-    pub struct PrctlData<'d> {
+    pub struct PrctlData<'src> {
         pub option: String,
         #[serde(with = "u64_hex")]
         pub arg2: u64,
@@ -654,16 +654,16 @@ impl Scannable for PrctlData<'_> {
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
-pub struct TargetTask<'s> {
+pub struct TargetTask<'src> {
     pub command_line: String,
     pub exe: File,
-    pub task: TaskSection<'s>,
+    pub task: TaskSection<'src>,
 }
 
 def_user_data!(
-    pub struct KillData<'d> {
+    pub struct KillData<'src> {
         pub signal: String,
-        pub target: TargetTask<'d>,
+        pub target: TargetTask<'src>,
     }
 );
 
@@ -677,10 +677,10 @@ impl Scannable for KillData<'_> {
 impl_std_iocs!(KillData<'_>);
 
 def_user_data!(
-    pub struct PtraceData<'d> {
+    pub struct PtraceData<'src> {
         #[serde(with = "u32_hex")]
         pub mode: u32,
-        pub target: TargetTask<'d>,
+        pub target: TargetTask<'src>,
     }
 );
 
@@ -701,30 +701,30 @@ pub struct Caps {
 }
 
 #[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
-pub struct Identity<'c> {
+pub struct Identity<'src> {
     pub uid: u32,
-    pub user: Cow<'c, str>,
+    pub user: Cow<'src, str>,
     pub gid: u32,
-    pub group: Cow<'c, str>,
+    pub group: Cow<'src, str>,
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
-pub struct Creds<'s> {
+pub struct Creds<'src> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub real: Option<Identity<'s>>,
-    pub effective: Identity<'s>,
+    pub real: Option<Identity<'src>>,
+    pub effective: Identity<'src>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub saved: Option<Identity<'s>>,
+    pub saved: Option<Identity<'src>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fs: Option<Identity<'s>>,
+    pub fs: Option<Identity<'src>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caps: Option<Caps>,
 }
 
-impl<'s> Creds<'s> {
+impl<'src> Creds<'src> {
     pub fn from_bpf_and_additions(
         s: creds::Creds,
-        ai: &'s TaskAdditionalInfo,
+        ai: &'src TaskAdditionalInfo,
         light: bool,
     ) -> Self {
         macro_rules! identity {
@@ -781,9 +781,9 @@ impl<'s> Creds<'s> {
 }
 
 def_user_data!(
-    pub struct CommitCredsData<'d> {
-        pub old: Creds<'d>,
-        pub new: Creds<'d>,
+    pub struct CommitCredsData<'src> {
+        pub old: Creds<'src>,
+        pub new: Creds<'src>,
     }
 );
 
@@ -797,9 +797,9 @@ impl Scannable for CommitCredsData<'_> {
 impl_std_iocs!(CommitCredsData<'_>);
 
 def_user_data!(
-    pub struct CredsTamperedData<'d> {
-        pub actual: Creds<'d>,
-        pub expected: Creds<'d>,
+    pub struct CredsTamperedData<'src> {
+        pub actual: Creds<'src>,
+        pub expected: Creds<'src>,
     }
 );
 
@@ -813,7 +813,7 @@ impl Scannable for CredsTamperedData<'_> {
 impl_std_iocs!(CredsTamperedData<'_>);
 
 def_user_data!(
-    pub struct MmapExecData<'d> {
+    pub struct MmapExecData<'src> {
         pub mapped: Arc<Hashes>,
     }
 );
@@ -837,7 +837,7 @@ impl IocGetter for MmapExecData<'_> {
 }
 
 def_user_data!(
-    pub struct MprotectData<'d> {
+    pub struct MprotectData<'src> {
         #[serde(with = "u64_hex")]
         pub addr: u64,
         #[serde(with = "u64_hex")]
@@ -913,7 +913,7 @@ impl IocGetter for NetworkInfo {
 }
 
 def_user_data!(
-    pub struct ConnectData<'d> {
+    pub struct ConnectData<'src> {
         pub socket: SocketInfo,
         pub src: SockAddr,
         pub dst: NetworkInfo,
@@ -937,7 +937,7 @@ impl IocGetter for ConnectData<'_> {
 
 def_user_data!(
     #[derive(Default)]
-    pub struct DnsQueryData<'d> {
+    pub struct DnsQueryData<'src> {
         pub socket: SocketInfo,
         pub src: SockAddr,
         pub query: String,
@@ -981,7 +981,7 @@ impl IocGetter for DnsQueryData<'_> {
 }
 
 def_user_data!(
-    pub struct SendDataData<'d> {
+    pub struct SendDataData<'src> {
         pub socket: SocketInfo,
         pub src: SockAddr,
         pub dst: NetworkInfo,
@@ -1007,8 +1007,8 @@ impl IocGetter for SendDataData<'_> {
 }
 
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
-pub struct InitModuleData<'d> {
-    pub ancestors: Vec<Cow<'d, str>>,
+pub struct InitModuleData<'src> {
+    pub ancestors: Vec<Cow<'src, str>>,
     pub command_line: String,
     pub exe: File,
     pub syscall: String,
@@ -1031,7 +1031,7 @@ impl Scannable for InitModuleData<'_> {
 }
 
 def_user_data!(
-    pub struct FileData<'d> {
+    pub struct FileData<'src> {
         pub path: PathBuf,
     }
 );
@@ -1050,7 +1050,7 @@ impl Scannable for FileData<'_> {
 }
 
 def_user_data!(
-    pub struct UnlinkData<'d> {
+    pub struct UnlinkData<'src> {
         pub path: PathBuf,
         pub success: bool,
     }
@@ -1070,7 +1070,7 @@ impl Scannable for UnlinkData<'_> {
 }
 
 def_user_data!(
-    pub struct FileRenameData<'d> {
+    pub struct FileRenameData<'src> {
         pub old: PathBuf,
         pub new: PathBuf,
     }
@@ -1109,7 +1109,7 @@ pub struct BpfProgInfo {
 }
 
 def_user_data!(
-    pub struct BpfProgLoadData<'d> {
+    pub struct BpfProgLoadData<'src> {
         pub id: u32,
         pub prog_type: BpfProgTypeInfo,
         pub tag: String,
@@ -1170,7 +1170,7 @@ pub struct FilterInfo {
 }
 
 def_user_data!(
-    pub struct BpfSocketFilterData<'d> {
+    pub struct BpfSocketFilterData<'src> {
         pub socket: SocketInfo,
         pub filter: FilterInfo,
         pub attached: bool,
@@ -1197,7 +1197,7 @@ impl IocGetter for BpfSocketFilterData<'_> {
 }
 
 def_user_data!(
-    pub struct ExitData<'d> {
+    pub struct ExitData<'src> {
         pub error_code: u64,
     }
 );
@@ -1218,7 +1218,7 @@ pub struct IoUringOp {
 }
 
 def_user_data!(
-    pub struct IoUringSqeData<'d> {
+    pub struct IoUringSqeData<'src> {
         pub op: IoUringOp,
     }
 );
@@ -1233,7 +1233,7 @@ impl Scannable for IoUringSqeData<'_> {
 impl_std_iocs!(IoUringSqeData<'_>);
 
 def_user_data!(
-    pub struct ErrorData<'d> {
+    pub struct ErrorData<'src> {
         pub code: u64,
         pub message: String,
     }
