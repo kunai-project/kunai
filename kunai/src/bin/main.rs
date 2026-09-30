@@ -589,6 +589,200 @@ impl Processes {
 
         UserEvent::new(data, info)
     }
+
+    #[inline(always)]
+    fn get_resolved<'s>(
+        &'s self,
+        global: &'s HashMap<IpAddr, String>,
+        ip: IpAddr,
+        i: &StdEventInfo,
+    ) -> Cow<'s, str> {
+        let ck = i.process_key();
+
+        // we lookup in the local table
+        if let Some(domain) = self
+            .get(&ck)
+            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
+        {
+            return domain;
+        }
+
+        // we lookup in the global table
+        if let Some(domain) = global.get(&ip) {
+            return domain.into();
+        }
+
+        // default value
+        "?".into()
+    }
+
+    #[inline(always)]
+    fn kill_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::KillData,
+        random: u32,
+        target_tai: &'a TaskAdditionalInfo,
+    ) -> UserEvent<'a, KillData<'a>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let signal = Signal::from_uint_to_string(bpf_data.signal);
+
+        // we need to set uuid part of target task
+        let mut target = bpf_data.target;
+        target.set_uuid_random(random);
+
+        // get the command line
+        let tk = ProcKey::from(target.tg_uuid);
+
+        let data = KillData {
+            ancestors: self.get_ancestors_string(info),
+            exe: exe.into(),
+            command_line,
+            signal,
+            target: TargetTask {
+                command_line: self.get_command_line(tk),
+                exe: self.get_exe(tk).into(),
+                task: TaskSection::from_task_info_with_addition(target, target_tai),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn ptrace_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::PtraceData,
+        random: u32,
+        target_tai: &'a TaskAdditionalInfo,
+    ) -> UserEvent<'a, PtraceData<'a>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        // we need to set uuid part of target task
+        let mut target = bpf_data.target;
+        target.set_uuid_random(random);
+
+        // get the command line
+        let tk = ProcKey::from(target.tg_uuid);
+
+        let data = PtraceData {
+            ancestors: self.get_ancestors_string(info),
+            exe: exe.into(),
+            command_line,
+            mode: bpf_data.mode,
+            target: TargetTask {
+                command_line: self.get_command_line(tk),
+                exe: self.get_exe(tk).into(),
+                task: TaskSection::from_task_info_with_addition(target, target_tai),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn mmap_exec_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::MmapExecData,
+        sink: &mut EventSink,
+    ) -> UserEvent<'a, kunai::events::MmapExecData> {
+        let filename = bpf_data.filename;
+        let opt_mnt_ns = EventConsumer::task_mnt_ns(&info.bpf);
+        let mmapped_hashes = sink.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
+
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = kunai::events::MmapExecData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            mapped: mmapped_hashes,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn connect_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::ConnectData,
+        glob_resolved: &HashMap<IpAddr, String>,
+    ) -> UserEvent<'a, ConnectData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let src: SockAddr = bpf_data.src.into();
+        let dst: SockAddr = bpf_data.dst.into();
+
+        let flow: Flow = Flow::new(
+            Protocol::from(bpf_data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
+
+        let data = ConnectData {
+            ancestors: self.get_ancestors_string(info),
+            command_line,
+            exe: exe.into(),
+            socket: SocketInfo::from(bpf_data.socket),
+            src,
+            dst: NetworkInfo {
+                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
+            },
+            community_id: flow.community_id_v1(0).base64(),
+            connected: bpf_data.connected,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn send_data_event<'a>(
+        &self,
+        info: &'a StdEventInfo,
+        bpf_data: bpf_events::SendEntropyData,
+        glob_resolved: &HashMap<IpAddr, String>,
+    ) -> UserEvent<'a, SendDataData> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let dst: SockAddr = bpf_data.dst.into();
+        let src: SockAddr = bpf_data.src.into();
+
+        let flow = Flow::new(
+            Protocol::from(bpf_data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
+
+        let data = SendDataData {
+            ancestors: self.get_ancestors_string(info),
+            exe: exe.into(),
+            command_line,
+            socket: SocketInfo::from(bpf_data.socket),
+            src: bpf_data.src.into(),
+            dst: NetworkInfo {
+                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
+            },
+            community_id: flow.community_id_v1(0).base64(),
+            data_entropy: bpf_data.shannon_entropy(),
+            data_size: bpf_data.real_data_size,
+        };
+
+        UserEvent::new(data, info)
+    }
 }
 
 /// Per-task (as opposed to per-thread-group) state.
@@ -1511,28 +1705,6 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> Cow<'_, str> {
-        let ck = i.process_key();
-
-        // we lookup in the local table
-        if let Some(domain) = self
-            .processes
-            .get(&ck)
-            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
-        {
-            return domain;
-        }
-
-        // we lookup in the global table
-        if let Some(domain) = self.resolved.get(&ip) {
-            return domain.into();
-        }
-
-        // default value
-        "?".into()
-    }
-
-    #[inline(always)]
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
         ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt)).into()
     }
@@ -1569,94 +1741,6 @@ impl EventConsumer<'_> {
                 None
             }
         }
-    }
-
-    #[inline(always)]
-    fn kill_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        target_tai: &'a TaskAdditionalInfo,
-        bpf_data: bpf_events::KillData,
-    ) -> UserEvent<'a, KillData<'a>> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let signal = Signal::from_uint_to_string(bpf_data.signal);
-
-        // we need to set uuid part of target task
-        let mut target = bpf_data.target;
-        target.set_uuid_random(self.random);
-
-        // get the command line
-        let tk = ProcKey::from(target.tg_uuid);
-
-        let data = KillData {
-            ancestors: self.processes.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            signal,
-            target: TargetTask {
-                command_line: self.processes.get_command_line(tk),
-                exe: self.processes.get_exe(tk).into(),
-                task: TaskSection::from_task_info_with_addition(target, target_tai),
-            },
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn ptrace_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        target_tai: &'a TaskAdditionalInfo,
-        bpf_data: bpf_events::PtraceData,
-    ) -> UserEvent<'a, PtraceData<'a>> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        // we need to set uuid part of target task
-        let mut target = bpf_data.target;
-        target.set_uuid_random(self.random);
-
-        // get the command line
-        let tk = ProcKey::from(target.tg_uuid);
-
-        let data = PtraceData {
-            ancestors: self.processes.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            mode: bpf_data.mode,
-            target: TargetTask {
-                command_line: self.processes.get_command_line(tk),
-                exe: self.processes.get_exe(tk).into(),
-                task: TaskSection::from_task_info_with_addition(target, target_tai),
-            },
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn mmap_exec_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::MmapExecData,
-    ) -> UserEvent<'a, kunai::events::MmapExecData> {
-        let filename = bpf_data.filename;
-        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-        let mmapped_hashes = self
-            .sink
-            .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
-
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-
-        let data = kunai::events::MmapExecData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            mapped: mmapped_hashes,
-        };
-
-        UserEvent::new(data, info)
     }
 
     #[inline(always)]
@@ -1717,83 +1801,6 @@ impl EventConsumer<'_> {
         }
 
         out
-    }
-
-    #[inline(always)]
-    fn connect_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::ConnectData,
-    ) -> UserEvent<'a, ConnectData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-        let src: SockAddr = bpf_data.src.into();
-        let dst: SockAddr = bpf_data.dst.into();
-
-        let flow: Flow = Flow::new(
-            Protocol::from(bpf_data.socket.proto as u8),
-            src.ip,
-            src.port,
-            dst.ip,
-            dst.port,
-        );
-
-        let data = ConnectData {
-            ancestors: self.processes.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            socket: SocketInfo::from(bpf_data.socket),
-            src,
-            dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst.ip, info).into()),
-                ip: dst.ip,
-                port: dst.port,
-                public: is_public_ip(dst.ip),
-                is_v6: dst.ip.is_ipv6(),
-            },
-            community_id: flow.community_id_v1(0).base64(),
-            connected: bpf_data.connected,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn send_data_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::SendEntropyData,
-    ) -> UserEvent<'a, SendDataData> {
-        let (exe, command_line) = self.processes.get_exe_and_command_line(info);
-        let dst: SockAddr = bpf_data.dst.into();
-        let src: SockAddr = bpf_data.src.into();
-
-        let flow = Flow::new(
-            Protocol::from(bpf_data.socket.proto as u8),
-            src.ip,
-            src.port,
-            dst.ip,
-            dst.port,
-        );
-
-        let data = SendDataData {
-            ancestors: self.processes.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            socket: SocketInfo::from(bpf_data.socket),
-            src: bpf_data.src.into(),
-            dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst.ip, info).into()),
-                ip: dst.ip,
-                port: dst.port,
-                public: is_public_ip(dst.ip),
-                is_v6: dst.ip.is_ipv6(),
-            },
-            community_id: flow.community_id_v1(0).base64(),
-            data_entropy: bpf_data.shannon_entropy(),
-            data_size: bpf_data.real_data_size,
-        };
-
-        UserEvent::new(data, info)
     }
 
     #[inline(always)]
@@ -2338,7 +2345,9 @@ impl EventConsumer<'_> {
                 let target_tai = Self::mnt_ns_from_task(&e.data.target)
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
-                let mut e = self.kill_event(&std_info, &target_tai, e.data);
+                let mut e = self
+                    .processes
+                    .kill_event(&std_info, e.data, self.random, &target_tai);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2347,7 +2356,9 @@ impl EventConsumer<'_> {
                 let target_tai = Self::mnt_ns_from_task(&e.data.target)
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
-                let mut e = self.ptrace_event(&std_info, &target_tai, e.data);
+                let mut e =
+                    self.processes
+                        .ptrace_event(&std_info, e.data, self.random, &target_tai);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2368,7 +2379,9 @@ impl EventConsumer<'_> {
 
             EbpfEvent::MmapExec(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.mmap_exec_event(&std_info, e.data);
+                let mut e = self
+                    .processes
+                    .mmap_exec_event(&std_info, e.data, &mut self.sink);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2380,7 +2393,9 @@ impl EventConsumer<'_> {
 
             EbpfEvent::Connect(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.connect_event(&std_info, e.data);
+                let mut e = self
+                    .processes
+                    .connect_event(&std_info, e.data, &self.resolved);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2393,7 +2408,9 @@ impl EventConsumer<'_> {
 
             EbpfEvent::SendEntropy(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.send_data_event(&std_info, e.data);
+                let mut e = self
+                    .processes
+                    .send_data_event(&std_info, e.data, &self.resolved);
                 self.sink.scan_and_print(&mut e);
             }
 
