@@ -784,7 +784,7 @@ impl Processes {
         &'src self,
         info: &'src StdEventInfo,
         bpf_data: bpf_events::DnsQueryData,
-        responses: Vec<bpf_events::DomainResponse>,
+        responses: Vec<DomainResponse>,
     ) -> Vec<UserEvent<'src, DnsQueryData<'src>>> {
         let mut out = vec![];
         let (exe, command_line) = self.get_exe_and_command_line(info);
@@ -1809,11 +1809,7 @@ impl EventConsumer<'_> {
     }
 
     #[inline(always)]
-    fn update_dns_resolved(
-        &mut self,
-        info: &StdEventInfo,
-        responses: &[bpf_events::DomainResponse],
-    ) {
+    fn update_dns_resolved(&mut self, info: &StdEventInfo, responses: &[DomainResponse]) {
         for r in responses {
             for a in r.records.iter() {
                 if let Ok(ip) = a.parse::<IpAddr>() {
