@@ -191,7 +191,7 @@ impl Processes {
         (self.get_exe(ck), self.get_command_line(ck))
     }
 
-    /// get the list of ancestors given a [TaskKey]. If skip is 0 the last
+    /// get the list of ancestors given a [ProcKey]. If skip is 0 the last
     /// item is the image of the task referenced by `tk`. One can skip ancestors
     /// by setting `skip` > 0.
     #[inline(always)]
