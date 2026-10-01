@@ -540,6 +540,9 @@ mod u64_hex {
 /// it typically create a structure with some fields all data
 /// sections must have (exe, command_line ...)
 ///
+/// The struct must declare exactly one lifetime parameter, which
+/// generated fields borrow from.
+///
 /// # Example
 ///
 /// ```rust,ignore
