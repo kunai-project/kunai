@@ -4454,6 +4454,101 @@ mod tests {
         }
     }
 
+    fn pkey(pid: u32) -> ProcKey {
+        kunai_common::uuid::ProcUuid {
+            leader_start_time_ns: 0,
+            random: 0,
+            tgid: pid,
+        }
+        .into()
+    }
+
+    fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {
+        Process {
+            image: image.into(),
+            command_line: vec![],
+            pid,
+            flags: 0,
+            resolved: HashMap::new(),
+            container: None,
+            cgroups: vec![],
+            nodename: None,
+            real_parent_key: parent.map(pkey),
+            children: HashSet::new(),
+            threads: HashSet::new(),
+            kernel_task_info: None,
+            procfs: false,
+            exit: false,
+            zombie: false,
+        }
+    }
+
+    /// init(1) -> bash(10) -> ls(20)
+    fn rooted_chain() -> Processes {
+        let mut p = Processes::default();
+        p.insert(pkey(1), process(1, "/sbin/init", None));
+        p.insert(pkey(10), process(10, "/bin/bash", Some(1)));
+        p.insert(pkey(20), process(20, "/bin/ls", Some(10)));
+        p
+    }
+
+    #[test]
+    fn ancestors_rooted_at_init() {
+        let p = rooted_chain();
+        assert_eq!(
+            p.get_all_ancestors(pkey(20), 0),
+            ["/sbin/init", "/bin/bash", "/bin/ls"]
+        );
+    }
+
+    #[test]
+    fn ancestors_skip() {
+        let p = rooted_chain();
+        assert_eq!(
+            p.get_all_ancestors(pkey(20), 1),
+            ["/sbin/init", "/bin/bash"]
+        );
+        // skipping past the root leaves nothing, and no "?" marker
+        assert!(p.get_all_ancestors(pkey(20), 5).is_empty());
+    }
+
+    #[test]
+    fn ancestors_unknown_key() {
+        assert!(rooted_chain().get_all_ancestors(pkey(99), 0).is_empty());
+    }
+
+    #[test]
+    fn ancestors_broken_chain() {
+        let mut p = Processes::default();
+        p.insert(pkey(42), process(42, "/usr/bin/sshd", None));
+        p.insert(pkey(43), process(43, "/bin/sh", Some(42)));
+        assert_eq!(
+            p.get_all_ancestors(pkey(43), 0),
+            ["?", "/usr/bin/sshd", "/bin/sh"]
+        );
+    }
+
+    #[test]
+    fn ancestors_kthread_root() {
+        let mut kthreadd = process(2, "kthreadd", None);
+        kthreadd.flags = 0x00200000;
+        let mut p = Processes::default();
+        p.insert(pkey(2), kthreadd);
+        p.insert(pkey(50), process(50, "/bin/sh", Some(2)));
+        assert_eq!(p.get_all_ancestors(pkey(50), 0), ["kthreadd", "/bin/sh"]);
+    }
+
+    #[test]
+    fn ancestors_cycle_is_truncated() {
+        let mut p = Processes::default();
+        p.insert(pkey(100), process(100, "/a", Some(101)));
+        p.insert(pkey(101), process(101, "/b", Some(100)));
+        let a = p.get_all_ancestors(pkey(100), 0);
+        assert_eq!(a.len(), MAX_ANCESTORS);
+        assert_eq!(a[0], "(truncated)");
+        assert_eq!(a[MAX_ANCESTORS - 1], "/a");
+    }
+
     #[test]
     fn no_divergence_never_fires() {
         assert!(!creds_diverged(creds(0), creds(0), None));
