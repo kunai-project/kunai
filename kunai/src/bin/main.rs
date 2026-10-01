@@ -90,6 +90,7 @@ use communityid::{Flow, Protocol};
 
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
+const MAX_ANCESTORS: usize = 1024;
 
 #[derive(Debug, Clone)]
 struct Process {
@@ -192,14 +193,14 @@ impl Processes {
     }
 
     /// get the list of ancestors given a [ProcKey]. If skip is 0 the last
-    /// item is the image of the task referenced by `tk`. One can skip ancestors
+    /// item is the image of the task referenced by `k`. One can skip ancestors
     /// by setting `skip` > 0.
     #[inline(always)]
-    fn get_all_ancestors(&self, mut tk: ProcKey, mut skip: u16) -> Vec<Cow<'_, str>> {
+    fn get_all_ancestors(&self, mut k: ProcKey, mut skip: u16) -> Vec<Cow<'_, str>> {
         let mut ancestors = vec![];
         let mut last = None;
 
-        while let Some(task) = self.get(&tk) {
+        while let Some(task) = self.get(&k) {
             last = Some(task);
             if skip == 0 {
                 ancestors.push(task.image.to_string_lossy());
@@ -207,7 +208,11 @@ impl Processes {
                 skip -= 1;
             }
 
-            tk = match task.real_parent_key {
+            if ancestors.len() >= MAX_ANCESTORS {
+                break;
+            }
+
+            k = match task.real_parent_key {
                 Some(v) => v,
                 None => {
                     break;
@@ -215,7 +220,9 @@ impl Processes {
             };
         }
 
-        if let Some(last) = last {
+        if ancestors.len() >= MAX_ANCESTORS {
+            ancestors.push("(truncated)".into());
+        } else if let Some(last) = last {
             if last.pid != 1 && !last.is_kthread() && skip == 0 {
                 ancestors.push("?".into());
             }
