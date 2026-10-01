@@ -208,7 +208,7 @@ impl Processes {
                 skip -= 1;
             }
 
-            if ancestors.len() >= MAX_ANCESTORS {
+            if ancestors.len() >= MAX_ANCESTORS - 1 {
                 break;
             }
 
@@ -220,7 +220,7 @@ impl Processes {
             };
         }
 
-        if ancestors.len() >= MAX_ANCESTORS {
+        if ancestors.len() >= MAX_ANCESTORS - 1 {
             ancestors.push("(truncated)".into());
         } else if let Some(last) = last {
             if last.pid != 1 && !last.is_kthread() && skip == 0 {
