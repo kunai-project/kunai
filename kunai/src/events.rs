@@ -1264,7 +1264,7 @@ impl FileScanData {
         let p = h.path.clone();
         Self {
             path: p,
-            meta: h.into(),
+            meta: h.as_ref().into(),
             ..Default::default()
         }
     }

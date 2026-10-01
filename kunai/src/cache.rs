@@ -66,8 +66,8 @@ pub struct FileMeta {
     pub error: Option<String>,
 }
 
-impl From<Arc<Hashes>> for FileMeta {
-    fn from(value: Arc<Hashes>) -> Self {
+impl From<&Hashes> for FileMeta {
+    fn from(value: &Hashes) -> Self {
         Self {
             magic: value.magic.clone(),
             md5: value.md5.clone(),
