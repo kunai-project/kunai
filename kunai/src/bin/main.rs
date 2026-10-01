@@ -202,7 +202,7 @@ impl Processes {
         while let Some(task) = self.get(&tk) {
             last = Some(task);
             if skip == 0 {
-                ancestors.insert(0, task.image.to_string_lossy());
+                ancestors.push(task.image.to_string_lossy());
             } else {
                 skip -= 1;
             }
@@ -217,10 +217,11 @@ impl Processes {
 
         if let Some(last) = last {
             if last.pid != 1 && !last.is_kthread() && skip == 0 {
-                ancestors.insert(0, "?".into());
+                ancestors.push("?".into());
             }
         }
 
+        ancestors.reverse();
         ancestors
     }
 
