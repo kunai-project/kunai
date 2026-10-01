@@ -386,15 +386,14 @@ impl Cache {
                 let ukey = Key::from_path_and_meta(ns, &user_path.into(), &umeta)
                     .map_err(namespace::Error::other)?;
 
-                if !self.users.contains_key(&ukey) {
-                    self.users.insert(
-                        ukey.clone(),
-                        Arc::new(Users::from_sys().map_err(namespace::Error::other)?),
-                    );
-                }
-
-                // we cannot panic here as we are sure the cache contains value
-                let users = self.users.get(&ukey).cloned().unwrap();
+                let users = match self.users.get(&ukey).cloned() {
+                    Some(u) => u,
+                    None => {
+                        let u = Arc::new(Users::from_sys().map_err(namespace::Error::other)?);
+                        self.users.insert(ukey, Arc::clone(&u));
+                        u
+                    }
+                };
 
                 let group_path = PathBuf::from(Groups::sys_path());
 
@@ -409,15 +408,14 @@ impl Cache {
                 let gkey = Key::from_path_and_meta(ns, &group_path.into(), &gmeta)
                     .map_err(namespace::Error::other)?;
 
-                if !self.groups.contains_key(&gkey) {
-                    self.groups.insert(
-                        gkey.clone(),
-                        Arc::new(Groups::from_sys().map_err(namespace::Error::other)?),
-                    );
-                }
-
-                // we cannot panic here as we are sure the cache contains value
-                let groups = self.groups.get(&gkey).cloned().unwrap();
+                let groups = match self.groups.get(&gkey).cloned() {
+                    Some(g) => g,
+                    None => {
+                        let g = Arc::new(Groups::from_sys().map_err(namespace::Error::other)?);
+                        self.groups.insert(gkey, Arc::clone(&g));
+                        g
+                    }
+                };
 
                 Ok((users, groups))
             })
@@ -491,13 +489,13 @@ impl Cache {
 
             let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 
-            if !self.hashes.contains_key(&key) {
-                let h = Arc::new(Hashes::from_path_ref(pb, magic_db));
-                self.hashes.insert(key.clone(), h);
+            if let Some(h) = self.hashes.get(&key) {
+                return Ok(Arc::clone(h));
             }
 
-            // we cannot panic here as we are sure the cache contains value
-            Ok(self.hashes.get(&key).unwrap().clone())
+            let h = Arc::new(Hashes::from_path_ref(pb, magic_db));
+            self.hashes.insert(key, Arc::clone(&h));
+            Ok(h)
         });
 
         // we must be sure that we restore our namespace
