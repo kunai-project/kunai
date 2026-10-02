@@ -33,6 +33,14 @@ pub struct File<'src> {
     pub path: Cow<'src, Path>,
 }
 
+impl From<PathBuf> for File<'static> {
+    fn from(value: PathBuf) -> Self {
+        Self {
+            path: Cow::Owned(value),
+        }
+    }
+}
+
 impl<'src> From<&'src Path> for File<'src> {
     fn from(value: &'src Path) -> Self {
         Self {

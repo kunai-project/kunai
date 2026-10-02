@@ -285,9 +285,7 @@ impl Processes {
     ) -> UserEvent<'src, CloneData<'src>> {
         let data = CloneData {
             ancestors: self.get_task_ancestors(info),
-            exe: kunai::events::File {
-                path: Cow::Owned(bpf_data.executable.to_path_buf()),
-            },
+            exe: bpf_data.executable.to_path_buf().into(),
             command_line: self.get_command_line(info.process_key()),
             flags: bpf_data.flags,
         };
@@ -1040,7 +1038,7 @@ impl EventSink<'_> {
                         error: Some(format!("{e}")),
                         ..Default::default()
                     };
-                    Arc::new(Hashes::with_meta(p.as_path_buf().clone(), meta))
+                    Arc::new(Hashes::with_meta(p.as_path().to_path_buf(), meta))
                 }
             }
         } else {
@@ -1048,7 +1046,7 @@ impl EventSink<'_> {
                 error: Some("unknown namespace".into()),
                 ..Default::default()
             };
-            Arc::new(Hashes::with_meta(p.as_path_buf().clone(), meta))
+            Arc::new(Hashes::with_meta(p.as_path().to_path_buf(), meta))
         }
     }
 
