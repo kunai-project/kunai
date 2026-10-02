@@ -494,7 +494,7 @@ impl Processes {
     fn init_module_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
-        bpf_data: bpf_events::InitModuleData,
+        bpf_data: &'src bpf_events::InitModuleData,
     ) -> UserEvent<'src, InitModuleData<'src>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
@@ -503,8 +503,8 @@ impl Processes {
             command_line,
             exe: exe.into(),
             syscall: Cow::Borrowed(bpf_data.args.syscall_name()),
-            module_name: bpf_data.name.to_string(),
-            args: bpf_data.uargs.to_string(),
+            module_name: Cow::Borrowed(bpf_data.name.as_str()),
+            args: Cow::Borrowed(bpf_data.uargs.as_str()),
             loaded: bpf_data.loaded,
         };
 
@@ -1040,7 +1040,7 @@ impl EventSink<'_> {
                         error: Some(format!("{e}")),
                         ..Default::default()
                     };
-                    Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
+                    Arc::new(Hashes::with_meta(p.as_path_buf().clone(), meta))
                 }
             }
         } else {
@@ -1048,7 +1048,7 @@ impl EventSink<'_> {
                 error: Some("unknown namespace".into()),
                 ..Default::default()
             };
-            Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
+            Arc::new(Hashes::with_meta(p.as_path_buf().clone(), meta))
         }
     }
 
@@ -1144,12 +1144,10 @@ impl EventSink<'_> {
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
+        let cp = cache::Path::from(p.to_path_buf());
         // if the scanner is None, signatures will be an empty Vec
         let (sigs, err) = match self.file_scanner.as_mut() {
-            Some(s) => match self
-                .cache
-                .get_sig_in_ns(ns, &cache::Path::from(p.to_path_buf()), s)
-            {
+            Some(s) => match self.cache.get_sig_in_ns(ns, &cp, s) {
                 Ok((sigs, msg)) => (sigs, msg),
                 Err(e) => (vec![], Some(format!("{e}"))),
             },
@@ -1157,9 +1155,7 @@ impl EventSink<'_> {
         };
 
         let pos = sigs.len();
-        let mut data = FileScanData::from_hashes(
-            self.get_hashes_in_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
-        );
+        let mut data = FileScanData::from_hashes(self.get_hashes_in_ns(Some(ns), &cp));
         data.source_event = event.info().event.uuid.clone();
         data.signatures = sigs;
         data.positives = pos;
@@ -2424,7 +2420,7 @@ impl EventConsumer<'_> {
 
             EbpfEvent::InitModule(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.init_module_event(&std_info, e.data);
+                let mut e = self.processes.init_module_event(&std_info, &e.data);
                 self.sink.scan_and_print(&mut e);
             }
 

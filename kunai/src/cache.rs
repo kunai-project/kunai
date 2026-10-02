@@ -242,7 +242,7 @@ impl From<&kunai_common::path::Path> for Path {
 
 impl Path {
     #[inline]
-    pub fn to_path_buf(&self) -> &PathBuf {
+    pub fn as_path_buf(&self) -> &PathBuf {
         match self {
             Self::Bpf { path, ebpf_meta: _ } => path,
             Self::Std(p) => p,
@@ -277,7 +277,7 @@ impl Key {
     #[inline(always)]
     fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
         // metadata() fails with io::ErrorKind::NotFound when the file is missing
-        let meta = path.to_path_buf().metadata()?;
+        let meta = path.as_path_buf().metadata()?;
         Self::from_path_and_meta(ns, path, &meta)
     }
 
@@ -285,7 +285,7 @@ impl Key {
     /// fetched by the caller, saving a stat.
     #[inline(always)]
     fn from_path_and_meta(ns: Mnt, path: &Path, meta: &fs::Metadata) -> Result<Self, Error> {
-        let pb = path.to_path_buf();
+        let pb = path.as_path_buf();
 
         let k = Key {
             mnt_namespace: ns,
@@ -434,8 +434,7 @@ impl Cache {
         };
 
         let res = mnt_ns.do_in_namespace(|| {
-            // we get a PathBuf as path ownership is passed down
-            let pb = path.to_path_buf();
+            let pb = path.as_path_buf();
             // we create key to check if we already have cached
             // signatures for that file
             let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
@@ -485,7 +484,7 @@ impl Cache {
         };
 
         let res = mnt_ns.do_in_namespace(|| {
-            let pb = path.to_path_buf();
+            let pb = path.as_path_buf();
 
             let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
 

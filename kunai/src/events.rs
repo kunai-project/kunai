@@ -1017,8 +1017,8 @@ pub struct InitModuleData<'src> {
     pub command_line: Cow<'src, str>,
     pub exe: File<'src>,
     pub syscall: Cow<'src, str>,
-    pub module_name: String,
-    pub args: String,
+    pub module_name: Cow<'src, str>,
+    pub args: Cow<'src, str>,
     pub loaded: bool,
 }
 
