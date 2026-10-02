@@ -34,7 +34,7 @@ use kunai::util::{
 use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, EbpfEvent, PrctlOption, Signal, TaskInfo, Type, MAX_BPF_EVENT_SIZE,
+    self, DomainResponse, EbpfEvent, PrctlOption, Signal, TaskInfo, Type, MAX_BPF_EVENT_SIZE,
 };
 use kunai_common::config::Filter;
 use kunai_common::io_uring::io_uring_op;
@@ -60,6 +60,7 @@ use std::ffi::OsStr;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
+use std::ops::{Deref, DerefMut};
 
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -89,6 +90,7 @@ use communityid::{Flow, Protocol};
 
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
+const MAX_ANCESTORS: usize = 1024;
 
 #[derive(Debug, Clone)]
 struct Process {
@@ -138,6 +140,721 @@ impl Process {
         self.resolved.clear();
         self.resolved.shrink_to_fit();
         self.exit = true;
+    }
+}
+
+/// Process table, kept apart from [`EventConsumer`] so that events can
+/// borrow from it while [`EventSink`] is mutably borrowed.
+#[derive(Default)]
+struct Processes(HashMap<ProcKey, Process>);
+
+impl Deref for Processes {
+    type Target = HashMap<ProcKey, Process>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Processes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Processes {
+    #[inline(always)]
+    fn with_capacity(cap: usize) -> Self {
+        Self(HashMap::with_capacity(cap))
+    }
+
+    #[inline(always)]
+    fn get_exe(&self, key: ProcKey) -> PathBuf {
+        let mut exe = PathBuf::from("?");
+        if let Some(task) = self.get(&key) {
+            exe = task.image.clone();
+        }
+        exe
+    }
+
+    #[inline(always)]
+    fn get_command_line(&self, key: ProcKey) -> String {
+        let mut cl = String::from("?");
+        if let Some(t) = self.get(&key) {
+            cl = t.command_line_string();
+        }
+        cl
+    }
+
+    #[inline(always)]
+    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
+        let ck = i.process_key();
+        (self.get_exe(ck), self.get_command_line(ck))
+    }
+
+    /// get the list of ancestors given a [ProcKey]. If skip is 0 the last
+    /// item is the image of the task referenced by `k`. One can skip ancestors
+    /// by setting `skip` > 0.
+    #[inline(always)]
+    fn get_all_ancestors(&self, mut k: ProcKey, mut skip: u16) -> Vec<Cow<'_, str>> {
+        let mut ancestors = vec![];
+        let mut last = None;
+
+        while let Some(task) = self.get(&k) {
+            last = Some(task);
+            if skip == 0 {
+                ancestors.push(task.image.to_string_lossy());
+            } else {
+                skip -= 1;
+            }
+
+            if ancestors.len() >= MAX_ANCESTORS - 1 {
+                break;
+            }
+
+            k = match task.real_parent_key {
+                Some(v) => v,
+                None => {
+                    break;
+                }
+            };
+        }
+
+        if ancestors.len() >= MAX_ANCESTORS - 1 {
+            ancestors.push("(truncated)".into());
+        } else if let Some(last) = last {
+            if last.pid != 1 && !last.is_kthread() && skip == 0 {
+                ancestors.push("?".into());
+            }
+        }
+
+        ancestors.reverse();
+        ancestors
+    }
+
+    #[inline(always)]
+    fn get_task_ancestors(&self, i: &StdEventInfo) -> Vec<Cow<'_, str>> {
+        self.get_all_ancestors(i.process_key(), 1)
+    }
+
+    #[inline(always)]
+    fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
+        let ck = i.process_key();
+        self.get(&ck)
+            .and_then(|t| t.real_parent_key)
+            .and_then(|ptk| self.get(&ptk))
+            .map(|c| c.command_line.join(" "))
+            .unwrap_or("?".into())
+    }
+
+    #[inline(always)]
+    fn get_parent_image(&self, i: &StdEventInfo) -> String {
+        let ck = i.process_key();
+        self.get(&ck)
+            .and_then(|t| t.real_parent_key)
+            .and_then(|ptk| self.get(&ptk))
+            .map(|c| c.image.to_string_lossy().to_string())
+            .unwrap_or("?".into())
+    }
+
+    #[inline(always)]
+    fn execve_event<'src>(
+        &'src self,
+        sink: &mut EventSink,
+        info: &'src StdEventInfo,
+        bpf_data: &bpf_events::ExecveData,
+    ) -> UserEvent<'src, ExecveData<'src>> {
+        let opt_mnt_ns = EventConsumer::task_mnt_ns(&info.bpf);
+
+        let exe = sink.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.executable));
+
+        let interpreter = if bpf_data.executable != bpf_data.interpreter {
+            Some(sink.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.interpreter)))
+        } else {
+            None
+        };
+
+        let data = ExecveData {
+            ancestors: self.get_task_ancestors(info),
+            parent_command_line: self.get_parent_command_line(info),
+            parent_exe: self.get_parent_image(info),
+            command_line: self.get_command_line(info.process_key()),
+            exe,
+            interpreter,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn clone_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::CloneData,
+    ) -> UserEvent<'src, CloneData<'src>> {
+        let data = CloneData {
+            ancestors: self.get_task_ancestors(info),
+            exe: bpf_data.executable.to_path_buf().into(),
+            command_line: self.get_command_line(info.process_key()),
+            flags: bpf_data.flags,
+        };
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn prctl_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::PrctlData,
+    ) -> UserEvent<'src, PrctlData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let option = PrctlOption::try_from_uint(bpf_data.option)
+            .map(|o| o.as_str().into())
+            .unwrap_or(format!("unknown({})", bpf_data.option))
+            .to_string();
+
+        let data = PrctlData {
+            ancestors: self.get_task_ancestors(info),
+            exe: exe.into(),
+            command_line,
+            option,
+            arg2: bpf_data.arg2,
+            arg3: bpf_data.arg3,
+            arg4: bpf_data.arg4,
+            arg5: bpf_data.arg5,
+            success: bpf_data.success,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn commit_creds_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::CommitCredsData,
+    ) -> UserEvent<'src, CommitCredsData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = CommitCredsData {
+            ancestors: self.get_task_ancestors(info),
+            exe: exe.into(),
+            command_line,
+            old: Creds::from_bpf_and_additions(bpf_data.old, &info.additional.task, false),
+            new: Creds::from_bpf_and_additions(bpf_data.new, &info.additional.task, false),
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn creds_tampered_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        baseline: creds::Creds,
+    ) -> UserEvent<'src, CredsTamperedData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+        // `baseline` carries the per-process values we previously recorded;
+        // `info.task_info()` carries what the task is reporting right now.
+        // A creds_tampered event is emitted precisely because the two differ
+        // on at least one of (uid, gid, cap_effective).
+        let actual = info.task_info();
+
+        let data = CredsTamperedData {
+            ancestors: self.get_task_ancestors(info),
+            exe: exe.into(),
+            command_line,
+            actual: Creds::from_bpf_and_additions(actual.creds, &info.additional.task, false),
+            expected: Creds::from_bpf_and_additions(baseline, &info.additional.task, false),
+        };
+
+        UserEvent::new(data, info).with_type(Type::CredsTampered)
+    }
+
+    #[inline(always)]
+    fn file_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::FileData,
+    ) -> UserEvent<'src, FileData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = FileData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            path: bpf_data.path.to_path_buf(),
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn unlink_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::UnlinkData,
+    ) -> UserEvent<'src, UnlinkData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = UnlinkData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            path: bpf_data.path.into(),
+            success: bpf_data.success,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn bpf_prog_load_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::BpfProgData,
+    ) -> UserEvent<'src, BpfProgLoadData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let mut data = BpfProgLoadData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            id: bpf_data.id,
+            prog_type: BpfProgTypeInfo {
+                id: bpf_data.prog_type,
+                name: util::bpf::bpf_type_to_string(bpf_data.prog_type),
+            },
+            tag: hex::encode(bpf_data.tag),
+            attached_func: bpf_data.attached_func_name.into(),
+            name: bpf_data.name.into(),
+            ksym: bpf_data.ksym.into(),
+            bpf_prog: kunai::events::BpfProgInfo {
+                md5: "?".into(),
+                sha1: "?".into(),
+                sha256: "?".into(),
+                sha512: "?".into(),
+                size: 0,
+            },
+            verified_insns: bpf_data.verified_insns.into(),
+            loaded: bpf_data.loaded,
+        };
+
+        if let BpfOption::Some(h) = &bpf_data.hashes {
+            data.bpf_prog.md5 = h.md5.into();
+            data.bpf_prog.sha1 = h.sha1.into();
+            data.bpf_prog.sha256 = h.sha256.into();
+            data.bpf_prog.sha512 = h.sha512.into();
+            data.bpf_prog.size = h.size;
+        }
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn bpf_socket_filter_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::BpfSocketFilterData,
+    ) -> UserEvent<'src, BpfSocketFilterData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = BpfSocketFilterData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            socket: SocketInfo::from(bpf_data.socket_info),
+            filter: FilterInfo {
+                md5: md5_data(bpf_data.filter.as_slice()),
+                sha1: sha1_data(bpf_data.filter.as_slice()),
+                sha256: sha256_data(bpf_data.filter.as_slice()),
+                sha512: sha512_data(bpf_data.filter.as_slice()),
+                len: bpf_data.filter_len, // size in filter sock_filter blocks
+                size: bpf_data.filter.len(), // size in bytes
+            },
+            attached: bpf_data.attached,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn mprotect_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::MprotectData,
+    ) -> UserEvent<'src, MprotectData<'src>> {
+        let (exe, cmd_line) = self.get_exe_and_command_line(info);
+
+        let data = MprotectData {
+            ancestors: self.get_task_ancestors(info),
+            command_line: cmd_line,
+            exe: exe.into(),
+            addr: bpf_data.start,
+            prot: bpf_data.prot,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn init_module_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::InitModuleData,
+    ) -> UserEvent<'src, InitModuleData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = InitModuleData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            syscall: bpf_data.args.syscall_name().into(),
+            module_name: bpf_data.name.to_string(),
+            args: bpf_data.uargs.to_string(),
+            loaded: bpf_data.loaded,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn file_rename_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::FileRenameData,
+    ) -> UserEvent<'src, FileRenameData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = FileRenameData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            old: bpf_data.old_name.into(),
+            new: bpf_data.new_name.into(),
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn io_uring_sqe_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::IoUringSqeData,
+    ) -> UserEvent<'src, IoUringSqeData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let opcode = io_uring_op::try_from_uint(bpf_data.opcode)
+            .ok()
+            .map(|o| o.as_str());
+
+        let data = IoUringSqeData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            op: IoUringOp {
+                code: bpf_data.opcode,
+                name: String::from(opcode.unwrap_or("?")),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn error_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::ErrorData,
+    ) -> UserEvent<'src, ErrorData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let ti = info.task_info();
+        // we always display a warning on stderr
+        warn!(
+            "comm={} pid={} tgid={} guuid={}: {}",
+            ti.comm_str(),
+            ti.pid,
+            ti.tgid,
+            ti.tg_uuid.into_uuid(),
+            bpf_data.error.as_str(),
+        );
+
+        let data = ErrorData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            code: bpf_data.error as u64,
+            message: String::from(bpf_data.error.as_str()),
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn get_resolved<'s>(
+        &'s self,
+        global: &'s HashMap<IpAddr, String>,
+        ip: IpAddr,
+        i: &StdEventInfo,
+    ) -> Cow<'s, str> {
+        let ck = i.process_key();
+
+        // we lookup in the local table
+        if let Some(domain) = self
+            .get(&ck)
+            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
+        {
+            return domain;
+        }
+
+        // we lookup in the global table
+        if let Some(domain) = global.get(&ip) {
+            return domain.into();
+        }
+
+        // default value
+        "?".into()
+    }
+
+    #[inline(always)]
+    fn kill_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::KillData,
+        random: u32,
+        target_tai: &'src TaskAdditionalInfo,
+    ) -> UserEvent<'src, KillData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let signal = Signal::from_uint_to_string(bpf_data.signal);
+
+        // we need to set uuid part of target task
+        let mut target = bpf_data.target;
+        target.set_uuid_random(random);
+
+        // get the command line
+        let tk = ProcKey::from(target.tg_uuid);
+
+        let data = KillData {
+            ancestors: self.get_task_ancestors(info),
+            exe: exe.into(),
+            command_line,
+            signal,
+            target: TargetTask {
+                command_line: self.get_command_line(tk),
+                exe: self.get_exe(tk).into(),
+                task: TaskSection::from_task_info_with_addition(target, target_tai),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn ptrace_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::PtraceData,
+        random: u32,
+        target_tai: &'src TaskAdditionalInfo,
+    ) -> UserEvent<'src, PtraceData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        // we need to set uuid part of target task
+        let mut target = bpf_data.target;
+        target.set_uuid_random(random);
+
+        // get the command line
+        let tk = ProcKey::from(target.tg_uuid);
+
+        let data = PtraceData {
+            ancestors: self.get_task_ancestors(info),
+            exe: exe.into(),
+            command_line,
+            mode: bpf_data.mode,
+            target: TargetTask {
+                command_line: self.get_command_line(tk),
+                exe: self.get_exe(tk).into(),
+                task: TaskSection::from_task_info_with_addition(target, target_tai),
+            },
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn mmap_exec_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::MmapExecData,
+        sink: &mut EventSink,
+    ) -> UserEvent<'src, kunai::events::MmapExecData<'src>> {
+        let filename = bpf_data.filename;
+        let opt_mnt_ns = EventConsumer::task_mnt_ns(&info.bpf);
+        let mmapped_hashes = sink.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
+
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = kunai::events::MmapExecData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            mapped: mmapped_hashes,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn connect_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::ConnectData,
+        glob_resolved: &HashMap<IpAddr, String>,
+    ) -> UserEvent<'src, ConnectData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let src: SockAddr = bpf_data.src.into();
+        let dst: SockAddr = bpf_data.dst.into();
+
+        let flow: Flow = Flow::new(
+            Protocol::from(bpf_data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
+
+        let data = ConnectData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            socket: SocketInfo::from(bpf_data.socket),
+            src,
+            dst: NetworkInfo {
+                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
+            },
+            community_id: flow.community_id_v1(0).base64(),
+            connected: bpf_data.connected,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn send_data_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::SendEntropyData,
+        glob_resolved: &HashMap<IpAddr, String>,
+    ) -> UserEvent<'src, SendDataData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+        let dst: SockAddr = bpf_data.dst.into();
+        let src: SockAddr = bpf_data.src.into();
+
+        let flow = Flow::new(
+            Protocol::from(bpf_data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        );
+
+        let data = SendDataData {
+            ancestors: self.get_task_ancestors(info),
+            exe: exe.into(),
+            command_line,
+            socket: SocketInfo::from(bpf_data.socket),
+            src: bpf_data.src.into(),
+            dst: NetworkInfo {
+                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
+            },
+            community_id: flow.community_id_v1(0).base64(),
+            data_entropy: bpf_data.shannon_entropy(),
+            data_size: bpf_data.real_data_size,
+        };
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn dns_query_events<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::DnsQueryData,
+        responses: Vec<DomainResponse>,
+    ) -> Vec<UserEvent<'src, DnsQueryData<'src>>> {
+        let mut out = vec![];
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let src: SockAddr = bpf_data.src.into();
+        let dst: SockAddr = bpf_data.dst.into();
+        let si = SocketInfo::from(bpf_data.socket);
+
+        let community_id = Flow::new(
+            // this is valid to cast as a u8
+            Protocol::from(bpf_data.socket.proto as u8),
+            src.ip,
+            src.port,
+            dst.ip,
+            dst.port,
+        )
+        .community_id_v1(0)
+        .base64();
+
+        let ancestors = self.get_task_ancestors(info);
+
+        for r in responses {
+            let mut data = DnsQueryData::new();
+            data.ancestors = ancestors.clone();
+            data.command_line = command_line.clone();
+            data.exe = exe.clone().into();
+            data.query = r.qname.clone();
+            data.query_type = r.qtype;
+            data.response = r.records;
+            data.socket = si.clone();
+            data.src = src;
+            data.dns_server = NetworkInfo {
+                hostname: None,
+                ip: dst.ip,
+                port: dst.port,
+                public: is_public_ip(dst.ip),
+                is_v6: dst.ip.is_ipv6(),
+            };
+            data.community_id = community_id.clone();
+
+            out.push(UserEvent::new(data, info));
+        }
+
+        out
+    }
+
+    #[inline(always)]
+    fn exit_event<'src>(
+        &'src self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::ExitData,
+    ) -> UserEvent<'src, ExitData<'src>> {
+        let (exe, command_line) = self.get_exe_and_command_line(info);
+
+        let data = ExitData {
+            ancestors: self.get_task_ancestors(info),
+            command_line,
+            exe: exe.into(),
+            error_code: bpf_data.error_code,
+        };
+
+        UserEvent::new(data, info)
     }
 }
 
@@ -279,19 +996,15 @@ impl std::fmt::Display for Action {
     }
 }
 
-struct EventConsumer<'s> {
-    system_info: SystemInfo,
+/// State needed to scan, act on and print events, kept apart from
+/// [`EventConsumer`] so that events borrowing process tracking state
+/// can be processed while it is still borrowed.
+struct EventSink<'s> {
     config: Config,
-    filter: Filter,
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
-    random: u32,
     cache: cache::Cache,
-    processes: HashMap<ProcKey, Process>,
-    tasks: HashMap<TaskKey, Task>,
-    resolved: HashMap<IpAddr, String>,
     killed_tasks: LruHashSet<String>,
-    exited_tasks: u64,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
     magic_db: MagicDb,
@@ -299,605 +1012,34 @@ struct EventConsumer<'s> {
     scan_events_enabled: bool,
 }
 
+struct EventConsumer<'s> {
+    system_info: SystemInfo,
+    filter: Filter,
+    random: u32,
+    processes: Processes,
+    tasks: HashMap<TaskKey, Task>,
+    resolved: HashMap<IpAddr, String>,
+    exited_tasks: u64,
+    sink: EventSink<'s>,
+}
+
 /// True if `current` diverges from `baseline` and that divergence hasn't
 /// already been reported as `last_reported`.
 #[inline(always)]
-fn creds_diverged(baseline: creds::Creds, current: creds::Creds, last_reported: Option<creds::Creds>) -> bool {
+fn creds_diverged(
+    baseline: creds::Creds,
+    current: creds::Creds,
+    last_reported: Option<creds::Creds>,
+) -> bool {
     if baseline == current {
         return false;
     }
     !last_reported.is_some_and(|reported| reported == current)
 }
 
-impl EventConsumer<'_> {
-    fn prepare_output(config: &Config) -> anyhow::Result<Output> {
-        let output = match &config.output.path.as_str() {
-            &"stdout" => String::from("/dev/stdout"),
-            &"stderr" => String::from("/dev/stderr"),
-            v => v.to_string(),
-        };
-
-        let out = match output.as_str() {
-            "/dev/stdout" => Output::stdout(),
-            "/dev/stderr" => Output::stderr(),
-            v => {
-                let path = PathBuf::from(v);
-
-                if let Some(parent) = path.parent() {
-                    if !parent.exists() {
-                        // we only create parent directory
-                        DirBuilder::new().mode(0o700).create(parent).map_err(|e| {
-                            anyhow!("failed to create output directory {parent:?}: {e}")
-                        })?;
-                    }
-                }
-
-                let mut opts = firo::OpenOptions::new();
-
-                opts.mode(0o600);
-
-                if let Some(max_size) = config.output.max_size {
-                    opts.max_size(max_size);
-                }
-
-                // we create optimal trigger and set it for the file rotation
-                opts.opt_trigger(Trigger::from_options(
-                    config.output.rotate_interval,
-                    config.output.rotate_size,
-                ));
-
-                opts.compression(firo::Compression::Gzip)
-                    .create_append(v)?
-                    .into()
-            }
-        };
-        Ok(out)
-    }
-
-    pub fn with_config(config: Config) -> anyhow::Result<Self> {
-        // building up system information
-        let system_info = SystemInfo::from_sys()?.with_host_uuid(config.host_uuid);
-
-        let scan_events_enabled = config
-            .events
-            .iter()
-            .any(|(&ty, e)| ty == Type::FileScan && e.is_enabled());
-
-        let output = Self::prepare_output(&config)?;
-
-        let filter = Filter::try_from(&config)?;
-
-        let mut ep = Self {
-            system_info,
-            config,
-            filter,
-            engine: Engine::new(),
-            iocs: HashMap::new(),
-            random: util::getrandom::<u32>()?,
-            cache: Cache::with_max_entries(10000),
-            processes: HashMap::with_capacity(512),
-            tasks: HashMap::with_capacity(512),
-            killed_tasks: LruHashSet::with_max_entries(512),
-            exited_tasks: 0,
-            resolved: HashMap::new(),
-            output,
-            file_scanner: None,
-            magic_db: magic_db::load().map_err(|e| anyhow!("failed to open magic-db: {e}"))?,
-            scan_events_enabled,
-        };
-
-        // initializing yara rules
-        ep.init_file_scanner()?;
-
-        // initializing event scanner
-        ep.init_event_scanner()?;
-
-        // initialize IoCs
-        ep.init_iocs()?;
-
-        // should not raise any error, we just print it
-        let _ = inspect_err! {
-            ep.init_tasks_from_procfs(),
-            |e: &anyhow::Error| warn!("failed to initialize tasks with procfs: {}", e)
-        };
-
-        Ok(ep)
-    }
-
+impl EventSink<'_> {
     #[inline(always)]
-    fn init_file_scanner(&mut self) -> anyhow::Result<()> {
-        let wo = WalkOptions::new()
-            // we list only files
-            .files()
-            // will list only files
-            // with following extensions
-            .extension("yar")
-            .extension("yara")
-            // don't go recursive
-            .max_depth(0);
-
-        let mut c = yara_x::Compiler::new();
-
-        let mut files_loaded = 0;
-        for p in self.config.scanner.yara.iter() {
-            debug!("looking for yara rules in: {}", p.to_string_lossy());
-            let w = wo.clone().walk(p);
-            for r in w {
-                let rule_file = r?;
-                info!(
-                    "loading yara rule(s) from file: {}",
-                    rule_file.to_string_lossy()
-                );
-                let src = SourceCode::from_rule_file(rule_file)?;
-                c.add_source(src.to_native())?;
-                files_loaded += 1;
-            }
-        }
-
-        // we don't actually initialize an empty scanner
-        if files_loaded == 0 {
-            return Ok(());
-        }
-
-        let scanner = Scanner::with_rules(c.build());
-        if let Ok(mut s) = scanner.lock() {
-            s.max_scan_size(FILE_SIZE_SCAN_LIMIT as usize);
-        }
-        self.file_scanner = Some(scanner);
-
-        Ok(())
-    }
-
-    fn load_kunai_rule_file<P: AsRef<Path>>(
-        &mut self,
-        compiler: &mut Compiler,
-        rule_file: P,
-    ) -> anyhow::Result<()> {
-        let rule_file = rule_file.as_ref();
-
-        info!(
-            "loading detection/filter rules from: {}",
-            rule_file.to_string_lossy()
-        );
-
-        for document in serde_yaml::Deserializer::from_reader(File::open(rule_file)?) {
-            // we deserialize into a value so that we can process string event ids
-            let mut value = serde_yaml::Value::deserialize(document)?;
-
-            // get rule name. We don't check here if there is a name as
-            // later parsing is supposed to catch it.
-            let rule_name = value
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or(String::from("unknown"));
-
-            if let Some(events) = value
-                .get_mut("match-on")
-                .and_then(|mo| mo.get_mut("events"))
-                .and_then(|e| e.get_mut("kunai"))
-                .and_then(|events| events.as_sequence_mut())
-            {
-                for v in events.iter_mut() {
-                    // we handle string event name
-                    if let Some(event_name) = v.as_str() {
-                        let id = if event_name.starts_with('-') {
-                            let event_name = event_name.trim_start_matches('-');
-                            let ty = Type::from_str(event_name).map_err(|_| {
-                                anyhow!(
-                                    "file={} rule={rule_name} parse error: unknown event name \
-                                     {event_name}",
-                                    rule_file.to_string_lossy()
-                                )
-                            })?;
-                            -i64::from(ty as u32)
-                        } else {
-                            let ty = Type::from_str(event_name).map_err(|_| {
-                                anyhow!(
-                                    "file={} rule={rule_name} parse error: unknown event name \
-                                     {event_name}",
-                                    rule_file.to_string_lossy()
-                                )
-                            })?;
-                            i64::from(ty as u32)
-                        };
-
-                        // we actually replace string by i64
-                        *v = serde_yaml::Value::Number(id.into());
-                    }
-                }
-            }
-
-            // we insert rule into the engine
-            compiler.load(gene::Rule::deserialize(value).map_err(|e| {
-                anyhow!(
-                    "file={} rule={rule_name} parse error: {e}",
-                    rule_file.to_string_lossy()
-                )
-            })?)?;
-        }
-
-        Ok(())
-    }
-
-    fn compile_kunai_rules(&mut self) -> anyhow::Result<Compiler> {
-        let mut compiler = Compiler::new();
-
-        // loading rules in the engine
-        if self.config.scanner.rules.is_empty() {
-            return Ok(compiler);
-        }
-
-        let rules_wo = WalkOptions::new()
-            // we list only files
-            .files()
-            // with following extensions
-            .extension("kun")
-            .extension("kunai")
-            .extension("gen")
-            .extension("gene")
-            .sort(true)
-            // don't go recursive
-            .max_depth(0);
-
-        let tpl_wo = WalkOptions::new()
-            // we list only files
-            .files()
-            // with following extensions
-            .extension("yaml")
-            .extension("yml")
-            .sort(true)
-            // don't go recursive
-            .max_depth(0);
-
-        for p in self.config.scanner.rules.clone().iter() {
-            if !p.exists() {
-                error!(
-                    "kunai rule loader: no such file or directory {}",
-                    p.to_string_lossy()
-                );
-            } else if p.is_file() {
-                // we load file regardless of its extension
-                self.load_kunai_rule_file(&mut compiler, p)?;
-            } else if p.is_dir() {
-                // loading rule templates located in directory
-                for t in tpl_wo.clone().walk(p) {
-                    let p = t?;
-                    info!("loading template: {}", p.to_string_lossy());
-                    let reader = File::open(p)?;
-                    compiler.load_templates_from_reader(reader)?;
-                }
-
-                // load rule files
-                for r in rules_wo.clone().walk(p) {
-                    self.load_kunai_rule_file(&mut compiler, r?)?;
-                }
-            }
-        }
-
-        Ok(compiler)
-    }
-
-    fn init_event_scanner(&mut self) -> anyhow::Result<()> {
-        self.engine = Engine::try_from(self.compile_kunai_rules()?)?;
-        info!(
-            "detection engine initialized rules={}",
-            self.engine.rules_count()
-        );
-        Ok(())
-    }
-
-    fn init_iocs(&mut self) -> anyhow::Result<()> {
-        // loading iocs
-        if self.config.scanner.iocs.is_empty() {
-            return Ok(());
-        }
-
-        let wo = WalkOptions::new()
-            // we list only files
-            .files()
-            // will list only files
-            // with following extensions
-            .extension("ioc")
-            // don't go recursive
-            .max_depth(0);
-
-        for p in self.config.scanner.iocs.clone().iter() {
-            if !p.exists() {
-                error!(
-                    "ioc file loader: no such file or directory {}",
-                    p.to_string_lossy()
-                )
-            } else if p.is_file() {
-                self.load_iocs(p)
-                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
-            } else if p.is_dir() {
-                let w = wo.clone().walk(p);
-                for r in w {
-                    let f = r?;
-                    self.load_iocs(&f).map_err(|e| {
-                        anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy())
-                    })?;
-                }
-            }
-        }
-
-        info!("number of IoCs loaded: {}", self.iocs.len());
-
-        Ok(())
-    }
-
-    fn load_iocs<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
-        let p = p.as_ref();
-        let f = io::BufReader::new(File::open(p)?);
-
-        for line in f.lines() {
-            let line = line?;
-            let ioc: IoC = serde_json::from_str(&line)?;
-            self.iocs
-                .entry(ioc.value)
-                .and_modify(|e| *e = max(*e, ioc.severity))
-                .or_insert(ioc.severity);
-        }
-
-        Ok(())
-    }
-
-    fn init_tasks_from_procfs(&mut self) -> anyhow::Result<()> {
-        for p in (procfs::process::all_processes()?).flatten() {
-            // flatten takes only the Ok() values of processes
-            if let Err(e) = self.set_task_from_procfs(&p) {
-                warn!(
-                    "failed to initialize correlation for procfs process PID={}: {e}",
-                    p.pid
-                )
-            }
-        }
-
-        // we try to resolve containers from tasks found in procfs
-        for (tk, pk) in self
-            .processes
-            .iter()
-            .map(|(&k, v)| (k, v.real_parent_key))
-            .collect::<Vec<(ProcKey, Option<ProcKey>)>>()
-        {
-            if let Some(parent) = pk {
-                if let Some(t) = self.processes.get_mut(&tk) {
-                    // trying to find container type in cgroups
-                    t.container = Container::from_cgroups(&t.cgroups);
-                    if t.container.is_some() {
-                        // we don't need to do the ancestor's lookup
-                        continue;
-                    }
-                }
-
-                // lookup in ancestors
-                let ancestors = self.get_ancestors(parent, 0);
-                if let Some(c) = Container::from_ancestors(&ancestors) {
-                    self.processes
-                        .entry(tk)
-                        .and_modify(|task| task.container = Some(c));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn set_task_from_procfs(&mut self, p: &procfs::process::Process) -> anyhow::Result<()> {
-        let stat = p.stat()?;
-
-        let parent_pid = p.status()?.ppid;
-        let parent_key = {
-            if parent_pid != 0 {
-                let parent = procfs::process::Process::new(parent_pid)?;
-                Some(ProcKey::try_from(&parent)?)
-            } else {
-                None
-            }
-        };
-
-        let tk = ProcKey::try_from(p)?;
-
-        if self.processes.contains_key(&tk) {
-            return Ok(());
-        }
-
-        let image = {
-            if stat.flags & 0x200000 == 0x200000 {
-                KERNEL_IMAGE.into()
-            } else {
-                p.exe().unwrap_or("?".into())
-            }
-        };
-
-        // we gather cgroups
-        let cgroups = p
-            .cgroups()?
-            .0
-            .into_iter()
-            .map(|cg| cg.pathname)
-            .collect::<Vec<String>>();
-
-        let mut threads = HashSet::new();
-        if let (Ok(status), Ok(task_key)) = (p.status(), TaskKey::try_from(p)) {
-            self.tasks.insert(
-                task_key,
-                Task {
-                    expected_creds: creds::Creds {
-                        uid: status.ruid,
-                        gid: status.rgid,
-                        euid: status.euid,
-                        egid: status.egid,
-                        suid: status.suid,
-                        sgid: status.sgid,
-                        fsuid: status.fuid,
-                        fsgid: status.fgid,
-                        cap_effective: status.capeff,
-                        cap_permitted: status.capprm,
-                        cap_inheritable: status.capinh,
-                    },
-                    reported_creds: None,
-                },
-            );
-            threads.insert(task_key);
-        }
-
-        let task = Process {
-            image,
-            command_line: p.cmdline().unwrap_or(vec!["?".into()]),
-            pid: p.pid,
-            flags: stat.flags,
-            resolved: HashMap::new(),
-            container: None,
-            cgroups,
-            nodename: None,
-            real_parent_key: parent_key,
-            kernel_task_info: None,
-            children: HashSet::new(),
-            threads,
-            procfs: true,
-            exit: false,
-            zombie: false,
-        };
-
-        self.processes.insert(tk, task);
-
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn get_exe(&self, key: ProcKey) -> PathBuf {
-        let mut exe = PathBuf::from("?");
-        if let Some(task) = self.processes.get(&key) {
-            exe = task.image.clone();
-        }
-        exe
-    }
-
-    #[inline(always)]
-    fn get_command_line(&self, key: ProcKey) -> String {
-        let mut cl = String::from("?");
-        if let Some(t) = self.processes.get(&key) {
-            cl = t.command_line_string();
-        }
-        cl
-    }
-
-    #[inline(always)]
-    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
-        let ck = i.process_key();
-        (self.get_exe(ck), self.get_command_line(ck))
-    }
-
-    /// get the list of ancestors given a [TaskKey]. If skip is 0 the last
-    /// item is the image of the task referenced by `tk`. One can skip ancestors
-    /// by setting `skip` > 0.
-    #[inline(always)]
-    fn get_ancestors(&self, mut tk: ProcKey, mut skip: u16) -> Vec<String> {
-        let mut ancestors = vec![];
-        let mut last = None;
-
-        while let Some(task) = self.processes.get(&tk) {
-            last = Some(task);
-            if skip == 0 {
-                ancestors.insert(0, task.image.to_string_lossy().to_string());
-            } else {
-                skip -= 1;
-            }
-
-            tk = match task.real_parent_key {
-                Some(v) => v,
-                None => {
-                    break;
-                }
-            };
-        }
-
-        if let Some(last) = last {
-            if last.pid != 1 && !last.is_kthread() && skip == 0 {
-                ancestors.insert(0, "?".into());
-            }
-        }
-
-        ancestors
-    }
-
-    #[inline(always)]
-    fn get_ancestors_string(&self, i: &StdEventInfo) -> String {
-        self.get_ancestors(i.process_key(), 1).join("|")
-    }
-
-    #[inline(always)]
-    fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
-        let ck = i.process_key();
-        self.processes
-            .get(&ck)
-            .and_then(|t| t.real_parent_key)
-            .and_then(|ptk| self.processes.get(&ptk))
-            .map(|c| c.command_line.join(" "))
-            .unwrap_or("?".into())
-    }
-
-    #[inline(always)]
-    fn get_parent_image(&self, i: &StdEventInfo) -> String {
-        let ck = i.process_key();
-        self.processes
-            .get(&ck)
-            .and_then(|t| t.real_parent_key)
-            .and_then(|ptk| self.processes.get(&ptk))
-            .map(|c| c.image.to_string_lossy().to_string())
-            .unwrap_or("?".into())
-    }
-
-    #[inline(always)]
-    fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
-        // updating loopback resolution is not good
-        if ip.is_loopback() {
-            return;
-        }
-
-        let ck = i.process_key();
-
-        // update local resolve table
-        self.processes.get_mut(&ck).map(|c| {
-            c.resolved
-                .entry(ip)
-                .and_modify(|r| *r = resolved.to_owned())
-                .or_insert(resolved.to_owned())
-        });
-
-        // update global resolve table
-        self.resolved
-            .entry(ip)
-            .and_modify(|r| *r = resolved.to_owned())
-            .or_insert(resolved.to_owned());
-    }
-
-    #[inline(always)]
-    fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> Cow<'_, str> {
-        let ck = i.process_key();
-
-        // we lookup in the local table
-        if let Some(domain) = self
-            .processes
-            .get(&ck)
-            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
-        {
-            return domain;
-        }
-
-        // we lookup in the global table
-        if let Some(domain) = self.resolved.get(&ip) {
-            return domain.into();
-        }
-
-        // default value
-        "?".into()
-    }
-
-    #[inline(always)]
-    fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Hashes {
+    fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Arc<Hashes> {
         if let Some(ns) = ns {
             match self.cache.get_hashes_in_ns(ns, p, &self.magic_db) {
                 Ok(h) => h,
@@ -906,7 +1048,7 @@ impl EventConsumer<'_> {
                         error: Some(format!("{e}")),
                         ..Default::default()
                     };
-                    Hashes::with_meta(p.to_path_buf().clone(), meta)
+                    Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
                 }
             }
         } else {
@@ -914,1011 +1056,8 @@ impl EventConsumer<'_> {
                 error: Some("unknown namespace".into()),
                 ..Default::default()
             };
-            Hashes::with_meta(p.to_path_buf().clone(), meta)
+            Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
         }
-    }
-
-    #[inline(always)]
-    fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
-        ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt)).into()
-    }
-
-    #[inline(always)]
-    /// method acting as a central place to get the mnt namespace of a
-    /// parent task and printing out an error if not found
-    fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
-        match Self::mnt_ns_from_task(&ei.process) {
-            Some(o) => Some(o),
-            None => {
-                debug!(
-                    "no mnt namespace for event: type={} event_uuid={}",
-                    ei.etype,
-                    ei.uuid.into_uuid()
-                );
-                None
-            }
-        }
-    }
-
-    #[inline(always)]
-    /// method acting as a central place to get the mnt namespace of a
-    /// task and printing out an error if not found
-    fn parent_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
-        match Self::mnt_ns_from_task(&ei.parent) {
-            Some(o) => Some(o),
-            None => {
-                debug!(
-                    "no mnt namespace for event: type={} event_uuid={}",
-                    ei.etype,
-                    ei.uuid.into_uuid()
-                );
-                None
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn execve_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::ExecveData,
-    ) -> UserEvent<'a, ExecveData> {
-        let ancestors = self.get_ancestors_string(info);
-        let cli = self.get_command_line(info.process_key());
-
-        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-
-        let mut data = ExecveData {
-            ancestors,
-            parent_command_line: self.get_parent_command_line(info),
-            parent_exe: self.get_parent_image(info),
-            command_line: cli,
-            exe: self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.executable)),
-            interpreter: None,
-        };
-
-        if bpf_data.executable != bpf_data.interpreter {
-            data.interpreter =
-                Some(self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.interpreter)))
-        }
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn clone_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::CloneData,
-    ) -> UserEvent<'a, CloneData> {
-        let data = CloneData {
-            ancestors: self.get_ancestors_string(info),
-            exe: bpf_data.executable.to_path_buf().into(),
-            command_line: self.get_command_line(info.process_key()),
-            flags: bpf_data.flags,
-        };
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn prctl_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::PrctlData,
-    ) -> UserEvent<'a, PrctlData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let option = PrctlOption::try_from_uint(bpf_data.option)
-            .map(|o| o.as_str().into())
-            .unwrap_or(format!("unknown({})", bpf_data.option))
-            .to_string();
-
-        let data = PrctlData {
-            ancestors: self.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            option,
-            arg2: bpf_data.arg2,
-            arg3: bpf_data.arg3,
-            arg4: bpf_data.arg4,
-            arg5: bpf_data.arg5,
-            success: bpf_data.success,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn kill_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        target_tai: &'a TaskAdditionalInfo,
-        bpf_data: bpf_events::KillData,
-    ) -> UserEvent<'a, KillData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let signal = Signal::from_uint_to_string(bpf_data.signal);
-
-        // we need to set uuid part of target task
-        let mut target = bpf_data.target;
-        target.set_uuid_random(self.random);
-
-        // get the command line
-        let tk = ProcKey::from(target.tg_uuid);
-
-        let data = KillData {
-            ancestors: self.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            signal,
-            target: TargetTask {
-                command_line: self.get_command_line(tk),
-                exe: self.get_exe(tk).into(),
-                task: TaskSection::from_task_info_with_addition(target, target_tai),
-            },
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn ptrace_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        target_tai: &'a TaskAdditionalInfo,
-        bpf_data: bpf_events::PtraceData,
-    ) -> UserEvent<'a, PtraceData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        // we need to set uuid part of target task
-        let mut target = bpf_data.target;
-        target.set_uuid_random(self.random);
-
-        // get the command line
-        let tk = ProcKey::from(target.tg_uuid);
-
-        let data = PtraceData {
-            ancestors: self.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            mode: bpf_data.mode,
-            target: TargetTask {
-                command_line: self.get_command_line(tk),
-                exe: self.get_exe(tk).into(),
-                task: TaskSection::from_task_info_with_addition(target, target_tai),
-            },
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn commit_creds_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::CommitCredsData,
-    ) -> UserEvent<'a, CommitCredsData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = CommitCredsData {
-            ancestors: self.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            old: Creds::from_bpf_and_additions(bpf_data.old, &info.additional.task, false),
-            new: Creds::from_bpf_and_additions(bpf_data.new, &info.additional.task, false),
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn creds_tampered_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        baseline: creds::Creds,
-    ) -> UserEvent<'a, CredsTamperedData<'a>> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-        // `baseline` carries the per-process values we previously recorded;
-        // `info.task_info()` carries what the task is reporting right now.
-        // A creds_tampered event is emitted precisely because the two differ
-        // on at least one of (uid, gid, cap_effective).
-        let actual = info.task_info();
-
-        let data = CredsTamperedData {
-            ancestors: self.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            actual: Creds::from_bpf_and_additions(actual.creds, &info.additional.task, false),
-            expected: Creds::from_bpf_and_additions(baseline, &info.additional.task, false),
-        };
-
-        UserEvent::new(data, info).with_type(Type::CredsTampered)
-    }
-
-    #[inline(always)]
-    fn mmap_exec_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::MmapExecData,
-    ) -> UserEvent<'a, kunai::events::MmapExecData> {
-        let filename = bpf_data.filename;
-        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-        let mmapped_hashes = self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&filename));
-
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = kunai::events::MmapExecData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            mapped: mmapped_hashes,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn dns_query_events<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::DnsQueryData,
-    ) -> Vec<UserEvent<'a, DnsQueryData>> {
-        let mut out = vec![];
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let src: SockAddr = bpf_data.src.into();
-        let dst: SockAddr = bpf_data.dst.into();
-        let si = SocketInfo::from(bpf_data.socket);
-
-        let community_id = Flow::new(
-            // this is valid to cast as a u8
-            Protocol::from(bpf_data.socket.proto as u8),
-            src.ip,
-            src.port,
-            dst.ip,
-            dst.port,
-        )
-        .community_id_v1(0)
-        .base64();
-
-        let responses = bpf_data.domain_responses().unwrap_or_default();
-        let ancestors = self.get_ancestors_string(info);
-
-        for r in responses {
-            let mut data = DnsQueryData::new();
-            data.ancestors = ancestors.clone();
-            data.command_line = command_line.clone();
-            data.exe = exe.clone().into();
-            data.query = r.qname.clone();
-            data.query_type = r.qtype;
-            data.response = r.records;
-            data.socket = si.clone();
-            data.src = src;
-            data.dns_server = NetworkInfo {
-                hostname: None,
-                ip: dst.ip,
-                port: dst.port,
-                public: is_public_ip(dst.ip),
-                is_v6: dst.ip.is_ipv6(),
-            };
-            data.community_id = community_id.clone();
-
-            // update the resolution map
-            data.response.iter().for_each(|a| {
-                // if we manage to parse IpAddr
-                if let Ok(ip) = a.parse::<IpAddr>() {
-                    self.update_resolved(ip, &r.qname, info);
-                }
-            });
-
-            out.push(UserEvent::new(data, info));
-        }
-
-        out
-    }
-
-    #[inline(always)]
-    fn file_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::FileData,
-    ) -> UserEvent<'a, FileData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = FileData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            path: bpf_data.path.to_path_buf(),
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn unlink_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::UnlinkData,
-    ) -> UserEvent<'a, UnlinkData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = UnlinkData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            path: bpf_data.path.into(),
-            success: bpf_data.success,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn bpf_prog_load_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::BpfProgData,
-    ) -> UserEvent<'a, BpfProgLoadData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let mut data = BpfProgLoadData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            id: bpf_data.id,
-            prog_type: BpfProgTypeInfo {
-                id: bpf_data.prog_type,
-                name: util::bpf::bpf_type_to_string(bpf_data.prog_type),
-            },
-            tag: hex::encode(bpf_data.tag),
-            attached_func: bpf_data.attached_func_name.into(),
-            name: bpf_data.name.into(),
-            ksym: bpf_data.ksym.into(),
-            bpf_prog: kunai::events::BpfProgInfo {
-                md5: "?".into(),
-                sha1: "?".into(),
-                sha256: "?".into(),
-                sha512: "?".into(),
-                size: 0,
-            },
-            verified_insns: bpf_data.verified_insns.into(),
-            loaded: bpf_data.loaded,
-        };
-
-        if let BpfOption::Some(h) = &bpf_data.hashes {
-            data.bpf_prog.md5 = h.md5.into();
-            data.bpf_prog.sha1 = h.sha1.into();
-            data.bpf_prog.sha256 = h.sha256.into();
-            data.bpf_prog.sha512 = h.sha512.into();
-            data.bpf_prog.size = h.size;
-        }
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn bpf_socket_filter_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::BpfSocketFilterData,
-    ) -> UserEvent<'a, BpfSocketFilterData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = BpfSocketFilterData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            socket: SocketInfo::from(bpf_data.socket_info),
-            filter: FilterInfo {
-                md5: md5_data(bpf_data.filter.as_slice()),
-                sha1: sha1_data(bpf_data.filter.as_slice()),
-                sha256: sha256_data(bpf_data.filter.as_slice()),
-                sha512: sha512_data(bpf_data.filter.as_slice()),
-                len: bpf_data.filter_len, // size in filter sock_filter blocks
-                size: bpf_data.filter.len(), // size in bytes
-            },
-            attached: bpf_data.attached,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn mprotect_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::MprotectData,
-    ) -> UserEvent<'a, MprotectData> {
-        let (exe, cmd_line) = self.get_exe_and_command_line(info);
-
-        let data = MprotectData {
-            ancestors: self.get_ancestors_string(info),
-            command_line: cmd_line,
-            exe: exe.into(),
-            addr: bpf_data.start,
-            prot: bpf_data.prot,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn connect_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::ConnectData,
-    ) -> UserEvent<'a, ConnectData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-        let src: SockAddr = bpf_data.src.into();
-        let dst: SockAddr = bpf_data.dst.into();
-
-        let flow: Flow = Flow::new(
-            Protocol::from(bpf_data.socket.proto as u8),
-            src.ip,
-            src.port,
-            dst.ip,
-            dst.port,
-        );
-
-        let data = ConnectData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            socket: SocketInfo::from(bpf_data.socket),
-            src,
-            dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst.ip, info).into()),
-                ip: dst.ip,
-                port: dst.port,
-                public: is_public_ip(dst.ip),
-                is_v6: dst.ip.is_ipv6(),
-            },
-            community_id: flow.community_id_v1(0).base64(),
-            connected: bpf_data.connected,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn send_data_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::SendEntropyData,
-    ) -> UserEvent<'a, SendDataData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-        let dst: SockAddr = bpf_data.dst.into();
-        let src: SockAddr = bpf_data.src.into();
-
-        let flow = Flow::new(
-            Protocol::from(bpf_data.socket.proto as u8),
-            src.ip,
-            src.port,
-            dst.ip,
-            dst.port,
-        );
-
-        let data = SendDataData {
-            ancestors: self.get_ancestors_string(info),
-            exe: exe.into(),
-            command_line,
-            socket: SocketInfo::from(bpf_data.socket),
-            src: bpf_data.src.into(),
-            dst: NetworkInfo {
-                hostname: Some(self.get_resolved(dst.ip, info).into()),
-                ip: dst.ip,
-                port: dst.port,
-                public: is_public_ip(dst.ip),
-                is_v6: dst.ip.is_ipv6(),
-            },
-            community_id: flow.community_id_v1(0).base64(),
-            data_entropy: bpf_data.shannon_entropy(),
-            data_size: bpf_data.real_data_size,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn init_module_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::InitModuleData,
-    ) -> UserEvent<'a, InitModuleData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = InitModuleData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            syscall: bpf_data.args.syscall_name().into(),
-            module_name: bpf_data.name.to_string(),
-            args: bpf_data.uargs.to_string(),
-            loaded: bpf_data.loaded,
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn file_rename_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::FileRenameData,
-    ) -> UserEvent<'a, FileRenameData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = FileRenameData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            old: bpf_data.old_name.into(),
-            new: bpf_data.new_name.into(),
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn exit_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::ExitData,
-    ) -> UserEvent<'a, ExitData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let data = ExitData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            error_code: bpf_data.error_code,
-        };
-
-        // this task's creds baseline is no longer of any use, regardless of
-        // whether it is the thread-group leader or a plain thread exiting
-        self.tasks.remove(&TaskKey::from(info.task_info()));
-
-        let etype = info.bpf.etype;
-        // cleanup tasks when process exits
-        if (matches!(etype, Type::Exit) && info.task_info().pid == info.task_info().tgid)
-            || matches!(etype, Type::ExitGroup)
-        {
-            let pk = info.process_key();
-
-            if let Some(t) = self.processes.get(&pk) {
-                // only ExitGroup guarantees the whole thread group is gone
-                if matches!(etype, Type::ExitGroup) {
-                    for tk in &t.threads {
-                        self.tasks.remove(tk);
-                    }
-                }
-
-                if !self.proc_has_running_descendent(&pk) && !t.procfs {
-                    // if the task has no descendent and is not coming from procfs
-                    // we can remove it from the table.
-                    self.processes.remove(&pk);
-                } else {
-                    // the process has some running descendent, thus it needs to be
-                    // kept in the table to construct a sound ancestors list for descendent(s).
-                    // However we can free up some memory and tag the task as exited
-                    self.processes.entry(pk).and_modify(|t| t.on_exit());
-                }
-            }
-
-            // we trigger some very specific cleanup
-            if self.exited_tasks.is_multiple_of(1000) {
-                let shadow_proc = self.find_shadow_procs();
-                // we remove shadow processes
-                self.processes.retain(|pk, _| !shadow_proc.contains(pk));
-                // shrinking processes HashMap
-                self.processes.shrink_to_fit();
-            }
-
-            self.exited_tasks = self.exited_tasks.wrapping_add(1);
-        }
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn io_uring_sqe_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::IoUringSqeData,
-    ) -> UserEvent<'a, IoUringSqeData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let opcode = io_uring_op::try_from_uint(bpf_data.opcode)
-            .ok()
-            .map(|o| o.as_str());
-
-        let data = IoUringSqeData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            op: IoUringOp {
-                code: bpf_data.opcode,
-                name: String::from(opcode.unwrap_or("?")),
-            },
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn error_event<'a>(
-        &mut self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::ErrorData,
-    ) -> UserEvent<'a, ErrorData> {
-        let (exe, command_line) = self.get_exe_and_command_line(info);
-
-        let ti = info.task_info();
-        // we always display a warning on stderr
-        warn!(
-            "comm={} pid={} tgid={} guuid={}: {}",
-            ti.comm_str(),
-            ti.pid,
-            ti.tgid,
-            ti.tg_uuid.into_uuid(),
-            bpf_data.error.as_str(),
-        );
-
-        let data = ErrorData {
-            ancestors: self.get_ancestors_string(info),
-            command_line,
-            exe: exe.into(),
-            code: bpf_data.error as u64,
-            message: String::from(bpf_data.error.as_str()),
-        };
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn start_event<'a>(&self, info: &'a StdEventInfo) -> UserEvent<'a, StartData> {
-        let mut data = StartData::new();
-
-        // setting kunai related info
-        data.kunai.version = env!("CARGO_PKG_VERSION").into();
-        let self_exe = PathBuf::from("/proc/self/exe");
-        data.kunai.exe = Hashes::from_path_ref(
-            self_exe.clone().canonicalize().unwrap_or(self_exe),
-            &self.magic_db,
-        );
-
-        data.kunai.config.sha256 = self.config.sha256().ok().unwrap_or("?".into());
-
-        // setting up uptime and boottime
-        if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
-        {
-            data.system.uptime = Some(uptime.as_secs());
-            data.system.boot_time = uptime.boot_time().ok();
-        }
-
-        // setting utsname info
-        if let Ok(uts) = Utsname::from_sys() {
-            data.system.sysname = uts.sysname().unwrap_or("?".into()).into();
-            data.system.release = uts.release().unwrap_or("?".into()).into();
-            data.system.version = uts.version().unwrap_or("?".into()).into();
-            data.system.machine = uts.machine().unwrap_or("?".into()).into();
-            data.system.domainname = uts.domainname().unwrap_or("?".into()).into();
-        }
-
-        UserEvent::new(data, info)
-    }
-
-    #[inline(always)]
-    fn loss_event<'a>(
-        &self,
-        info: &'a StdEventInfo,
-        bpf_data: bpf_events::LossData,
-    ) -> UserEvent<'a, LossData> {
-        UserEvent::new(LossData::from(&bpf_data), info)
-    }
-
-    // shadow processes are processes still in the hashmap but which have exited and
-    // have all descendents exited. They are not useful anymore because they are not needed
-    // to reconstruct ancestors.
-    #[inline(always)]
-    fn find_shadow_procs(&self) -> HashSet<ProcKey> {
-        let mut no_running_desc = HashSet::with_capacity(self.processes.len());
-
-        for pk in self
-            .processes
-            .iter()
-            // we don't process collected from procfs
-            .filter(|(_, p)| !p.procfs)
-            // we don't want running processes
-            .filter(|(_, p)| p.exit)
-            .map(|(k, _)| *k)
-        {
-            // if our parent has no running descendent we know we do too
-            if let Some(rpk) = self
-                .processes
-                .get(&pk)
-                .and_then(|p| p.real_parent_key)
-                .as_ref()
-            {
-                if no_running_desc.contains(rpk) {
-                    no_running_desc.insert(pk);
-                    continue;
-                }
-            }
-
-            if !self.proc_has_running_descendent(&pk) {
-                no_running_desc.insert(pk);
-            }
-        }
-
-        no_running_desc
-    }
-
-    #[inline(always)]
-    fn proc_has_running_descendent(&self, pk: &ProcKey) -> bool {
-        if let Some(p) = self.processes.get(pk) {
-            for ck in p.children.iter() {
-                if let Some(child) = self.processes.get(ck) {
-                    // if we have one child that didn't exit
-                    if !child.exit {
-                        return true;
-                    }
-
-                    // if one descendent of our childen is running
-                    if self.proc_has_running_descendent(ck) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    #[inline(always)]
-    fn handle_correlation_event(
-        &mut self,
-        info: StdEventInfo,
-        bpf_data: bpf_events::CorrelationData,
-    ) {
-        let pk = info.process_key();
-        let mut parent_key = info.parent_key();
-        let execve_flag = matches!(bpf_data.origin, Type::Execve | Type::ExecveScript);
-
-        // Execve must remove any previous task (i.e. coming from
-        // clone or tasksched for instance)
-        if execve_flag {
-            if let Some(p) = self.processes.get(&pk).and_then(|p| p.real_parent_key) {
-                // we keep track of real parent_key in case of zombie task
-                parent_key = p;
-            }
-            // we start from scratch with this process
-            self.processes.remove(&pk);
-        }
-
-        // early return if task key exists
-        if let Some(v) = self.processes.get_mut(&pk) {
-            // we fix nodename if not set yet
-            // tasks init from procfs are lacking nodename
-            if v.nodename.is_none() {
-                v.nodename = bpf_data.nodename()
-            }
-            return;
-        }
-
-        let cgroup = bpf_data.cgroup;
-
-        // we encountered some cgroup parsing error in eBPF
-        // so we need to resolve cgroup in userland
-        let cgroups = match cgroup.error {
-            BpfOption::None => vec![cgroup.to_string()],
-            BpfOption::Some(_) => {
-                if let Ok(cgroups) =
-                    procfs::process::Process::new(info.task_info().pid).and_then(|p| p.cgroups())
-                {
-                    // we return cgroup from procfs
-                    cgroups
-                        .0
-                        .into_iter()
-                        .map(|cg| cg.pathname)
-                        .collect::<Vec<String>>()
-                } else {
-                    // we report an error
-                    warn!(
-                        "failed to resolve cgroup for pid={} guuid={}",
-                        info.task_info().pid,
-                        info.task_info().tg_uuid.into_uuid().hyphenated()
-                    );
-                    // still get a chance to do something with cgroup
-                    vec![cgroup.to_string()]
-                }
-            }
-        };
-
-        let mut container_type = Container::from_cgroups(&cgroups);
-
-        if container_type.is_none() {
-            let ancestors = self.get_ancestors(parent_key, 0);
-            container_type = Container::from_ancestors(&ancestors);
-        }
-
-        let image = {
-            if info.task_info().is_kernel_thread() {
-                KERNEL_IMAGE.into()
-            } else {
-                bpf_data.exe.to_path_buf()
-            }
-        };
-
-        // we update parent's information
-        // we track children processes, not tasks
-        self.processes.entry(parent_key).and_modify(|e| {
-            e.children.insert(info.process_key());
-        });
-
-        let (command_line, opt_err) = bpf_data.argv.to_argv();
-        opt_err.inspect(|e| {
-            error!(
-                "utf8 decoding error while parsing argv for comm={} pid={} task={}: {e}",
-                info.task_info().comm_string(),
-                info.task_info().tgid,
-                info.task_info().tg_uuid.into_uuid()
-            )
-        });
-
-        // we insert only if not existing
-        self.processes.entry(pk).or_insert(Process {
-            image,
-            command_line,
-            pid: info.task_info().tgid,
-            flags: info.task_info().flags,
-            resolved: HashMap::new(),
-            container: container_type,
-            cgroups,
-            nodename: bpf_data.nodename(),
-            real_parent_key: Some(parent_key),
-            kernel_task_info: Some(*info.task_info()),
-            children: HashSet::new(),
-            threads: HashSet::new(),
-            procfs: false,
-            exit: false,
-            zombie: false,
-        });
-    }
-
-    #[inline(always)]
-    fn handle_hash_event(&mut self, info: StdEventInfo, bpf_data: bpf_events::HashData) {
-        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
-        self.get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.path));
-    }
-
-    #[inline(always)]
-    fn track_zombie_task(&mut self, std_info: &mut StdEventInfo) {
-        // we need to find if task is a zombie and replace
-        // its parent with the real one if needed
-        if let Some(kti) = self
-            .processes
-            .get_mut(&std_info.process_key())
-            .and_then(|t| {
-                if t.zombie
-                    || (t.real_parent_key.is_some()
-                        && t.real_parent_key != Some(std_info.parent_key()))
-                {
-                    // task is a zombie
-                    t.zombie = true;
-                    // we must continue with the real parent task key
-                    t.real_parent_key
-                } else {
-                    None
-                }
-            })
-            // we get real parent
-            .and_then(|tk| self.processes.get(&tk))
-            // we get real parent's TaskInfo
-            .and_then(|t| t.kernel_task_info)
-        {
-            // if we arrive here, this means the task is a zombie
-            // and we need to replace its parent by the real one
-            std_info.bpf.parent = kti;
-            std_info.bpf.process.zombie = true
-        }
-
-        // we must set the zombie flag of the parent if needed
-        if self
-            .processes
-            .get(&std_info.parent_key())
-            .map(|t| t.zombie)
-            .unwrap_or_default()
-        {
-            std_info.bpf.parent.zombie = true
-        }
-    }
-
-    #[inline(always)]
-    fn build_task_additional_info(
-        &mut self,
-        mnt_ns: Mnt,
-        ti: &bpf_events::TaskInfo,
-    ) -> TaskAdditionalInfo {
-        let res = match self.cache.get_user_group_in_ns(mnt_ns) {
-            Ok(o) => Ok(o),
-            Err(e) => match e {
-                Error::Namespace(ns) => {
-                    if ns.is_other_and_io_kind(io::ErrorKind::NotFound) {
-                        self.cache.get_user_group_in_ns(self.system_info.mount_ns)
-                    } else {
-                        Err(ns.into())
-                    }
-                }
-                _ => Err(e),
-            },
-        };
-
-        // getting user and group information for task
-        let (users, groups) = res
-            .inspect_err(|e| {
-                let mut ti = *ti;
-                // fixes the random part to have a searchable uuid for error investigation
-                ti.set_uuid_random(self.random);
-                // make this debug as it can be quite verbose in some cases
-                debug!(
-                    "failed to get task guuid={} user/group: {e}",
-                    ti.tg_uuid.into_uuid()
-                )
-            })
-            .ok()
-            .unzip();
-
-        TaskAdditionalInfo { users, groups }
-    }
-
-    #[inline(always)]
-    fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
-        let opt_mnt_ns = Self::task_mnt_ns(&i);
-        let opt_parent_ns = Self::parent_mnt_ns(&i);
-
-        let mut std_info = StdEventInfo::from_bpf(i, self.random);
-
-        // registers this task's pid on its owning Process, regardless of
-        // event type, so it can be swept from `tasks` on ExitGroup.
-        if let Some(p) = self.processes.get_mut(&std_info.process_key()) {
-            p.threads.insert(TaskKey::from(&i.process));
-        }
-
-        let host = kunai::info::HostInfo {
-            name: self.system_info.hostname.clone(),
-            uuid: self.system_info.host_uuid,
-        };
-
-        let mut container = None;
-        let mut task = None;
-        let mut parent = None;
-
-        if let Some(mnt_ns) = opt_mnt_ns {
-            if mnt_ns != self.system_info.mount_ns {
-                let t = self.processes.get(&std_info.process_key());
-                container = Some(kunai::info::ContainerInfo {
-                    name: t.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
-                    ty: t.and_then(|cd| cd.container),
-                });
-            }
-            // getting task additional info
-            task = Some(self.build_task_additional_info(mnt_ns, &i.process));
-        }
-
-        // getting user and group information for parent task
-        if let Some(parent_ns) = opt_parent_ns {
-            parent = Some(self.build_task_additional_info(parent_ns, &i.parent));
-        }
-
-        self.track_zombie_task(&mut std_info);
-
-        std_info.with_additional_info(AdditionalInfo {
-            host,
-            container,
-            task: task.unwrap_or_default(),
-            parent: parent.unwrap_or_default(),
-        })
     }
 
     #[inline(always)]
@@ -2066,8 +1205,8 @@ impl EventConsumer<'_> {
                 warn!(
                     "file={} matches detection signatures={:?} triggered by event uuid={}",
                     p.to_string_lossy(),
-                    &event.data.signatures,
-                    &event.info().event.uuid,
+                    event.data.signatures,
+                    event.info().event.uuid,
                 );
             }
 
@@ -2150,19 +1289,950 @@ impl EventConsumer<'_> {
 
         printed
     }
+}
+
+impl EventConsumer<'_> {
+    fn prepare_output(config: &Config) -> anyhow::Result<Output> {
+        let output = match &config.output.path.as_str() {
+            &"stdout" => String::from("/dev/stdout"),
+            &"stderr" => String::from("/dev/stderr"),
+            v => v.to_string(),
+        };
+
+        let out = match output.as_str() {
+            "/dev/stdout" => Output::stdout(),
+            "/dev/stderr" => Output::stderr(),
+            v => {
+                let path = PathBuf::from(v);
+
+                if let Some(parent) = path.parent() {
+                    if !parent.exists() {
+                        // we only create parent directory
+                        DirBuilder::new().mode(0o700).create(parent).map_err(|e| {
+                            anyhow!("failed to create output directory {parent:?}: {e}")
+                        })?;
+                    }
+                }
+
+                let mut opts = firo::OpenOptions::new();
+
+                opts.mode(0o600);
+
+                if let Some(max_size) = config.output.max_size {
+                    opts.max_size(max_size);
+                }
+
+                // we create optimal trigger and set it for the file rotation
+                opts.opt_trigger(Trigger::from_options(
+                    config.output.rotate_interval,
+                    config.output.rotate_size,
+                ));
+
+                opts.compression(firo::Compression::Gzip)
+                    .create_append(v)?
+                    .into()
+            }
+        };
+        Ok(out)
+    }
+
+    pub fn with_config(config: Config) -> anyhow::Result<Self> {
+        // building up system information
+        let system_info = SystemInfo::from_sys()?.with_host_uuid(config.host_uuid);
+
+        let scan_events_enabled = config
+            .events
+            .iter()
+            .any(|(&ty, e)| ty == Type::FileScan && e.is_enabled());
+
+        let output = Self::prepare_output(&config)?;
+
+        let filter = Filter::try_from(&config)?;
+
+        let mut ep = Self {
+            system_info,
+            filter,
+            random: util::getrandom::<u32>()?,
+            processes: Processes::with_capacity(512),
+            tasks: HashMap::with_capacity(512),
+            exited_tasks: 0,
+            resolved: HashMap::new(),
+            sink: EventSink {
+                config,
+                engine: Engine::new(),
+                iocs: HashMap::new(),
+                cache: Cache::with_max_entries(10000),
+                killed_tasks: LruHashSet::with_max_entries(512),
+                output,
+                file_scanner: None,
+                magic_db: magic_db::load().map_err(|e| anyhow!("failed to open magic-db: {e}"))?,
+                scan_events_enabled,
+            },
+        };
+
+        // initializing yara rules
+        ep.init_file_scanner()?;
+
+        // initializing event scanner
+        ep.init_event_scanner()?;
+
+        // initialize IoCs
+        ep.init_iocs()?;
+
+        // should not raise any error, we just print it
+        let _ = inspect_err! {
+            ep.init_tasks_from_procfs(),
+            |e: &anyhow::Error| warn!("failed to initialize tasks with procfs: {}", e)
+        };
+
+        Ok(ep)
+    }
+
+    #[inline(always)]
+    fn init_file_scanner(&mut self) -> anyhow::Result<()> {
+        let wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // will list only files
+            // with following extensions
+            .extension("yar")
+            .extension("yara")
+            // don't go recursive
+            .max_depth(0);
+
+        let mut c = yara_x::Compiler::new();
+
+        let mut files_loaded = 0;
+        for p in self.sink.config.scanner.yara.iter() {
+            debug!("looking for yara rules in: {}", p.to_string_lossy());
+            let w = wo.clone().walk(p);
+            for r in w {
+                let rule_file = r?;
+                info!(
+                    "loading yara rule(s) from file: {}",
+                    rule_file.to_string_lossy()
+                );
+                let src = SourceCode::from_rule_file(rule_file)?;
+                c.add_source(src.to_native())?;
+                files_loaded += 1;
+            }
+        }
+
+        // we don't actually initialize an empty scanner
+        if files_loaded == 0 {
+            return Ok(());
+        }
+
+        let scanner = Scanner::with_rules(c.build());
+        if let Ok(mut s) = scanner.lock() {
+            s.max_scan_size(FILE_SIZE_SCAN_LIMIT as usize);
+        }
+        self.sink.file_scanner = Some(scanner);
+
+        Ok(())
+    }
+
+    fn load_kunai_rule_file<P: AsRef<Path>>(
+        &mut self,
+        compiler: &mut Compiler,
+        rule_file: P,
+    ) -> anyhow::Result<()> {
+        let rule_file = rule_file.as_ref();
+
+        info!(
+            "loading detection/filter rules from: {}",
+            rule_file.to_string_lossy()
+        );
+
+        for document in serde_yaml::Deserializer::from_reader(File::open(rule_file)?) {
+            // we deserialize into a value so that we can process string event ids
+            let mut value = serde_yaml::Value::deserialize(document)?;
+
+            // get rule name. We don't check here if there is a name as
+            // later parsing is supposed to catch it.
+            let rule_name = value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or(String::from("unknown"));
+
+            if let Some(events) = value
+                .get_mut("match-on")
+                .and_then(|mo| mo.get_mut("events"))
+                .and_then(|e| e.get_mut("kunai"))
+                .and_then(|events| events.as_sequence_mut())
+            {
+                for v in events.iter_mut() {
+                    // we handle string event name
+                    if let Some(event_name) = v.as_str() {
+                        let id = if event_name.starts_with('-') {
+                            let event_name = event_name.trim_start_matches('-');
+                            let ty = Type::from_str(event_name).map_err(|_| {
+                                anyhow!(
+                                    "file={} rule={rule_name} parse error: unknown event name \
+                                     {event_name}",
+                                    rule_file.to_string_lossy()
+                                )
+                            })?;
+                            -i64::from(ty as u32)
+                        } else {
+                            let ty = Type::from_str(event_name).map_err(|_| {
+                                anyhow!(
+                                    "file={} rule={rule_name} parse error: unknown event name \
+                                     {event_name}",
+                                    rule_file.to_string_lossy()
+                                )
+                            })?;
+                            i64::from(ty as u32)
+                        };
+
+                        // we actually replace string by i64
+                        *v = serde_yaml::Value::Number(id.into());
+                    }
+                }
+            }
+
+            // we insert rule into the engine
+            compiler.load(gene::Rule::deserialize(value).map_err(|e| {
+                anyhow!(
+                    "file={} rule={rule_name} parse error: {e}",
+                    rule_file.to_string_lossy()
+                )
+            })?)?;
+        }
+
+        Ok(())
+    }
+
+    fn compile_kunai_rules(&mut self) -> anyhow::Result<Compiler> {
+        let mut compiler = Compiler::new();
+
+        // loading rules in the engine
+        if self.sink.config.scanner.rules.is_empty() {
+            return Ok(compiler);
+        }
+
+        let rules_wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // with following extensions
+            .extension("kun")
+            .extension("kunai")
+            .extension("gen")
+            .extension("gene")
+            .sort(true)
+            // don't go recursive
+            .max_depth(0);
+
+        let tpl_wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // with following extensions
+            .extension("yaml")
+            .extension("yml")
+            .sort(true)
+            // don't go recursive
+            .max_depth(0);
+
+        for p in self.sink.config.scanner.rules.clone().iter() {
+            if !p.exists() {
+                error!(
+                    "kunai rule loader: no such file or directory {}",
+                    p.to_string_lossy()
+                );
+            } else if p.is_file() {
+                // we load file regardless of its extension
+                self.load_kunai_rule_file(&mut compiler, p)?;
+            } else if p.is_dir() {
+                // loading rule templates located in directory
+                for t in tpl_wo.clone().walk(p) {
+                    let p = t?;
+                    info!("loading template: {}", p.to_string_lossy());
+                    let reader = File::open(p)?;
+                    compiler.load_templates_from_reader(reader)?;
+                }
+
+                // load rule files
+                for r in rules_wo.clone().walk(p) {
+                    self.load_kunai_rule_file(&mut compiler, r?)?;
+                }
+            }
+        }
+
+        Ok(compiler)
+    }
+
+    fn init_event_scanner(&mut self) -> anyhow::Result<()> {
+        self.sink.engine = Engine::try_from(self.compile_kunai_rules()?)?;
+        info!(
+            "detection engine initialized rules={}",
+            self.sink.engine.rules_count()
+        );
+        Ok(())
+    }
+
+    fn init_iocs(&mut self) -> anyhow::Result<()> {
+        // loading iocs
+        if self.sink.config.scanner.iocs.is_empty() {
+            return Ok(());
+        }
+
+        let wo = WalkOptions::new()
+            // we list only files
+            .files()
+            // will list only files
+            // with following extensions
+            .extension("ioc")
+            // don't go recursive
+            .max_depth(0);
+
+        for p in self.sink.config.scanner.iocs.clone().iter() {
+            if !p.exists() {
+                error!(
+                    "ioc file loader: no such file or directory {}",
+                    p.to_string_lossy()
+                )
+            } else if p.is_file() {
+                self.load_iocs(p)
+                    .map_err(|e| anyhow!("failed to load IoC file {}: {e}", p.to_string_lossy()))?;
+            } else if p.is_dir() {
+                let w = wo.clone().walk(p);
+                for r in w {
+                    let f = r?;
+                    self.load_iocs(&f).map_err(|e| {
+                        anyhow!("failed to load IoC file {}: {e}", f.to_string_lossy())
+                    })?;
+                }
+            }
+        }
+
+        info!("number of IoCs loaded: {}", self.sink.iocs.len());
+
+        Ok(())
+    }
+
+    fn load_iocs<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        let p = p.as_ref();
+        let f = io::BufReader::new(File::open(p)?);
+
+        for line in f.lines() {
+            let line = line?;
+            let ioc: IoC = serde_json::from_str(&line)?;
+            self.sink
+                .iocs
+                .entry(ioc.value)
+                .and_modify(|e| *e = max(*e, ioc.severity))
+                .or_insert(ioc.severity);
+        }
+
+        Ok(())
+    }
+
+    fn init_tasks_from_procfs(&mut self) -> anyhow::Result<()> {
+        for p in (procfs::process::all_processes()?).flatten() {
+            // flatten takes only the Ok() values of processes
+            if let Err(e) = self.set_task_from_procfs(&p) {
+                warn!(
+                    "failed to initialize correlation for procfs process PID={}: {e}",
+                    p.pid
+                )
+            }
+        }
+
+        // we try to resolve containers from tasks found in procfs
+        for (tk, pk) in self
+            .processes
+            .iter()
+            .map(|(&k, v)| (k, v.real_parent_key))
+            .collect::<Vec<(ProcKey, Option<ProcKey>)>>()
+        {
+            if let Some(parent) = pk {
+                if let Some(t) = self.processes.get_mut(&tk) {
+                    // trying to find container type in cgroups
+                    t.container = Container::from_cgroups(&t.cgroups);
+                    if t.container.is_some() {
+                        // we don't need to do the ancestor's lookup
+                        continue;
+                    }
+                }
+
+                // lookup in ancestors
+                // the borrow of processes must end before we update it
+                let container =
+                    Container::from_ancestors(&self.processes.get_all_ancestors(parent, 0));
+                if let Some(c) = container {
+                    self.processes
+                        .entry(tk)
+                        .and_modify(|task| task.container = Some(c));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn set_task_from_procfs(&mut self, p: &procfs::process::Process) -> anyhow::Result<()> {
+        let stat = p.stat()?;
+
+        let parent_pid = p.status()?.ppid;
+        let parent_key = {
+            if parent_pid != 0 {
+                let parent = procfs::process::Process::new(parent_pid)?;
+                Some(ProcKey::try_from(&parent)?)
+            } else {
+                None
+            }
+        };
+
+        let tk = ProcKey::try_from(p)?;
+
+        if self.processes.contains_key(&tk) {
+            return Ok(());
+        }
+
+        let image = {
+            if stat.flags & 0x200000 == 0x200000 {
+                KERNEL_IMAGE.into()
+            } else {
+                p.exe().unwrap_or("?".into())
+            }
+        };
+
+        // we gather cgroups
+        let cgroups = p
+            .cgroups()?
+            .0
+            .into_iter()
+            .map(|cg| cg.pathname)
+            .collect::<Vec<String>>();
+
+        let mut threads = HashSet::new();
+        if let (Ok(status), Ok(task_key)) = (p.status(), TaskKey::try_from(p)) {
+            self.tasks.insert(
+                task_key,
+                Task {
+                    expected_creds: creds::Creds {
+                        uid: status.ruid,
+                        gid: status.rgid,
+                        euid: status.euid,
+                        egid: status.egid,
+                        suid: status.suid,
+                        sgid: status.sgid,
+                        fsuid: status.fuid,
+                        fsgid: status.fgid,
+                        cap_effective: status.capeff,
+                        cap_permitted: status.capprm,
+                        cap_inheritable: status.capinh,
+                    },
+                    reported_creds: None,
+                },
+            );
+            threads.insert(task_key);
+        }
+
+        let task = Process {
+            image,
+            command_line: p.cmdline().unwrap_or(vec!["?".into()]),
+            pid: p.pid,
+            flags: stat.flags,
+            resolved: HashMap::new(),
+            container: None,
+            cgroups,
+            nodename: None,
+            real_parent_key: parent_key,
+            kernel_task_info: None,
+            children: HashSet::new(),
+            threads,
+            procfs: true,
+            exit: false,
+            zombie: false,
+        };
+
+        self.processes.insert(tk, task);
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
+        // updating loopback resolution is not good
+        if ip.is_loopback() {
+            return;
+        }
+
+        let ck = i.process_key();
+
+        // update local resolve table
+        self.processes.get_mut(&ck).map(|c| {
+            c.resolved
+                .entry(ip)
+                .and_modify(|r| *r = resolved.to_owned())
+                .or_insert(resolved.to_owned())
+        });
+
+        // update global resolve table
+        self.resolved
+            .entry(ip)
+            .and_modify(|r| *r = resolved.to_owned())
+            .or_insert(resolved.to_owned());
+    }
+
+    #[inline(always)]
+    fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
+        ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt)).into()
+    }
+
+    #[inline(always)]
+    /// method acting as a central place to get the mnt namespace of a
+    /// parent task and printing out an error if not found
+    fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
+        match Self::mnt_ns_from_task(&ei.process) {
+            Some(o) => Some(o),
+            None => {
+                debug!(
+                    "no mnt namespace for event: type={} event_uuid={}",
+                    ei.etype,
+                    ei.uuid.into_uuid()
+                );
+                None
+            }
+        }
+    }
+
+    #[inline(always)]
+    /// method acting as a central place to get the mnt namespace of a
+    /// task and printing out an error if not found
+    fn parent_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
+        match Self::mnt_ns_from_task(&ei.parent) {
+            Some(o) => Some(o),
+            None => {
+                debug!(
+                    "no mnt namespace for event: type={} event_uuid={}",
+                    ei.etype,
+                    ei.uuid.into_uuid()
+                );
+                None
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn update_dns_resolved(&mut self, info: &StdEventInfo, responses: &[DomainResponse]) {
+        for r in responses {
+            for a in r.records.iter() {
+                if let Ok(ip) = a.parse::<IpAddr>() {
+                    self.update_resolved(ip, &r.qname, info);
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn exit_cleanup(&mut self, info: &StdEventInfo) {
+        // this task's creds baseline is no longer of any use, regardless of
+        // whether it is the thread-group leader or a plain thread exiting
+        self.tasks.remove(&TaskKey::from(info.task_info()));
+
+        let etype = info.bpf.etype;
+        // cleanup tasks when process exits
+        if (matches!(etype, Type::Exit) && info.task_info().pid == info.task_info().tgid)
+            || matches!(etype, Type::ExitGroup)
+        {
+            let pk = info.process_key();
+
+            if let Some(t) = self.processes.get(&pk) {
+                // only ExitGroup guarantees the whole thread group is gone
+                if matches!(etype, Type::ExitGroup) {
+                    for tk in &t.threads {
+                        self.tasks.remove(tk);
+                    }
+                }
+
+                if !self.proc_has_running_descendent(&pk) && !t.procfs {
+                    // if the task has no descendent and is not coming from procfs
+                    // we can remove it from the table.
+                    self.processes.remove(&pk);
+                } else {
+                    // the process has some running descendent, thus it needs to be
+                    // kept in the table to construct a sound ancestors list for descendent(s).
+                    // However we can free up some memory and tag the task as exited
+                    self.processes.entry(pk).and_modify(|t| t.on_exit());
+                }
+            }
+
+            // we trigger some very specific cleanup
+            if self.exited_tasks.is_multiple_of(1000) {
+                let shadow_proc = self.find_shadow_procs();
+                // we remove shadow processes
+                self.processes.retain(|pk, _| !shadow_proc.contains(pk));
+                // shrinking processes HashMap
+                self.processes.shrink_to_fit();
+            }
+
+            self.exited_tasks = self.exited_tasks.wrapping_add(1);
+        }
+    }
+
+    #[inline(always)]
+    fn start_event<'src>(&self, info: &'src StdEventInfo) -> UserEvent<'src, StartData> {
+        let mut data = StartData::new();
+
+        // setting kunai related info
+        data.kunai.version = env!("CARGO_PKG_VERSION").into();
+        let self_exe = PathBuf::from("/proc/self/exe");
+        data.kunai.exe = Hashes::from_path_ref(
+            self_exe.clone().canonicalize().unwrap_or(self_exe),
+            &self.sink.magic_db,
+        );
+
+        data.kunai.config.sha256 = self.sink.config.sha256().ok().unwrap_or("?".into());
+
+        // setting up uptime and boottime
+        if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
+        {
+            data.system.uptime = Some(uptime.as_secs());
+            data.system.boot_time = uptime.boot_time().ok();
+        }
+
+        // setting utsname info
+        if let Ok(uts) = Utsname::from_sys() {
+            data.system.sysname = uts.sysname().unwrap_or("?".into()).into();
+            data.system.release = uts.release().unwrap_or("?".into()).into();
+            data.system.version = uts.version().unwrap_or("?".into()).into();
+            data.system.machine = uts.machine().unwrap_or("?".into()).into();
+            data.system.domainname = uts.domainname().unwrap_or("?".into()).into();
+        }
+
+        UserEvent::new(data, info)
+    }
+
+    #[inline(always)]
+    fn loss_event<'src>(
+        &self,
+        info: &'src StdEventInfo,
+        bpf_data: bpf_events::LossData,
+    ) -> UserEvent<'src, LossData> {
+        UserEvent::new(LossData::from(&bpf_data), info)
+    }
+
+    // shadow processes are processes still in the hashmap but which have exited and
+    // have all descendents exited. They are not useful anymore because they are not needed
+    // to reconstruct ancestors.
+    #[inline(always)]
+    fn find_shadow_procs(&self) -> HashSet<ProcKey> {
+        let mut no_running_desc = HashSet::with_capacity(self.processes.len());
+
+        for pk in self
+            .processes
+            .iter()
+            // we don't process collected from procfs
+            .filter(|(_, p)| !p.procfs)
+            // we don't want running processes
+            .filter(|(_, p)| p.exit)
+            .map(|(k, _)| *k)
+        {
+            // if our parent has no running descendent we know we do too
+            if let Some(rpk) = self
+                .processes
+                .get(&pk)
+                .and_then(|p| p.real_parent_key)
+                .as_ref()
+            {
+                if no_running_desc.contains(rpk) {
+                    no_running_desc.insert(pk);
+                    continue;
+                }
+            }
+
+            if !self.proc_has_running_descendent(&pk) {
+                no_running_desc.insert(pk);
+            }
+        }
+
+        no_running_desc
+    }
+
+    #[inline(always)]
+    fn proc_has_running_descendent(&self, pk: &ProcKey) -> bool {
+        if let Some(p) = self.processes.get(pk) {
+            for ck in p.children.iter() {
+                if let Some(child) = self.processes.get(ck) {
+                    // if we have one child that didn't exit
+                    if !child.exit {
+                        return true;
+                    }
+
+                    // if one descendent of our childen is running
+                    if self.proc_has_running_descendent(ck) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    #[inline(always)]
+    fn handle_correlation_event(
+        &mut self,
+        info: StdEventInfo,
+        bpf_data: bpf_events::CorrelationData,
+    ) {
+        let pk = info.process_key();
+        let mut parent_key = info.parent_key();
+        let execve_flag = matches!(bpf_data.origin, Type::Execve | Type::ExecveScript);
+
+        // Execve must remove any previous task (i.e. coming from
+        // clone or tasksched for instance)
+        if execve_flag {
+            if let Some(p) = self.processes.get(&pk).and_then(|p| p.real_parent_key) {
+                // we keep track of real parent_key in case of zombie task
+                parent_key = p;
+            }
+            // we start from scratch with this process
+            self.processes.remove(&pk);
+        }
+
+        // early return if task key exists
+        if let Some(v) = self.processes.get_mut(&pk) {
+            // we fix nodename if not set yet
+            // tasks init from procfs are lacking nodename
+            if v.nodename.is_none() {
+                v.nodename = bpf_data.nodename()
+            }
+            return;
+        }
+
+        let cgroup = bpf_data.cgroup;
+
+        // we encountered some cgroup parsing error in eBPF
+        // so we need to resolve cgroup in userland
+        let cgroups = match cgroup.error {
+            BpfOption::None => vec![cgroup.to_string()],
+            BpfOption::Some(_) => {
+                if let Ok(cgroups) =
+                    procfs::process::Process::new(info.task_info().pid).and_then(|p| p.cgroups())
+                {
+                    // we return cgroup from procfs
+                    cgroups
+                        .0
+                        .into_iter()
+                        .map(|cg| cg.pathname)
+                        .collect::<Vec<String>>()
+                } else {
+                    // we report an error
+                    warn!(
+                        "failed to resolve cgroup for pid={} guuid={}",
+                        info.task_info().pid,
+                        info.task_info().tg_uuid.into_uuid().hyphenated()
+                    );
+                    // still get a chance to do something with cgroup
+                    vec![cgroup.to_string()]
+                }
+            }
+        };
+
+        let mut container_type = Container::from_cgroups(&cgroups);
+
+        if container_type.is_none() {
+            container_type =
+                Container::from_ancestors(&self.processes.get_all_ancestors(parent_key, 0));
+        }
+
+        let image = {
+            if info.task_info().is_kernel_thread() {
+                KERNEL_IMAGE.into()
+            } else {
+                bpf_data.exe.to_path_buf()
+            }
+        };
+
+        // we update parent's information
+        // we track children processes, not tasks
+        self.processes.entry(parent_key).and_modify(|e| {
+            e.children.insert(info.process_key());
+        });
+
+        let (command_line, opt_err) = bpf_data.argv.to_argv();
+        opt_err.inspect(|e| {
+            error!(
+                "utf8 decoding error while parsing argv for comm={} pid={} task={}: {e}",
+                info.task_info().comm_string(),
+                info.task_info().tgid,
+                info.task_info().tg_uuid.into_uuid()
+            )
+        });
+
+        // we insert only if not existing
+        self.processes.entry(pk).or_insert(Process {
+            image,
+            command_line,
+            pid: info.task_info().tgid,
+            flags: info.task_info().flags,
+            resolved: HashMap::new(),
+            container: container_type,
+            cgroups,
+            nodename: bpf_data.nodename(),
+            real_parent_key: Some(parent_key),
+            kernel_task_info: Some(*info.task_info()),
+            children: HashSet::new(),
+            threads: HashSet::new(),
+            procfs: false,
+            exit: false,
+            zombie: false,
+        });
+    }
+
+    #[inline(always)]
+    fn handle_hash_event(&mut self, info: StdEventInfo, bpf_data: bpf_events::HashData) {
+        let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
+        self.sink
+            .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.path));
+    }
+
+    #[inline(always)]
+    fn track_zombie_task(&mut self, std_info: &mut StdEventInfo) {
+        // we need to find if task is a zombie and replace
+        // its parent with the real one if needed
+        if let Some(kti) = self
+            .processes
+            .get_mut(&std_info.process_key())
+            .and_then(|t| {
+                if t.zombie
+                    || (t.real_parent_key.is_some()
+                        && t.real_parent_key != Some(std_info.parent_key()))
+                {
+                    // task is a zombie
+                    t.zombie = true;
+                    // we must continue with the real parent task key
+                    t.real_parent_key
+                } else {
+                    None
+                }
+            })
+            // we get real parent
+            .and_then(|tk| self.processes.get(&tk))
+            // we get real parent's TaskInfo
+            .and_then(|t| t.kernel_task_info)
+        {
+            // if we arrive here, this means the task is a zombie
+            // and we need to replace its parent by the real one
+            std_info.bpf.parent = kti;
+            std_info.bpf.process.zombie = true
+        }
+
+        // we must set the zombie flag of the parent if needed
+        if self
+            .processes
+            .get(&std_info.parent_key())
+            .map(|t| t.zombie)
+            .unwrap_or_default()
+        {
+            std_info.bpf.parent.zombie = true
+        }
+    }
+
+    #[inline(always)]
+    fn build_task_additional_info(
+        &mut self,
+        mnt_ns: Mnt,
+        ti: &bpf_events::TaskInfo,
+    ) -> TaskAdditionalInfo {
+        let res = match self.sink.cache.get_user_group_in_ns(mnt_ns) {
+            Ok(o) => Ok(o),
+            Err(e) => match e {
+                Error::Namespace(ns) => {
+                    if ns.is_other_and_io_kind(io::ErrorKind::NotFound) {
+                        self.sink
+                            .cache
+                            .get_user_group_in_ns(self.system_info.mount_ns)
+                    } else {
+                        Err(ns.into())
+                    }
+                }
+                _ => Err(e),
+            },
+        };
+
+        // getting user and group information for task
+        let (users, groups) = res
+            .inspect_err(|e| {
+                let mut ti = *ti;
+                // fixes the random part to have a searchable uuid for error investigation
+                ti.set_uuid_random(self.random);
+                // make this debug as it can be quite verbose in some cases
+                debug!(
+                    "failed to get task guuid={} user/group: {e}",
+                    ti.tg_uuid.into_uuid()
+                )
+            })
+            .ok()
+            .unzip();
+
+        TaskAdditionalInfo { users, groups }
+    }
+
+    #[inline(always)]
+    fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
+        let opt_mnt_ns = Self::task_mnt_ns(&i);
+        let opt_parent_ns = Self::parent_mnt_ns(&i);
+
+        let mut std_info = StdEventInfo::from_bpf(i, self.random);
+
+        // registers this task's pid on its owning Process, regardless of
+        // event type, so it can be swept from `tasks` on ExitGroup.
+        if let Some(p) = self.processes.get_mut(&std_info.process_key()) {
+            p.threads.insert(TaskKey::from(&i.process));
+        }
+
+        let host = kunai::info::HostInfo {
+            name: self.system_info.hostname.clone(),
+            uuid: self.system_info.host_uuid,
+        };
+
+        let mut container = None;
+        let mut task = None;
+        let mut parent = None;
+
+        if let Some(mnt_ns) = opt_mnt_ns {
+            if mnt_ns != self.system_info.mount_ns {
+                let t = self.processes.get(&std_info.process_key());
+                container = Some(kunai::info::ContainerInfo {
+                    name: t.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
+                    ty: t.and_then(|cd| cd.container),
+                });
+            }
+            // getting task additional info
+            task = Some(self.build_task_additional_info(mnt_ns, &i.process));
+        }
+
+        // getting user and group information for parent task
+        if let Some(parent_ns) = opt_parent_ns {
+            parent = Some(self.build_task_additional_info(parent_ns, &i.parent));
+        }
+
+        self.track_zombie_task(&mut std_info);
+
+        std_info.with_additional_info(AdditionalInfo {
+            host,
+            container,
+            task: task.unwrap_or_default(),
+            parent: parent.unwrap_or_default(),
+        })
+    }
 
     #[inline(always)]
     fn cache_namespaces(&mut self, i: &bpf_events::EventInfo) {
         if let Some(t_mnt_ns) = Self::task_mnt_ns(i) {
             let pid = i.process.pid;
-            if let Err(e) = self.cache.cache_mnt_ns(pid, t_mnt_ns) {
+            if let Err(e) = self.sink.cache.cache_mnt_ns(pid, t_mnt_ns) {
                 debug!("failed to cache namespace pid={pid} ns={t_mnt_ns}: {e}");
             }
         }
 
         if let Some(p_mnt_ns) = Self::parent_mnt_ns(i) {
             let pid = i.parent.pid;
-            if let Err(e) = self.cache.cache_mnt_ns(pid, p_mnt_ns) {
+            if let Err(e) = self.sink.cache.cache_mnt_ns(pid, p_mnt_ns) {
                 debug!("failed to cache namespace pid={pid} ns={p_mnt_ns}: {e}");
             }
         }
@@ -2187,8 +2257,8 @@ impl EventConsumer<'_> {
         }
 
         let std_info = self.build_std_event_info(*info);
-        let mut tampered = self.creds_tampered_event(&std_info, baseline);
-        self.scan_and_print(&mut tampered);
+        let mut tampered = self.processes.creds_tampered_event(&std_info, baseline);
+        self.sink.scan_and_print(&mut tampered);
 
         // we only keep track of what we reported so that we don't re-fire on
         // every subsequent event. The baseline is left untouched on purpose,
@@ -2238,9 +2308,11 @@ impl EventConsumer<'_> {
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
                     let std_info = self.build_std_event_info(std_info.bpf);
-                    let mut e = self.execve_event(&std_info, e.data);
+                    let mut e = self
+                        .processes
+                        .execve_event(&mut self.sink, &std_info, &e.data);
 
-                    self.scan_and_print(&mut e);
+                    self.sink.scan_and_print(&mut e);
                 }
             }
 
@@ -2266,15 +2338,15 @@ impl EventConsumer<'_> {
                     // we have to rebuild std_info as it has it is uses correlation
                     // information
                     let std_info = self.build_std_event_info(std_info.bpf);
-                    let mut e = self.clone_event(&std_info, e.data);
-                    self.scan_and_print(&mut e);
+                    let mut e = self.processes.clone_event(&std_info, e.data);
+                    self.sink.scan_and_print(&mut e);
                 }
             }
 
             EbpfEvent::Prctl(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.prctl_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.prctl_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Kill(e) => {
@@ -2282,8 +2354,10 @@ impl EventConsumer<'_> {
                 let target_tai = Self::mnt_ns_from_task(&e.data.target)
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
-                let mut e = self.kill_event(&std_info, &target_tai, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self
+                    .processes
+                    .kill_event(&std_info, e.data, self.random, &target_tai);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Ptrace(e) => {
@@ -2291,8 +2365,10 @@ impl EventConsumer<'_> {
                 let target_tai = Self::mnt_ns_from_task(&e.data.target)
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
-                let mut e = self.ptrace_event(&std_info, &target_tai, e.data);
-                self.scan_and_print(&mut e);
+                let mut e =
+                    self.processes
+                        .ptrace_event(&std_info, e.data, self.random, &target_tai);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::CommitCreds(e) => {
@@ -2306,99 +2382,112 @@ impl EventConsumer<'_> {
                         reported_creds: None,
                     },
                 );
-                let mut e = self.commit_creds_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.commit_creds_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::MmapExec(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.mmap_exec_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self
+                    .processes
+                    .mmap_exec_event(&std_info, e.data, &mut self.sink);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Mprotect(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.mprotect_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.mprotect_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Connect(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.connect_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self
+                    .processes
+                    .connect_event(&std_info, e.data, &self.resolved);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::DnsQuery(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                for e in self.dns_query_events(&std_info, e.data).iter_mut() {
-                    self.scan_and_print(e);
+                // force typing here because of RA not detecting it properly
+                let responses: Vec<DomainResponse> = e.data.domain_responses().unwrap_or_default();
+                self.update_dns_resolved(&std_info, &responses);
+                for e in self
+                    .processes
+                    .dns_query_events(&std_info, e.data, responses)
+                    .iter_mut()
+                {
+                    self.sink.scan_and_print(e);
                 }
             }
 
             EbpfEvent::SendEntropy(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.send_data_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self
+                    .processes
+                    .send_data_event(&std_info, e.data, &self.resolved);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::InitModule(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.init_module_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.init_module_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::File(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.file_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.file_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Unlink(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.unlink_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.unlink_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::FileRename(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.file_rename_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.file_rename_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfProgLoad(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.bpf_prog_load_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.bpf_prog_load_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfSocketFilter(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.bpf_socket_filter_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.bpf_socket_filter_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Exit(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let ty = std_info.bpf.etype;
-                let mut e = self.exit_event(&std_info, e.data);
                 // exit and exit_group will always reach consumer as they are used
                 // to clean up the processes HashMap. So we need to check if we want
                 // to display those only now.
-                if self.filter.is_enabled(ty) {
-                    self.scan_and_print(&mut e);
+                if self.filter.is_enabled(std_info.bpf.etype) {
+                    let mut e = self.processes.exit_event(&std_info, e.data);
+                    self.sink.scan_and_print(&mut e);
                 }
+                self.exit_cleanup(&std_info);
             }
 
             EbpfEvent::IoUringSqe(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.io_uring_sqe_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.io_uring_sqe_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Error(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.error_event(&std_info, e.data);
-                self.scan_and_print(&mut e);
+                let mut e = self.processes.error_event(&std_info, e.data);
+                self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Correlation(e) => {
@@ -2420,13 +2509,13 @@ impl EventConsumer<'_> {
             EbpfEvent::Start(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut se = self.start_event(&std_info);
-                self.serialize_print(&mut se);
+                self.sink.serialize_print(&mut se);
             }
 
             EbpfEvent::Loss(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut evt = self.loss_event(&std_info, e.data);
-                self.serialize_print(&mut evt);
+                self.sink.serialize_print(&mut evt);
             }
 
             EbpfEvent::SysCoreResume(_) => { /*  just ignore it */ }
@@ -3363,28 +3452,28 @@ fn time_it<F: FnMut()>(mut f: F) -> Duration {
 // Enum used to deserialize and process events for
 // replay and test commands.
 enum ReplayEvent {
-    Execve(UserEvent<'static, ExecveData>),
-    Clone(UserEvent<'static, CloneData>),
-    Prctl(UserEvent<'static, PrctlData>),
+    Execve(UserEvent<'static, ExecveData<'static>>),
+    Clone(UserEvent<'static, CloneData<'static>>),
+    Prctl(UserEvent<'static, PrctlData<'static>>),
     Kill(UserEvent<'static, KillData<'static>>),
     Ptrace(UserEvent<'static, PtraceData<'static>>),
     CommitCreds(UserEvent<'static, CommitCredsData<'static>>),
     CredsTampered(UserEvent<'static, CredsTamperedData<'static>>),
-    MmapExec(UserEvent<'static, MmapExecData>),
-    MprotectExec(UserEvent<'static, MprotectData>),
-    Connect(UserEvent<'static, ConnectData>),
-    DnsQuery(UserEvent<'static, DnsQueryData>),
-    SendData(UserEvent<'static, SendDataData>),
-    InitModule(UserEvent<'static, InitModuleData>),
-    File(UserEvent<'static, FileData>),
-    FileUnlink(UserEvent<'static, UnlinkData>),
-    FileRename(UserEvent<'static, FileRenameData>),
-    BpfProgLoad(UserEvent<'static, BpfProgLoadData>),
-    BpfSocketFilter(UserEvent<'static, BpfSocketFilterData>),
-    Exit(UserEvent<'static, ExitData>),
-    IoUringSqe(UserEvent<'static, IoUringSqeData>),
+    MmapExec(UserEvent<'static, MmapExecData<'static>>),
+    MprotectExec(UserEvent<'static, MprotectData<'static>>),
+    Connect(UserEvent<'static, ConnectData<'static>>),
+    DnsQuery(UserEvent<'static, DnsQueryData<'static>>),
+    SendData(UserEvent<'static, SendDataData<'static>>),
+    InitModule(UserEvent<'static, InitModuleData<'static>>),
+    File(UserEvent<'static, FileData<'static>>),
+    FileUnlink(UserEvent<'static, UnlinkData<'static>>),
+    FileRename(UserEvent<'static, FileRenameData<'static>>),
+    BpfProgLoad(UserEvent<'static, BpfProgLoadData<'static>>),
+    BpfSocketFilter(UserEvent<'static, BpfSocketFilterData<'static>>),
+    Exit(UserEvent<'static, ExitData<'static>>),
+    IoUringSqe(UserEvent<'static, IoUringSqeData<'static>>),
     FileScan(UserEvent<'static, FileScanData>),
-    Error(UserEvent<'static, ErrorData>),
+    Error(UserEvent<'static, ErrorData<'static>>),
     #[allow(dead_code)]
     Start(UserEvent<'static, StartData>),
     #[allow(dead_code)]
@@ -3395,28 +3484,28 @@ impl ReplayEvent {
     #[inline]
     fn scan(&mut self, c: &mut EventConsumer) -> ScanResult {
         match self {
-            Self::Execve(u) => c.scan(u),
-            Self::Clone(u) => c.scan(u),
-            Self::Prctl(u) => c.scan(u),
-            Self::Kill(u) => c.scan(u),
-            Self::Ptrace(u) => c.scan(u),
-            Self::CommitCreds(u) => c.scan(u),
-            Self::CredsTampered(u) => c.scan(u),
-            Self::MmapExec(u) => c.scan(u),
-            Self::MprotectExec(u) => c.scan(u),
-            Self::Connect(u) => c.scan(u),
-            Self::DnsQuery(u) => c.scan(u),
-            Self::SendData(u) => c.scan(u),
-            Self::InitModule(u) => c.scan(u),
-            Self::File(u) => c.scan(u),
-            Self::FileUnlink(u) => c.scan(u),
-            Self::FileRename(u) => c.scan(u),
-            Self::BpfProgLoad(u) => c.scan(u),
-            Self::BpfSocketFilter(u) => c.scan(u),
-            Self::Exit(u) => c.scan(u),
-            Self::IoUringSqe(u) => c.scan(u),
-            Self::FileScan(u) => c.scan(u),
-            Self::Error(u) => c.scan(u),
+            Self::Execve(u) => c.sink.scan(u),
+            Self::Clone(u) => c.sink.scan(u),
+            Self::Prctl(u) => c.sink.scan(u),
+            Self::Kill(u) => c.sink.scan(u),
+            Self::Ptrace(u) => c.sink.scan(u),
+            Self::CommitCreds(u) => c.sink.scan(u),
+            Self::CredsTampered(u) => c.sink.scan(u),
+            Self::MmapExec(u) => c.sink.scan(u),
+            Self::MprotectExec(u) => c.sink.scan(u),
+            Self::Connect(u) => c.sink.scan(u),
+            Self::DnsQuery(u) => c.sink.scan(u),
+            Self::SendData(u) => c.sink.scan(u),
+            Self::InitModule(u) => c.sink.scan(u),
+            Self::File(u) => c.sink.scan(u),
+            Self::FileUnlink(u) => c.sink.scan(u),
+            Self::FileRename(u) => c.sink.scan(u),
+            Self::BpfProgLoad(u) => c.sink.scan(u),
+            Self::BpfSocketFilter(u) => c.sink.scan(u),
+            Self::Exit(u) => c.sink.scan(u),
+            Self::IoUringSqe(u) => c.sink.scan(u),
+            Self::FileScan(u) => c.sink.scan(u),
+            Self::Error(u) => c.sink.scan(u),
             // not scannable events
             Self::Start(_) | Self::Loss(_) => ScanResult::default(),
         }
@@ -3425,28 +3514,28 @@ impl ReplayEvent {
     #[inline]
     fn scan_and_print(&mut self, c: &mut EventConsumer) -> bool {
         match self {
-            Self::Execve(u) => c.scan_and_print(u),
-            Self::Clone(u) => c.scan_and_print(u),
-            Self::Prctl(u) => c.scan_and_print(u),
-            Self::Kill(u) => c.scan_and_print(u),
-            Self::Ptrace(u) => c.scan_and_print(u),
-            Self::CommitCreds(u) => c.scan_and_print(u),
-            Self::CredsTampered(u) => c.scan_and_print(u),
-            Self::MmapExec(u) => c.scan_and_print(u),
-            Self::MprotectExec(u) => c.scan_and_print(u),
-            Self::Connect(u) => c.scan_and_print(u),
-            Self::DnsQuery(u) => c.scan_and_print(u),
-            Self::SendData(u) => c.scan_and_print(u),
-            Self::InitModule(u) => c.scan_and_print(u),
-            Self::File(u) => c.scan_and_print(u),
-            Self::FileUnlink(u) => c.scan_and_print(u),
-            Self::FileRename(u) => c.scan_and_print(u),
-            Self::BpfProgLoad(u) => c.scan_and_print(u),
-            Self::BpfSocketFilter(u) => c.scan_and_print(u),
-            Self::Exit(u) => c.scan_and_print(u),
-            Self::IoUringSqe(u) => c.scan_and_print(u),
-            Self::FileScan(u) => c.scan_and_print(u),
-            Self::Error(u) => c.scan_and_print(u),
+            Self::Execve(u) => c.sink.scan_and_print(u),
+            Self::Clone(u) => c.sink.scan_and_print(u),
+            Self::Prctl(u) => c.sink.scan_and_print(u),
+            Self::Kill(u) => c.sink.scan_and_print(u),
+            Self::Ptrace(u) => c.sink.scan_and_print(u),
+            Self::CommitCreds(u) => c.sink.scan_and_print(u),
+            Self::CredsTampered(u) => c.sink.scan_and_print(u),
+            Self::MmapExec(u) => c.sink.scan_and_print(u),
+            Self::MprotectExec(u) => c.sink.scan_and_print(u),
+            Self::Connect(u) => c.sink.scan_and_print(u),
+            Self::DnsQuery(u) => c.sink.scan_and_print(u),
+            Self::SendData(u) => c.sink.scan_and_print(u),
+            Self::InitModule(u) => c.sink.scan_and_print(u),
+            Self::File(u) => c.sink.scan_and_print(u),
+            Self::FileUnlink(u) => c.sink.scan_and_print(u),
+            Self::FileRename(u) => c.sink.scan_and_print(u),
+            Self::BpfProgLoad(u) => c.sink.scan_and_print(u),
+            Self::BpfSocketFilter(u) => c.sink.scan_and_print(u),
+            Self::Exit(u) => c.sink.scan_and_print(u),
+            Self::IoUringSqe(u) => c.sink.scan_and_print(u),
+            Self::FileScan(u) => c.sink.scan_and_print(u),
+            Self::Error(u) => c.sink.scan_and_print(u),
             // not scannable events
             Self::Start(_) | Self::Loss(_) => false,
         }
@@ -3540,6 +3629,7 @@ impl Command {
             .ends_with(".jsonl.gz");
 
         let mut rule_names = c
+            .sink
             .engine
             .compiled_rules()
             .iter()
@@ -4195,7 +4285,7 @@ WantedBy=sysinit.target"#,
         if o.unit.exists() {
             println!(
                 "Following service will be stopped and uninstalled: {} -> {}",
-                &unit_name,
+                unit_name,
                 o.unit.to_string_lossy()
             );
         }
@@ -4216,7 +4306,7 @@ WantedBy=sysinit.target"#,
 
         // if any we must stop service first
         if o.unit.exists() {
-            println!("Uninstall systemd service: {}", &unit_name);
+            println!("Uninstall systemd service: {}", unit_name);
 
             // stop and disable unit
             Self::run_command("systemctl", &["stop", &unit_name])?;
@@ -4362,6 +4452,101 @@ mod tests {
             uid,
             ..Default::default()
         }
+    }
+
+    fn pkey(pid: u32) -> ProcKey {
+        kunai_common::uuid::ProcUuid {
+            leader_start_time_ns: 0,
+            random: 0,
+            tgid: pid,
+        }
+        .into()
+    }
+
+    fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {
+        Process {
+            image: image.into(),
+            command_line: vec![],
+            pid,
+            flags: 0,
+            resolved: HashMap::new(),
+            container: None,
+            cgroups: vec![],
+            nodename: None,
+            real_parent_key: parent.map(pkey),
+            children: HashSet::new(),
+            threads: HashSet::new(),
+            kernel_task_info: None,
+            procfs: false,
+            exit: false,
+            zombie: false,
+        }
+    }
+
+    /// init(1) -> bash(10) -> ls(20)
+    fn rooted_chain() -> Processes {
+        let mut p = Processes::default();
+        p.insert(pkey(1), process(1, "/sbin/init", None));
+        p.insert(pkey(10), process(10, "/bin/bash", Some(1)));
+        p.insert(pkey(20), process(20, "/bin/ls", Some(10)));
+        p
+    }
+
+    #[test]
+    fn ancestors_rooted_at_init() {
+        let p = rooted_chain();
+        assert_eq!(
+            p.get_all_ancestors(pkey(20), 0),
+            ["/sbin/init", "/bin/bash", "/bin/ls"]
+        );
+    }
+
+    #[test]
+    fn ancestors_skip() {
+        let p = rooted_chain();
+        assert_eq!(
+            p.get_all_ancestors(pkey(20), 1),
+            ["/sbin/init", "/bin/bash"]
+        );
+        // skipping past the root leaves nothing, and no "?" marker
+        assert!(p.get_all_ancestors(pkey(20), 5).is_empty());
+    }
+
+    #[test]
+    fn ancestors_unknown_key() {
+        assert!(rooted_chain().get_all_ancestors(pkey(99), 0).is_empty());
+    }
+
+    #[test]
+    fn ancestors_broken_chain() {
+        let mut p = Processes::default();
+        p.insert(pkey(42), process(42, "/usr/bin/sshd", None));
+        p.insert(pkey(43), process(43, "/bin/sh", Some(42)));
+        assert_eq!(
+            p.get_all_ancestors(pkey(43), 0),
+            ["?", "/usr/bin/sshd", "/bin/sh"]
+        );
+    }
+
+    #[test]
+    fn ancestors_kthread_root() {
+        let mut kthreadd = process(2, "kthreadd", None);
+        kthreadd.flags = 0x00200000;
+        let mut p = Processes::default();
+        p.insert(pkey(2), kthreadd);
+        p.insert(pkey(50), process(50, "/bin/sh", Some(2)));
+        assert_eq!(p.get_all_ancestors(pkey(50), 0), ["kthreadd", "/bin/sh"]);
+    }
+
+    #[test]
+    fn ancestors_cycle_is_truncated() {
+        let mut p = Processes::default();
+        p.insert(pkey(100), process(100, "/a", Some(101)));
+        p.insert(pkey(101), process(101, "/b", Some(100)));
+        let a = p.get_all_ancestors(pkey(100), 0);
+        assert_eq!(a.len(), MAX_ANCESTORS);
+        assert_eq!(a[0], "(truncated)");
+        assert_eq!(a[MAX_ANCESTORS - 1], "/a");
     }
 
     #[test]

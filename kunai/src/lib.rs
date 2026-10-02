@@ -126,34 +126,38 @@ pub fn prepare_bpf(
         .override_global("LINUX_KERNEL_VERSION", &kernel, true);
 
     let mut bpf = cfg_select! {
-       target_arch = "x86_64" => {{
-          let vmemmap_base = symbols.get_data_symbol_addr("vmemmap_base").unwrap_or_else(|| {
-             warn!("could not read vmemmap_base from kallsyms");
-             0
-          });
+        target_arch = "x86_64" => {
+            {
+                let vmemmap_base =
+                    symbols
+                        .get_data_symbol_addr("vmemmap_base")
+                        .unwrap_or_else(|| {
+                            warn!("could not read vmemmap_base from kallsyms");
+                            0
+                        });
 
-          let page_offset_base = symbols.get_data_symbol_addr("page_offset_base")
-              .unwrap_or_else(|| {
-                 warn!("could not read page_offset_base from kallsyms");
-                 0
-              });
+                let page_offset_base = symbols
+                    .get_data_symbol_addr("page_offset_base")
+                    .unwrap_or_else(|| {
+                        warn!("could not read page_offset_base from kallsyms");
+                        0
+                    });
 
-         debug!(
-            "page VA globals (x86_64): vmemmap_base={vmemmap_base:#x} \
-               page_offset_base={page_offset_base:#x}"
-         );
+                debug!(
+                    "page VA globals (x86_64): vmemmap_base={vmemmap_base:#x} \
+                     page_offset_base={page_offset_base:#x}"
+                );
 
-         // these values are needed to access `page struct` data
-          loader
-              .override_global("VMEMMAP_BASE_PTR", &vmemmap_base, true)
-              .override_global("PAGE_OFFSET_BASE_PTR", &page_offset_base, true);
+                // these values are needed to access `page struct` data
+                loader
+                    .override_global("VMEMMAP_BASE_PTR", &vmemmap_base, true)
+                    .override_global("PAGE_OFFSET_BASE_PTR", &page_offset_base, true);
 
-          loader.load(BPF_ELF)?
-       }}
+                loader.load(BPF_ELF)?
+            }
+        }
 
-       _ => {
-          loader.load(BPF_ELF)?
-       }
+        _ => loader.load(BPF_ELF)?,
     };
 
     BpfConfig::init_config_in_bpf(&mut bpf, conf.clone().try_into()?)
@@ -245,16 +249,16 @@ pub fn load_and_attach_bpf<'a>(
                 error!(
                     "failed to attach probe={} to function={}: verify function exists in your \
                      kernel",
-                    &p.name, &a
+                    p.name, a
                 )
             } else {
-                error!("failed to attach probe={}", &p.name)
+                error!("failed to attach probe={}", p.name)
             }
 
             debug!("error for attach failure: {e}");
 
             if !conf.force_load {
-                panic!("failed to attach probe={}: {e}", &p.name)
+                panic!("failed to attach probe={}: {e}", p.name)
             }
         });
     }
