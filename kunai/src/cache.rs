@@ -190,7 +190,7 @@ impl Hashes {
                     h.error = Some(format!("failed to find magic: {e}",));
                 })
                 .map(|m| m.message())
-                .unwrap_or("?".into());
+                .unwrap_or_else(|_| "?".into());
         }
 
         h

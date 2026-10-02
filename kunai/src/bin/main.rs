@@ -167,7 +167,7 @@ impl Processes {
     fn get_exe(&self, key: ProcKey) -> &Path {
         self.get(&key)
             .map(|t| t.image.as_path())
-            .unwrap_or(Path::new("?"))
+            .unwrap_or_else(|| Path::new("?"))
     }
 
     #[inline(always)]
@@ -245,7 +245,7 @@ impl Processes {
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
             .map(|c| c.image.to_string_lossy())
-            .unwrap_or("?".into())
+            .unwrap_or_else(|| "?".into())
     }
 
     #[inline(always)]
@@ -872,7 +872,7 @@ impl SystemInfo {
             host_uuid: uuid::Uuid::from_u128(0),
             hostname: fs::read_to_string("/etc/hostname")
                 .map(|s| s.trim_end().to_string())
-                .unwrap_or("?".into()),
+                .unwrap_or_else(|_| "?".into()),
             mount_ns: Mnt::from_pid(pid)
                 .map_err(|e| anyhow!("cannot find mnt namespace of kunai: {e}"))?,
         })
@@ -1440,7 +1440,7 @@ impl EventConsumer<'_> {
                 .get("name")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
-                .unwrap_or(String::from("unknown"));
+                .unwrap_or_else(|| String::from("unknown"));
 
             if let Some(events) = value
                 .get_mut("match-on")
@@ -1680,7 +1680,7 @@ impl EventConsumer<'_> {
             if stat.flags & 0x200000 == 0x200000 {
                 KERNEL_IMAGE.into()
             } else {
-                p.exe().unwrap_or("?".into())
+                p.exe().unwrap_or_else(|_| "?".into())
             }
         };
 
@@ -1718,7 +1718,10 @@ impl EventConsumer<'_> {
 
         let task = Process {
             image,
-            command_line: p.cmdline().map(|c| c.join(" ")).unwrap_or("?".into()),
+            command_line: p
+                .cmdline()
+                .map(|c| c.join(" "))
+                .unwrap_or_else(|_| "?".into()),
             pid: p.pid,
             flags: stat.flags,
             resolved: HashMap::new(),
@@ -1753,14 +1756,14 @@ impl EventConsumer<'_> {
             c.resolved
                 .entry(ip)
                 .and_modify(|r| *r = resolved.to_owned())
-                .or_insert(resolved.to_owned())
+                .or_insert_with(|| resolved.to_owned())
         });
 
         // update global resolve table
         self.resolved
             .entry(ip)
             .and_modify(|r| *r = resolved.to_owned())
-            .or_insert(resolved.to_owned());
+            .or_insert_with(|| resolved.to_owned());
     }
 
     #[inline(always)]
@@ -1871,7 +1874,7 @@ impl EventConsumer<'_> {
             &self.sink.magic_db,
         );
 
-        data.kunai.config.sha256 = self.sink.config.sha256().ok().unwrap_or("?".into());
+        data.kunai.config.sha256 = self.sink.config.sha256().ok().unwrap_or_else(|| "?".into());
 
         // setting up uptime and boottime
         if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
@@ -1882,11 +1885,11 @@ impl EventConsumer<'_> {
 
         // setting utsname info
         if let Ok(uts) = Utsname::from_sys() {
-            data.system.sysname = uts.sysname().unwrap_or("?".into()).into();
-            data.system.release = uts.release().unwrap_or("?".into()).into();
-            data.system.version = uts.version().unwrap_or("?".into()).into();
-            data.system.machine = uts.machine().unwrap_or("?".into()).into();
-            data.system.domainname = uts.domainname().unwrap_or("?".into()).into();
+            data.system.sysname = uts.sysname().unwrap_or_else(|_| "?".into()).into();
+            data.system.release = uts.release().unwrap_or_else(|_| "?".into()).into();
+            data.system.version = uts.version().unwrap_or_else(|_| "?".into()).into();
+            data.system.machine = uts.machine().unwrap_or_else(|_| "?".into()).into();
+            data.system.domainname = uts.domainname().unwrap_or_else(|_| "?".into()).into();
         }
 
         UserEvent::new(data, info)
@@ -2184,7 +2187,9 @@ impl EventConsumer<'_> {
             if mnt_ns != self.system_info.mount_ns {
                 let t = self.processes.get(&std_info.process_key());
                 container = Some(kunai::info::ContainerInfo {
-                    name: t.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
+                    name: t
+                        .and_then(|t| t.nodename.clone())
+                        .unwrap_or_else(|| "?".into()),
                     ty: t.and_then(|cd| cd.container),
                 });
             }
@@ -2763,7 +2768,7 @@ impl EventProducer {
 
         let shared = Arc::new(Mutex::new(self));
 
-        let event_producer = shared.clone();
+        let event_producer = Arc::clone(&shared);
 
         let t = task::spawn(async move {
             loop {
@@ -2804,8 +2809,8 @@ impl EventProducer {
                     )),
                 )
                 .expect("cannot open perf event buffer");
-            let event_producer = shared.clone();
-            let bar = barrier.clone();
+            let event_producer = Arc::clone(&shared);
+            let bar = Arc::clone(&barrier);
             let max_buffered_events = config.max_buffered_events as usize;
 
             // process each perf buffer in a separate task
@@ -3537,7 +3542,7 @@ impl TryFrom<serde_json::Value> for ReplayEvent {
             .and_then(|info| info.get("event"))
             .and_then(|event| event.get("name"))
             .and_then(|name| name.as_str())
-            .ok_or(anyhow!("failed to deserialize event"))?;
+            .ok_or_else(|| anyhow!("failed to deserialize event"))?;
 
         macro_rules! event_enum {
             ($from:ty, $into:expr) => {{
@@ -4073,10 +4078,7 @@ impl Command {
         let unit_path = &o.unit;
         let unit_name = unit_path
             .file_name()
-            .ok_or(anyhow!(
-                "unknown unit name: {}",
-                unit_path.to_string_lossy()
-            ))?
+            .ok_or_else(|| anyhow!("unknown unit name: {}", unit_path.to_string_lossy()))?
             .to_string_lossy();
         let unit = format!(
             r#"[Unit]
@@ -4138,10 +4140,7 @@ WantedBy=sysinit.target"#,
         if o.enable_unit {
             let unit_name = unit_path
                 .file_name()
-                .ok_or(anyhow!(
-                    "unknown unit name: {}",
-                    unit_path.to_string_lossy()
-                ))?
+                .ok_or_else(|| anyhow!("unknown unit name: {}", unit_path.to_string_lossy()))?
                 .to_string_lossy();
             println!("Enabling kunai systemd unit");
             // we first need to run daemon-reload because we added a new unit
@@ -4157,10 +4156,12 @@ WantedBy=sysinit.target"#,
         let current_kernel = Utsname::kernel_version()
             .map_err(|e| anyhow!("cannot retrieve kernel version: {e}"))?;
         let log_path = &o.log_file;
-        let log_dir = log_path.parent().ok_or(anyhow!(
-            "cannot find dirname for log path: {}",
-            log_path.to_string_lossy()
-        ))?;
+        let log_dir = log_path.parent().ok_or_else(|| {
+            anyhow!(
+                "cannot find dirname for log path: {}",
+                log_path.to_string_lossy()
+            )
+        })?;
 
         // checks on harden mode
         if o.harden {
@@ -4185,10 +4186,12 @@ WantedBy=sysinit.target"#,
             .create(log_dir)?;
 
         let config_path = &o.config;
-        let config_dir = config_path.parent().ok_or(anyhow!(
-            "cannot find dirname for config path: {}",
-            config_path.to_string_lossy()
-        ))?;
+        let config_dir = config_path.parent().ok_or_else(|| {
+            anyhow!(
+                "cannot find dirname for config path: {}",
+                config_path.to_string_lossy()
+            )
+        })?;
         println!(
             "Creating configuration directory: {}",
             config_dir.to_string_lossy()

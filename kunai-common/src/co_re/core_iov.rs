@@ -99,7 +99,9 @@ impl iov_iter {
 
     #[inline(always)]
     pub unsafe fn iter_type(&self) -> Option<IterType> {
-        let t = self._iter_type().or(self._type().map(|t| t as u8))?;
+        let t = self
+            ._iter_type()
+            .or_else(|| self._type().map(|t| t as u8))?;
 
         IterType::from_u8(t)
     }
@@ -151,6 +153,6 @@ impl iov_iter {
 
     #[inline(always)]
     pub unsafe fn iov(&self) -> Option<iovec> {
-        self._iov().or(self.___iov())
+        self._iov().or_else(|| self.___iov())
     }
 }

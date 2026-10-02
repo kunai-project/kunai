@@ -55,6 +55,18 @@ md-5 = "0.11.0"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
 
+[workspace.lints.clippy]
+or_fun_call = "warn"
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+dbg_macro = "warn"
+todo = "warn"
+perf = "warn"
+complexity = "warn"
+style = "warn"
+
 [profile.dev]
 opt-level = 2
 debug = "line-tables-only"
