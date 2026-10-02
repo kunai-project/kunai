@@ -1196,7 +1196,7 @@ impl EventSink<'_> {
             .scannable_files()
             .iter()
             // we don't scan file paths being ?
-            .filter(|&p| p != &PathBuf::from("?").into())
+            .filter(|p| p.as_ref() != Path::new("?"))
         {
             let mut event = self.file_scan_event(event, ns, p);
             // print a warning if a positive scan happens so that a trace
