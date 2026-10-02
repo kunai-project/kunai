@@ -169,12 +169,10 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_exe(&self, key: ProcKey) -> PathBuf {
-        let mut exe = PathBuf::from("?");
-        if let Some(task) = self.get(&key) {
-            exe = task.image.clone();
-        }
-        exe
+    fn get_exe(&self, key: ProcKey) -> &Path {
+        self.get(&key)
+            .map(|t| t.image.as_path())
+            .unwrap_or(Path::new("?"))
     }
 
     #[inline(always)]
@@ -187,7 +185,7 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
+    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (&Path, String) {
         let ck = i.process_key();
         (self.get_exe(ck), self.get_command_line(ck))
     }
@@ -248,12 +246,12 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_parent_image(&self, i: &StdEventInfo) -> String {
+    fn get_parent_image(&self, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.process_key();
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| c.image.to_string_lossy().to_string())
+            .map(|c| c.image.to_string_lossy())
             .unwrap_or("?".into())
     }
 
@@ -294,7 +292,9 @@ impl Processes {
     ) -> UserEvent<'src, CloneData<'src>> {
         let data = CloneData {
             ancestors: self.get_task_ancestors(info),
-            exe: bpf_data.executable.to_path_buf().into(),
+            exe: kunai::events::File {
+                path: Cow::Owned(bpf_data.executable.to_path_buf()),
+            },
             command_line: self.get_command_line(info.process_key()),
             flags: bpf_data.flags,
         };
@@ -818,7 +818,7 @@ impl Processes {
             let mut data = DnsQueryData::new();
             data.ancestors = ancestors.clone();
             data.command_line = command_line.clone();
-            data.exe = exe.clone().into();
+            data.exe = exe.into();
             data.query = r.qname.clone();
             data.query_type = r.qtype;
             data.response = r.records;

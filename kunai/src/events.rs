@@ -41,14 +41,6 @@ impl<'src> From<&'src Path> for File<'src> {
     }
 }
 
-impl From<PathBuf> for File<'_> {
-    fn from(value: PathBuf) -> Self {
-        Self {
-            path: Cow::Owned(value),
-        }
-    }
-}
-
 #[derive(FieldGetter, Serialize, Deserialize, Clone)]
 #[getter(use_serde_rename)]
 pub struct ContainerSection {
@@ -591,7 +583,7 @@ macro_rules! def_user_data {
 pub struct ExecveData<'src> {
     pub ancestors: Vec<Cow<'src, str>>,
     pub parent_command_line: String,
-    pub parent_exe: String,
+    pub parent_exe: Cow<'src, str>,
     pub command_line: String,
     pub exe: Arc<Hashes>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -612,7 +604,7 @@ impl Scannable for ExecveData<'_> {
 impl IocGetter for ExecveData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         // parent_exe path
-        let mut v = vec![self.parent_exe.as_str().into()];
+        let mut v = vec![self.parent_exe.as_ref().into()];
 
         // exe path + hashes
         v.extend(self.exe.iocs());
