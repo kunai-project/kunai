@@ -303,9 +303,8 @@ impl Processes {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let option = PrctlOption::try_from_uint(bpf_data.option)
-            .map(|o| o.as_str().into())
-            .unwrap_or(format!("unknown({})", bpf_data.option))
-            .to_string();
+            .map(|o| Cow::Borrowed(o.as_str()))
+            .unwrap_or_else(|_| format!("unknown({})", bpf_data.option).into());
 
         let data = PrctlData {
             ancestors: self.get_task_ancestors(info),
@@ -503,7 +502,7 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            syscall: bpf_data.args.syscall_name().into(),
+            syscall: Cow::Borrowed(bpf_data.args.syscall_name()),
             module_name: bpf_data.name.to_string(),
             args: bpf_data.uargs.to_string(),
             loaded: bpf_data.loaded,

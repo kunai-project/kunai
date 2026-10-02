@@ -636,7 +636,7 @@ impl_std_iocs!(CloneData<'_>);
 
 def_user_data!(
     pub struct PrctlData<'src> {
-        pub option: String,
+        pub option: Cow<'src, str>,
         #[serde(with = "u64_hex")]
         pub arg2: u64,
         #[serde(with = "u64_hex")]
@@ -1016,7 +1016,7 @@ pub struct InitModuleData<'src> {
     pub ancestors: Vec<Cow<'src, str>>,
     pub command_line: Cow<'src, str>,
     pub exe: File<'src>,
-    pub syscall: String,
+    pub syscall: Cow<'src, str>,
     pub module_name: String,
     pub args: String,
     pub loaded: bool,
@@ -1154,10 +1154,10 @@ impl Scannable for BpfProgLoadData<'_> {
 
 #[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct SocketInfo {
-    pub domain: String,
+    pub domain: Cow<'static, str>,
     #[serde(rename = "type")]
-    pub ty: String,
-    pub proto: String,
+    pub ty: Cow<'static, str>,
+    pub proto: Cow<'static, str>,
 }
 
 impl From<net::SocketInfo> for SocketInfo {
