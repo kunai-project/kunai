@@ -95,7 +95,7 @@ const MAX_ANCESTORS: usize = 1024;
 #[derive(Debug, Clone)]
 struct Process {
     image: PathBuf,
-    command_line: Vec<String>,
+    command_line: String,
     pid: i32,
     // process flags PF_* defined in sched.h
     flags: u32,
@@ -126,11 +126,6 @@ impl Process {
     fn is_kthread(&self) -> bool {
         // check if flag contains PF_KTHREAD
         self.flags & 0x00200000 == 0x00200000
-    }
-
-    #[inline(always)]
-    fn command_line_string(&self) -> String {
-        self.command_line.join(" ")
     }
 
     // run on task exit
@@ -176,16 +171,14 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_command_line(&self, key: ProcKey) -> String {
-        let mut cl = String::from("?");
-        if let Some(t) = self.get(&key) {
-            cl = t.command_line_string();
-        }
-        cl
+    fn get_command_line(&self, key: ProcKey) -> Cow<'_, str> {
+        self.get(&key)
+            .map(|p| Cow::Borrowed(p.command_line.as_str()))
+            .unwrap_or(Cow::Borrowed("?"))
     }
 
     #[inline(always)]
-    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (&Path, String) {
+    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (&Path, Cow<'_, str>) {
         let ck = i.process_key();
         (self.get_exe(ck), self.get_command_line(ck))
     }
@@ -236,13 +229,13 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
+    fn get_parent_command_line(&self, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.process_key();
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| c.command_line.join(" "))
-            .unwrap_or("?".into())
+            .map(|c| Cow::Borrowed(c.command_line.as_str()))
+            .unwrap_or(Cow::Borrowed("?"))
     }
 
     #[inline(always)]
@@ -1732,7 +1725,7 @@ impl EventConsumer<'_> {
 
         let task = Process {
             image,
-            command_line: p.cmdline().unwrap_or(vec!["?".into()]),
+            command_line: p.cmdline().map(|c| c.join(" ")).unwrap_or("?".into()),
             pid: p.pid,
             flags: stat.flags,
             resolved: HashMap::new(),
@@ -2066,7 +2059,7 @@ impl EventConsumer<'_> {
         // we insert only if not existing
         self.processes.entry(pk).or_insert(Process {
             image,
-            command_line,
+            command_line: command_line.join(" "),
             pid: info.task_info().tgid,
             flags: info.task_info().flags,
             resolved: HashMap::new(),
@@ -4466,7 +4459,7 @@ mod tests {
     fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {
         Process {
             image: image.into(),
-            command_line: vec![],
+            command_line: String::new(),
             pid,
             flags: 0,
             resolved: HashMap::new(),

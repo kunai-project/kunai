@@ -562,7 +562,7 @@ macro_rules! def_user_data {
                 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
                 $struct_vis struct $struct_name <$lt> {
                     pub ancestors: Vec<Cow<$lt, str>>,
-                    pub command_line: String,
+                    pub command_line: Cow<$lt, str>,
                     pub exe: File<$lt>,
                     $(
                         $(#[$struct_meta])*
@@ -582,9 +582,9 @@ macro_rules! def_user_data {
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct ExecveData<'src> {
     pub ancestors: Vec<Cow<'src, str>>,
-    pub parent_command_line: String,
+    pub parent_command_line: Cow<'src, str>,
     pub parent_exe: Cow<'src, str>,
-    pub command_line: String,
+    pub command_line: Cow<'src, str>,
     pub exe: Arc<Hashes>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interpreter: Option<Arc<Hashes>>,
@@ -660,7 +660,7 @@ impl Scannable for PrctlData<'_> {
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct TargetTask<'src> {
-    pub command_line: String,
+    pub command_line: Cow<'src, str>,
     pub exe: File<'src>,
     pub task: TaskSection<'src>,
 }
@@ -1014,7 +1014,7 @@ impl IocGetter for SendDataData<'_> {
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct InitModuleData<'src> {
     pub ancestors: Vec<Cow<'src, str>>,
-    pub command_line: String,
+    pub command_line: Cow<'src, str>,
     pub exe: File<'src>,
     pub syscall: String,
     pub module_name: String,
