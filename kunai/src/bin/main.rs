@@ -245,7 +245,7 @@ impl Processes {
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
             .map(|c| c.image.to_string_lossy())
-            .unwrap_or_else(|| "?".into())
+            .unwrap_or(Cow::Borrowed("?"))
     }
 
     #[inline(always)]
