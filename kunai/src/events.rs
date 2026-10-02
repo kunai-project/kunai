@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     net::{IpAddr, Ipv4Addr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -29,13 +29,23 @@ mod start;
 pub use start::*;
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
-pub struct File {
-    pub path: PathBuf,
+pub struct File<'src> {
+    pub path: Cow<'src, Path>,
 }
 
-impl From<PathBuf> for File {
+impl From<PathBuf> for File<'static> {
     fn from(value: PathBuf) -> Self {
-        Self { path: value }
+        Self {
+            path: Cow::Owned(value),
+        }
+    }
+}
+
+impl<'src> From<&'src Path> for File<'src> {
+    fn from(value: &'src Path) -> Self {
+        Self {
+            path: Cow::Borrowed(value),
+        }
     }
 }
 
@@ -245,7 +255,7 @@ pub trait IocGetter {
 /// Trait to represent the fact that an event may be
 /// scanned by a file scanner.
 pub trait Scannable {
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>>;
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>>;
 }
 
 macro_rules! impl_std_iocs {
@@ -425,7 +435,7 @@ where
     T: Scannable,
 {
     #[inline(always)]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
         self.data.scannable_files()
     }
 }
@@ -560,8 +570,8 @@ macro_rules! def_user_data {
                 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
                 $struct_vis struct $struct_name <$lt> {
                     pub ancestors: Vec<Cow<$lt, str>>,
-                    pub command_line: String,
-                    pub exe: File,
+                    pub command_line: Cow<$lt, str>,
+                    pub exe: File<$lt>,
                     $(
                         $(#[$struct_meta])*
                         $vis $field_name: $field_type
@@ -580,9 +590,9 @@ macro_rules! def_user_data {
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct ExecveData<'src> {
     pub ancestors: Vec<Cow<'src, str>>,
-    pub parent_command_line: String,
-    pub parent_exe: String,
-    pub command_line: String,
+    pub parent_command_line: Cow<'src, str>,
+    pub parent_exe: Cow<'src, str>,
+    pub command_line: Cow<'src, str>,
     pub exe: Arc<Hashes>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interpreter: Option<Arc<Hashes>>,
@@ -590,10 +600,10 @@ pub struct ExecveData<'src> {
 
 impl Scannable for ExecveData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        let mut v = vec![Cow::Borrowed(&self.exe.path)];
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        let mut v = vec![Cow::Borrowed(self.exe.path.as_ref())];
         if let Some(interp) = self.interpreter.as_ref() {
-            v.push(Cow::Borrowed(&interp.path));
+            v.push(Cow::Borrowed(interp.path.as_path()));
         }
         v
     }
@@ -602,7 +612,7 @@ impl Scannable for ExecveData<'_> {
 impl IocGetter for ExecveData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         // parent_exe path
-        let mut v = vec![self.parent_exe.as_str().into()];
+        let mut v = vec![self.parent_exe.as_ref().into()];
 
         // exe path + hashes
         v.extend(self.exe.iocs());
@@ -625,8 +635,8 @@ def_user_data!(
 
 impl Scannable for CloneData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -634,7 +644,7 @@ impl_std_iocs!(CloneData<'_>);
 
 def_user_data!(
     pub struct PrctlData<'src> {
-        pub option: String,
+        pub option: Cow<'src, str>,
         #[serde(with = "u64_hex")]
         pub arg2: u64,
         #[serde(with = "u64_hex")]
@@ -651,15 +661,15 @@ impl_std_iocs!(PrctlData<'_>);
 
 impl Scannable for PrctlData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
 #[derive(Debug, FieldGetter, Serialize, Deserialize)]
 pub struct TargetTask<'src> {
-    pub command_line: String,
-    pub exe: File,
+    pub command_line: Cow<'src, str>,
+    pub exe: File<'src>,
     pub task: TaskSection<'src>,
 }
 
@@ -672,8 +682,8 @@ def_user_data!(
 
 impl Scannable for KillData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -689,8 +699,8 @@ def_user_data!(
 
 impl Scannable for PtraceData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -792,8 +802,8 @@ def_user_data!(
 
 impl Scannable for CommitCredsData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -808,8 +818,8 @@ def_user_data!(
 
 impl Scannable for CredsTamperedData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -823,10 +833,10 @@ def_user_data!(
 
 impl Scannable for MmapExecData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
         vec![
-            Cow::Borrowed(&self.exe.path),
-            Cow::Borrowed(&self.mapped.path),
+            Cow::Borrowed(self.exe.path.as_ref()),
+            Cow::Borrowed(self.mapped.path.as_ref()),
         ]
     }
 }
@@ -850,8 +860,8 @@ def_user_data!(
 
 impl Scannable for MprotectData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -927,8 +937,8 @@ def_user_data!(
 
 impl Scannable for ConnectData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -959,8 +969,8 @@ impl DnsQueryData<'_> {
 
 impl Scannable for DnsQueryData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -996,8 +1006,8 @@ def_user_data!(
 
 impl Scannable for SendDataData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -1012,11 +1022,11 @@ impl IocGetter for SendDataData<'_> {
 #[derive(Debug, Serialize, Deserialize, FieldGetter)]
 pub struct InitModuleData<'src> {
     pub ancestors: Vec<Cow<'src, str>>,
-    pub command_line: String,
-    pub exe: File,
-    pub syscall: String,
-    pub module_name: String,
-    pub args: String,
+    pub command_line: Cow<'src, str>,
+    pub exe: File<'src>,
+    pub syscall: Cow<'src, str>,
+    pub module_name: Cow<'src, str>,
+    pub args: Cow<'src, str>,
     pub loaded: bool,
 }
 
@@ -1028,8 +1038,8 @@ impl IocGetter for InitModuleData<'_> {
 
 impl Scannable for InitModuleData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -1047,8 +1057,11 @@ impl IocGetter for FileData<'_> {
 
 impl Scannable for FileData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path), Cow::Borrowed(&self.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![
+            Cow::Borrowed(self.exe.path.as_ref()),
+            Cow::Borrowed(self.path.as_ref()),
+        ]
     }
 }
 
@@ -1067,8 +1080,8 @@ impl IocGetter for UnlinkData<'_> {
 
 impl Scannable for UnlinkData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -1091,8 +1104,11 @@ impl IocGetter for FileRenameData<'_> {
 
 impl Scannable for FileRenameData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path), Cow::Borrowed(&self.new)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![
+            Cow::Borrowed(self.exe.path.as_ref()),
+            Cow::Borrowed(self.new.as_ref()),
+        ]
     }
 }
 
@@ -1139,17 +1155,17 @@ impl IocGetter for BpfProgLoadData<'_> {
 
 impl Scannable for BpfProgLoadData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
 #[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct SocketInfo {
-    pub domain: String,
+    pub domain: Cow<'static, str>,
     #[serde(rename = "type")]
-    pub ty: String,
-    pub proto: String,
+    pub ty: Cow<'static, str>,
+    pub proto: Cow<'static, str>,
 }
 
 impl From<net::SocketInfo> for SocketInfo {
@@ -1182,8 +1198,8 @@ def_user_data!(
 
 impl Scannable for BpfSocketFilterData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -1207,8 +1223,8 @@ def_user_data!(
 
 impl Scannable for ExitData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -1228,8 +1244,8 @@ def_user_data!(
 
 impl Scannable for IoUringSqeData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -1244,8 +1260,8 @@ def_user_data!(
 
 impl Scannable for ErrorData<'_> {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
-        vec![Cow::Borrowed(&self.exe.path)]
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
+        vec![Cow::Borrowed(self.exe.path.as_ref())]
     }
 }
 
@@ -1275,7 +1291,7 @@ impl FileScanData {
 
 impl Scannable for FileScanData {
     #[inline]
-    fn scannable_files(&self) -> Vec<Cow<'_, PathBuf>> {
+    fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
         vec![]
     }
 }

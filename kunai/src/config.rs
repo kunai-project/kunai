@@ -168,10 +168,10 @@ impl Config {
         var("KUNAI_HOST_UUID_SEED")
             .ok()
             .map(|seed| derive_uuid_from(&seed))
-            .or(host_uuid_from_machine_id())
+            .or_else(host_uuid_from_machine_id)
             // allow to at least have something stable accross runs
-            .or(host_uuid_from_boot_id())
-            .unwrap_or(uuid::Uuid::new_v4())
+            .or_else(host_uuid_from_boot_id)
+            .unwrap_or_else(uuid::Uuid::new_v4)
     }
 
     pub fn harden(mut self, value: bool) -> Self {

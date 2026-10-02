@@ -7,6 +7,9 @@ repository.workspace = true
 license.workspace = true
 publish = false
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "kunai"
 path = "src/bin/main.rs"
