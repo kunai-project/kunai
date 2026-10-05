@@ -49,6 +49,7 @@ use lru_st::collections::LruHashSet;
 use pure_magic::MagicDb;
 use serde::{Deserialize, Serialize};
 
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::timeout;
 
@@ -3952,9 +3953,14 @@ impl Command {
                 Ok::<_, anyhow::Error>(())
             };
 
+            // SIGTERM (e.g. systemctl stop) must end like Ctrl-C so that
+            // Drop runs and buffered output gets flushed
+            let mut sigterm = signal(SignalKind::terminate())?;
+
             info!("Waiting for Ctrl-C...");
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => Ok(()),
+                _ = sigterm.recv() => Ok(()),
                 res = main => res
             }
         })
