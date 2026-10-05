@@ -70,8 +70,8 @@ use std::str::FromStr;
 
 use std::sync::Arc;
 
-use std::process;
 use std::time::Duration;
+use std::{process, vec};
 
 use aya::{maps::perf::PerfEventArray, maps::HashMap as AyaHashMap, util::online_cpus, Ebpf};
 
@@ -92,6 +92,8 @@ use communityid::{Flow, Protocol};
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
 const MAX_ANCESTORS: usize = 1024;
+// largest event seen in real logs is ~1.8 KiB
+const JSON_BUF_MAX_CAP: usize = 4 * 1024;
 
 #[derive(Debug, Clone)]
 struct Process {
@@ -992,6 +994,7 @@ impl std::fmt::Display for Action {
 /// can be processed while it is still borrowed.
 struct EventSink<'s> {
     config: Config,
+    json_buf: Vec<u8>,
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
     cache: cache::Cache,
@@ -1207,10 +1210,7 @@ impl EventSink<'_> {
                 && self.config.scanner.show_positive_file_scan
                 && event.data.positives > 0
             {
-                match serde_json::to_string(&event) {
-                    Ok(ser) => writeln!(self.output, "{ser}").expect("failed to write json event"),
-                    Err(e) => error!("failed to serialize event to json: {e}"),
-                }
+                self.serialize_print(&event);
             }
         }
 
@@ -1218,10 +1218,19 @@ impl EventSink<'_> {
     }
 
     #[inline(always)]
-    fn serialize_print<T: Serialize>(&mut self, event: &mut T) -> bool {
-        match serde_json::to_string(event) {
-            Ok(ser) => {
-                writeln!(self.output, "{ser}").expect("failed to write json event");
+    fn serialize_print<T: Serialize>(&mut self, event: &T) -> bool {
+        self.json_buf.clear();
+        // a huge event must not pin its allocation for the whole run
+        if self.json_buf.capacity() > JSON_BUF_MAX_CAP {
+            self.json_buf.shrink_to(JSON_BUF_MAX_CAP);
+        }
+
+        match serde_json::to_writer(&mut self.json_buf, event) {
+            Ok(()) => {
+                self.json_buf.push(b'\n');
+                self.output
+                    .write_all(&self.json_buf)
+                    .expect("failed to write json event");
                 // if output is unbuffered we flush it
                 // unbuffered output allow to have logs written in near
                 // real-time into output file
@@ -1346,6 +1355,7 @@ impl EventConsumer<'_> {
             resolved: HashMap::new(),
             sink: EventSink {
                 config,
+                json_buf: Vec::new(),
                 engine: Engine::new(),
                 iocs: HashMap::new(),
                 cache: Cache::with_max_entries(10000),
@@ -2500,14 +2510,14 @@ impl EventConsumer<'_> {
 
             EbpfEvent::Start(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut se = self.start_event(&std_info);
-                self.sink.serialize_print(&mut se);
+                let se = self.start_event(&std_info);
+                self.sink.serialize_print(&se);
             }
 
             EbpfEvent::Loss(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut evt = self.loss_event(&std_info, e.data);
-                self.sink.serialize_print(&mut evt);
+                let evt = self.loss_event(&std_info, e.data);
+                self.sink.serialize_print(&evt);
             }
 
             EbpfEvent::SysCoreResume(_) => { /*  just ignore it */ }
