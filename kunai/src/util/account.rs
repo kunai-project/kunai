@@ -155,19 +155,16 @@ impl Users {
         self.users.push(u);
     }
 
-    #[inline(always)]
     pub fn get_by_uid(&self, uid: u32) -> Option<&User> {
         self.users_by_id
             .get(&uid)
             .and_then(|&idx| self.users.get(idx))
     }
 
-    #[inline(always)]
     pub fn contains_uid(&self, uid: u32) -> bool {
         self.users_by_id.contains_key(&uid)
     }
 
-    #[inline(always)]
     pub fn get_by_name<S: AsRef<str>>(&self, name: S) -> Option<&User> {
         self.users_by_name
             .get(name.as_ref())
@@ -234,19 +231,16 @@ impl Groups {
         self.groups.push(g);
     }
 
-    #[inline(always)]
     pub fn get_by_gid(&self, gid: u32) -> Option<&Group> {
         self.groups_by_id
             .get(&gid)
             .and_then(|&idx| self.groups.get(idx))
     }
 
-    #[inline(always)]
     pub fn contains_gid(&self, gid: &u32) -> bool {
         self.groups_by_id.contains_key(gid)
     }
 
-    #[inline(always)]
     pub fn get_by_name<S: AsRef<str>>(&self, name: S) -> Option<&Group> {
         self.groups_by_name
             .get(name.as_ref())

@@ -37,17 +37,14 @@ pub struct Event {
 }
 
 impl Event {
-    #[inline(always)]
     pub fn disable(&mut self) {
         self.enable = false
     }
 
-    #[inline(always)]
     pub fn enable(&mut self) {
         self.enable = true
     }
 
-    #[inline(always)]
     pub fn is_enabled(&self) -> bool {
         self.enable
     }

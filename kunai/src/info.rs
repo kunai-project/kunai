@@ -24,7 +24,6 @@ pub struct ProcKey {
 }
 
 impl From<ProcUuid> for ProcKey {
-    #[inline(always)]
     fn from(value: ProcUuid) -> Self {
         // in task_struct start_time has a higher resolution so we need to scale it
         // down in order to have a comparable value with the procfs one
@@ -47,7 +46,6 @@ pub enum KeyError {
 
 /// Scales a `starttime` expressed in `CLK_TCK` ticks (as reported by procfs) down
 /// to seconds, the unit [ProcKey] and [TaskKey] compare on.
-#[inline(always)]
 fn start_time_sec_from_ticks(ticks: u64) -> Result<u64, KeyError> {
     let clk_tck = get_clk_tck()? as u64;
     ticks.checked_div(clk_tck).ok_or(KeyError::InvalidClkTck)
@@ -55,7 +53,6 @@ fn start_time_sec_from_ticks(ticks: u64) -> Result<u64, KeyError> {
 
 impl TryFrom<&procfs::process::Process> for ProcKey {
     type Error = KeyError;
-    #[inline(always)]
     fn try_from(p: &procfs::process::Process) -> Result<Self, Self::Error> {
         let stat = p.stat()?;
 
@@ -77,7 +74,6 @@ pub struct TaskKey {
 }
 
 impl From<&TaskInfo> for TaskKey {
-    #[inline(always)]
     fn from(ti: &TaskInfo) -> Self {
         // same reasoning as ProcKey: task_struct start_time has a higher
         // resolution than procfs, scale it down to be comparable
@@ -90,7 +86,6 @@ impl From<&TaskInfo> for TaskKey {
 
 impl TryFrom<&procfs::process::Process> for TaskKey {
     type Error = KeyError;
-    #[inline(always)]
     fn try_from(p: &procfs::process::Process) -> Result<Self, Self::Error> {
         let stat = p.stat()?;
 
@@ -138,22 +133,18 @@ pub struct StdEventInfo {
 }
 
 impl StdEventInfo {
-    #[inline(always)]
     pub fn task_info(&self) -> &TaskInfo {
         &self.bpf.process
     }
 
-    #[inline(always)]
     pub fn parent_info(&self) -> &TaskInfo {
         &self.bpf.parent
     }
 
-    #[inline(always)]
     pub fn process_key(&self) -> ProcKey {
         ProcKey::from(self.task_info().tg_uuid)
     }
 
-    #[inline(always)]
     pub fn parent_key(&self) -> ProcKey {
         ProcKey::from(self.parent_info().tg_uuid)
     }

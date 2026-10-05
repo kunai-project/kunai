@@ -26,7 +26,6 @@ pub struct AgentEventInfo {
 }
 
 impl AgentEventInfo {
-    #[inline(always)]
     fn task_info_from_proc(p: procfs::process::Process) -> Result<TaskInfo, Error> {
         let stat = p.stat()?;
         let status = p.status()?;

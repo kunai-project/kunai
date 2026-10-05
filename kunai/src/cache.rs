@@ -133,7 +133,6 @@ impl Hashes {
         }
     }
 
-    #[inline(always)]
     pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T, magic_db: &MagicDb) -> Self {
         let path = p.as_ref();
         let mut h = Hashes {
@@ -196,7 +195,6 @@ impl Hashes {
         h
     }
 
-    #[inline(always)]
     pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
         vec![
             self.path.to_string_lossy(),
@@ -274,7 +272,6 @@ impl Default for Key {
 }
 
 impl Key {
-    #[inline(always)]
     fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
         // metadata() fails with io::ErrorKind::NotFound when the file is missing
         let meta = path.as_path().metadata()?;
@@ -283,7 +280,6 @@ impl Key {
 
     /// Same as [Key::from_path_in_ns] but reuses [fs::Metadata] already
     /// fetched by the caller, saving a stat.
-    #[inline(always)]
     fn from_path_and_meta(ns: Mnt, path: &Path, meta: &fs::Metadata) -> Result<Self, Error> {
         let k = Key {
             mnt_namespace: ns,
@@ -346,7 +342,6 @@ impl Cache {
         }
     }
 
-    #[inline(always)]
     pub fn cache_mnt_ns(&mut self, pid: i32, ns: Mnt) -> Result<(), Error> {
         if !self.mnt_namespaces.contains_key(&ns) {
             self.mnt_namespaces
@@ -359,7 +354,6 @@ impl Cache {
     /// Get the [Users] and [Groups] tables of the mount namespace `ns`, so that
     /// any uid/gid can be resolved by the caller. They are shared behind an
     /// [Arc] to avoid copying the whole tables around.
-    #[inline(always)]
     pub fn get_user_group_in_ns(&mut self, ns: Mnt) -> Result<(Arc<Users>, Arc<Groups>), Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
@@ -420,7 +414,6 @@ impl Cache {
             .map_err(Error::from)
     }
 
-    #[inline(always)]
     pub fn get_sig_in_ns(
         &mut self,
         ns: Mnt,
@@ -470,7 +463,6 @@ impl Cache {
         res.map_err(Error::from)
     }
 
-    #[inline(always)]
     pub fn get_hashes_in_ns(
         &mut self,
         ns: Mnt,

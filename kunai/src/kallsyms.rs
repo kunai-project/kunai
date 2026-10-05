@@ -141,7 +141,6 @@ impl KernelSymbols {
     }
 
     /// Returns `true` if a text symbol with the given name exists.
-    #[inline(always)]
     pub fn contains_text_symbol(&self, name: &str) -> bool {
         self.text.contains_key(name)
     }

@@ -45,12 +45,10 @@ impl Uptime {
         ))
     }
 
-    #[inline(always)]
     pub fn as_secs(&self) -> f64 {
         self.0
     }
 
-    #[inline(always)]
     pub fn boot_time(&self) -> Result<chrono::DateTime<Utc>, Error> {
         Utc::now()
             .checked_sub_signed(self.1)

@@ -57,7 +57,6 @@ pub trait Namespace: Default + std::fmt::Debug + PartialEq + Eq + Hash + Clone +
         n
     }
 
-    #[inline(always)]
     fn from_pid<N: Namespace>(pid: u32) -> Result<N, NsError> {
         let mut ns = N::default();
         let link = N::path::<N>(pid).read_link()?;
@@ -74,7 +73,6 @@ pub trait Namespace: Default + std::fmt::Debug + PartialEq + Eq + Hash + Clone +
         Ok(ns)
     }
 
-    #[inline(always)]
     fn open<N: Namespace>(pid: u32) -> Result<File, NsError> {
         File::options()
             .read(true)
@@ -97,17 +95,14 @@ macro_rules! impl_ns {
         }
 
         impl Namespace for $ty {
-            #[inline(always)]
             fn inum(&self) -> u32 {
                 self.inum
             }
 
-            #[inline(always)]
             fn as_str() -> &'static str {
                 $s
             }
 
-            #[inline(always)]
             fn with_inum(&mut self, inum: u32) -> &mut Self {
                 self.inum = inum;
                 self
@@ -170,7 +165,6 @@ impl Error {
         Self::Other(err.into())
     }
 
-    #[inline(always)]
     /// Unwraps [Error::Other] and checks if it is an [io::Error] of
     /// [io::ErrorKind] `kind`
     pub fn is_other_and_io_kind(&self, kind: io::ErrorKind) -> bool {
@@ -215,7 +209,6 @@ where
     /// is returned [Error::Enter] or [Error::Exit]. If any namespace
     /// error is met it returns immediately, otherwise the result of
     /// `f` is returned.
-    #[inline(always)]
     pub fn do_in_namespace<F, T>(&self, f: F) -> Result<T, Error>
     where
         F: FnOnce() -> Result<T, Error>,

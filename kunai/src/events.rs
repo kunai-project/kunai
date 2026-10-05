@@ -149,7 +149,6 @@ impl From<DateTime<FixedOffset>> for UtcDateTime {
     }
 }
 
-#[inline(always)]
 fn serialize_utc_ts<S>(ts: &UtcDateTime, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -348,7 +347,6 @@ impl From<gene::ScanResult<'_>> for ScanResult {
 }
 
 impl ScanResult {
-    #[inline(always)]
     pub fn contains_detection<S: AsRef<str>>(&self, rule: S) -> bool {
         self.detection
             .as_ref()
@@ -356,7 +354,6 @@ impl ScanResult {
             .unwrap_or_default()
     }
 
-    #[inline(always)]
     pub fn contains_filter<S: AsRef<str>>(&self, rule: S) -> bool {
         self.filter
             .as_ref()
@@ -364,22 +361,18 @@ impl ScanResult {
             .unwrap_or_default()
     }
 
-    #[inline(always)]
     pub fn is_detection(&self) -> bool {
         self.detection.is_some()
     }
 
-    #[inline(always)]
     pub fn is_only_filter(&self) -> bool {
         !self.is_detection() && self.is_filtered()
     }
 
-    #[inline(always)]
     pub fn is_filtered(&self) -> bool {
         self.filter.is_some()
     }
 
-    #[inline(always)]
     pub fn severity(&self) -> u8 {
         self.detection
             .as_ref()
@@ -424,7 +417,6 @@ impl<T> IocGetter for UserEvent<'_, T>
 where
     T: IocGetter,
 {
-    #[inline(always)]
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         self.data.iocs()
     }
@@ -434,7 +426,6 @@ impl<T> Scannable for UserEvent<'_, T>
 where
     T: Scannable,
 {
-    #[inline(always)]
     fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
         self.data.scannable_files()
     }
@@ -444,29 +435,24 @@ impl<'e, T> KunaiEvent<'e> for UserEvent<'_, T>
 where
     T: FieldGetter<'e> + IocGetter + Scannable,
 {
-    #[inline(always)]
     fn set_detection(&mut self, d: Detection) -> &Detection {
         self.detection = Some(d);
         self.detection.as_ref().unwrap()
     }
 
-    #[inline(always)]
     fn get_detection(&self) -> &Option<Detection> {
         &self.detection
     }
 
-    #[inline(always)]
     fn set_filter(&mut self, f: Filter) -> &Filter {
         self.filter = Some(f);
         self.filter.as_ref().unwrap()
     }
 
-    #[inline(always)]
     fn get_filter(&self) -> &Option<Filter> {
         &self.filter
     }
 
-    #[inline(always)]
     fn info(&self) -> &EventInfo<'_> {
         &self.info
     }
@@ -501,7 +487,6 @@ impl<'i, T> UserEvent<'i, T> {
 mod u32_hex {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    #[inline(always)]
     pub fn serialize<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -509,7 +494,6 @@ mod u32_hex {
         serializer.serialize_str(&format!("0x{:x}", value))
     }
 
-    #[inline(always)]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<u32, D::Error>
     where
         D: Deserializer<'de>,
@@ -525,7 +509,6 @@ mod u32_hex {
 mod u64_hex {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    #[inline(always)]
     pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -533,7 +516,6 @@ mod u64_hex {
         serializer.serialize_str(&format!("0x{:x}", value))
     }
 
-    #[inline(always)]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
     where
         D: Deserializer<'de>,
@@ -579,7 +561,6 @@ macro_rules! def_user_data {
                 }
 
                 impl <$lt> $struct_name <$lt> {
-                    #[inline(always)]
                     fn _iocs(&self) -> Vec<Cow<'_,str>>{
                         vec![self.exe.path.to_string_lossy()]
                     }
@@ -1298,7 +1279,6 @@ impl Scannable for FileScanData {
 
 impl IocGetter for FileScanData {
     // we might want to scan hashes against IoCs later than execve
-    #[inline(always)]
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         let mut v = vec![self.path.to_string_lossy()];
         v.extend(self.meta.iocs());

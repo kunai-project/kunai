@@ -125,14 +125,12 @@ struct Process {
 }
 
 impl Process {
-    #[inline(always)]
     fn is_kthread(&self) -> bool {
         // check if flag contains PF_KTHREAD
         self.flags & 0x00200000 == 0x00200000
     }
 
     // run on task exit
-    #[inline(always)]
     fn on_exit(&mut self) {
         // this does not allocate the new map
         self.resolved.clear();
@@ -161,26 +159,22 @@ impl DerefMut for Processes {
 }
 
 impl Processes {
-    #[inline(always)]
     fn with_capacity(cap: usize) -> Self {
         Self(HashMap::with_capacity(cap))
     }
 
-    #[inline(always)]
     fn get_exe(&self, key: ProcKey) -> &Path {
         self.get(&key)
             .map(|t| t.image.as_path())
             .unwrap_or_else(|| Path::new("?"))
     }
 
-    #[inline(always)]
     fn get_command_line(&self, key: ProcKey) -> Cow<'_, str> {
         self.get(&key)
             .map(|p| Cow::Borrowed(p.command_line.as_str()))
             .unwrap_or(Cow::Borrowed("?"))
     }
 
-    #[inline(always)]
     fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (&Path, Cow<'_, str>) {
         let ck = i.process_key();
         (self.get_exe(ck), self.get_command_line(ck))
@@ -189,7 +183,6 @@ impl Processes {
     /// get the list of ancestors given a [ProcKey]. If skip is 0 the last
     /// item is the image of the task referenced by `k`. One can skip ancestors
     /// by setting `skip` > 0.
-    #[inline(always)]
     fn get_all_ancestors(&self, mut k: ProcKey, mut skip: u16) -> Vec<Cow<'_, str>> {
         let mut ancestors = vec![];
         let mut last = None;
@@ -226,12 +219,10 @@ impl Processes {
         ancestors
     }
 
-    #[inline(always)]
     fn get_task_ancestors(&self, i: &StdEventInfo) -> Vec<Cow<'_, str>> {
         self.get_all_ancestors(i.process_key(), 1)
     }
 
-    #[inline(always)]
     fn get_parent_command_line(&self, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.process_key();
         self.get(&ck)
@@ -241,7 +232,6 @@ impl Processes {
             .unwrap_or(Cow::Borrowed("?"))
     }
 
-    #[inline(always)]
     fn get_parent_image(&self, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.process_key();
         self.get(&ck)
@@ -251,7 +241,6 @@ impl Processes {
             .unwrap_or(Cow::Borrowed("?"))
     }
 
-    #[inline(always)]
     fn execve_event<'src>(
         &'src self,
         sink: &mut EventSink,
@@ -280,7 +269,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn clone_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -295,7 +283,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn prctl_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -322,7 +309,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn commit_creds_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -341,7 +327,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn creds_tampered_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -365,7 +350,6 @@ impl Processes {
         UserEvent::new(data, info).with_type(Type::CredsTampered)
     }
 
-    #[inline(always)]
     fn file_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -383,7 +367,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn unlink_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -402,7 +385,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn bpf_prog_load_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -445,7 +427,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn bpf_socket_filter_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -472,7 +453,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn mprotect_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -491,7 +471,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn init_module_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -512,7 +491,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn file_rename_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -531,7 +509,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn io_uring_sqe_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -556,7 +533,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn error_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -586,7 +562,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn get_resolved<'s>(
         &'s self,
         global: &'s HashMap<IpAddr, String>,
@@ -612,7 +587,6 @@ impl Processes {
         "?".into()
     }
 
-    #[inline(always)]
     fn kill_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -646,7 +620,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn ptrace_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -678,7 +651,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn mmap_exec_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -701,7 +673,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn connect_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -740,7 +711,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn send_data_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -780,7 +750,6 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn dns_query_events<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -832,7 +801,6 @@ impl Processes {
         out
     }
 
-    #[inline(always)]
     fn exit_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
@@ -894,17 +862,14 @@ enum Input {
 }
 
 impl Input {
-    #[inline(always)]
     fn from_file(f: fs::File) -> Self {
         Self::File(f)
     }
 
-    #[inline(always)]
     fn from_gzip_file(f: File) -> Self {
         Self::GzipFile(Box::new(GzDecoder::new(BufReader::new(f))))
     }
 
-    #[inline(always)]
     fn from_stdin() -> Self {
         Self::Stdin(std::io::stdin())
     }
@@ -928,12 +893,10 @@ pub enum Output {
 }
 
 impl Output {
-    #[inline(always)]
     fn stdout() -> Self {
         Self::Stdout(std::io::stdout())
     }
 
-    #[inline(always)]
     fn stderr() -> Self {
         Self::Stderr(std::io::stderr())
     }
@@ -1019,7 +982,6 @@ struct EventConsumer<'s> {
 
 /// True if `current` diverges from `baseline` and that divergence hasn't
 /// already been reported as `last_reported`.
-#[inline(always)]
 fn creds_diverged(
     baseline: creds::Creds,
     current: creds::Creds,
@@ -1032,7 +994,6 @@ fn creds_diverged(
 }
 
 impl EventSink<'_> {
-    #[inline(always)]
     fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Arc<Hashes> {
         if let Some(ns) = ns {
             match self.cache.get_hashes_in_ns(ns, p, &self.magic_db) {
@@ -1054,7 +1015,6 @@ impl EventSink<'_> {
         }
     }
 
-    #[inline(always)]
     fn scan<T>(&mut self, event: &mut T) -> ScanResult
     where
         T: for<'e> KunaiEvent<'e>,
@@ -1094,7 +1054,6 @@ impl EventSink<'_> {
         scan_result
     }
 
-    #[inline(always)]
     fn handle_actions<T>(&mut self, event: &T, actions: &HashSet<String>, is_detection: bool)
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
@@ -1136,7 +1095,6 @@ impl EventSink<'_> {
         }
     }
 
-    #[inline(always)]
     fn file_scan_event<'a, T>(
         &mut self,
         event: &'a T,
@@ -1167,7 +1125,6 @@ impl EventSink<'_> {
         UserEvent::with_data_and_info(data, info)
     }
 
-    #[inline(always)]
     fn action_scan_files<T>(&mut self, event: &T) -> anyhow::Result<()>
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
@@ -1217,7 +1174,6 @@ impl EventSink<'_> {
         Ok(())
     }
 
-    #[inline(always)]
     fn serialize_print<T: Serialize>(&mut self, event: &T) -> bool {
         self.json_buf.clear();
         // a huge event must not pin its allocation for the whole run
@@ -1244,7 +1200,6 @@ impl EventSink<'_> {
         false
     }
 
-    #[inline(always)]
     fn scan_and_print<T>(&mut self, event: &mut T) -> bool
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
@@ -1385,7 +1340,6 @@ impl EventConsumer<'_> {
         Ok(ep)
     }
 
-    #[inline(always)]
     fn init_file_scanner(&mut self) -> anyhow::Result<()> {
         let wo = WalkOptions::new()
             // we list only files
@@ -1753,7 +1707,6 @@ impl EventConsumer<'_> {
         Ok(())
     }
 
-    #[inline(always)]
     fn update_resolved(&mut self, ip: IpAddr, resolved: &str, i: &StdEventInfo) {
         // updating loopback resolution is not good
         if ip.is_loopback() {
@@ -1777,12 +1730,10 @@ impl EventConsumer<'_> {
             .or_insert_with(|| resolved.to_owned());
     }
 
-    #[inline(always)]
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
         ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt)).into()
     }
 
-    #[inline(always)]
     /// method acting as a central place to get the mnt namespace of a
     /// parent task and printing out an error if not found
     fn task_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
@@ -1799,7 +1750,6 @@ impl EventConsumer<'_> {
         }
     }
 
-    #[inline(always)]
     /// method acting as a central place to get the mnt namespace of a
     /// task and printing out an error if not found
     fn parent_mnt_ns(ei: &bpf_events::EventInfo) -> Option<Mnt> {
@@ -1816,7 +1766,6 @@ impl EventConsumer<'_> {
         }
     }
 
-    #[inline(always)]
     fn update_dns_resolved(&mut self, info: &StdEventInfo, responses: &[DomainResponse]) {
         for r in responses {
             for a in r.records.iter() {
@@ -1827,7 +1776,6 @@ impl EventConsumer<'_> {
         }
     }
 
-    #[inline(always)]
     fn exit_cleanup(&mut self, info: &StdEventInfo) {
         // this task's creds baseline is no longer of any use, regardless of
         // whether it is the thread-group leader or a plain thread exiting
@@ -1873,7 +1821,6 @@ impl EventConsumer<'_> {
         }
     }
 
-    #[inline(always)]
     fn start_event<'src>(&self, info: &'src StdEventInfo) -> UserEvent<'src, StartData> {
         let mut data = StartData::new();
 
@@ -1906,7 +1853,6 @@ impl EventConsumer<'_> {
         UserEvent::new(data, info)
     }
 
-    #[inline(always)]
     fn loss_event<'src>(
         &self,
         info: &'src StdEventInfo,
@@ -1918,7 +1864,6 @@ impl EventConsumer<'_> {
     // shadow processes are processes still in the hashmap but which have exited and
     // have all descendents exited. They are not useful anymore because they are not needed
     // to reconstruct ancestors.
-    #[inline(always)]
     fn find_shadow_procs(&self) -> HashSet<ProcKey> {
         let mut no_running_desc = HashSet::with_capacity(self.processes.len());
 
@@ -1952,7 +1897,6 @@ impl EventConsumer<'_> {
         no_running_desc
     }
 
-    #[inline(always)]
     fn proc_has_running_descendent(&self, pk: &ProcKey) -> bool {
         if let Some(p) = self.processes.get(pk) {
             for ck in p.children.iter() {
@@ -1972,7 +1916,6 @@ impl EventConsumer<'_> {
         false
     }
 
-    #[inline(always)]
     fn handle_correlation_event(
         &mut self,
         info: StdEventInfo,
@@ -2083,14 +2026,12 @@ impl EventConsumer<'_> {
         });
     }
 
-    #[inline(always)]
     fn handle_hash_event(&mut self, info: StdEventInfo, bpf_data: bpf_events::HashData) {
         let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
         self.sink
             .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.path));
     }
 
-    #[inline(always)]
     fn track_zombie_task(&mut self, std_info: &mut StdEventInfo) {
         // we need to find if task is a zombie and replace
         // its parent with the real one if needed
@@ -2132,7 +2073,6 @@ impl EventConsumer<'_> {
         }
     }
 
-    #[inline(always)]
     fn build_task_additional_info(
         &mut self,
         mnt_ns: Mnt,
@@ -2172,7 +2112,6 @@ impl EventConsumer<'_> {
         TaskAdditionalInfo { users, groups }
     }
 
-    #[inline(always)]
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let opt_mnt_ns = Self::task_mnt_ns(&i);
         let opt_parent_ns = Self::parent_mnt_ns(&i);
@@ -2223,7 +2162,6 @@ impl EventConsumer<'_> {
         })
     }
 
-    #[inline(always)]
     fn cache_namespaces(&mut self, i: &bpf_events::EventInfo) {
         if let Some(t_mnt_ns) = Self::task_mnt_ns(i) {
             let pid = i.process.pid;
@@ -2240,7 +2178,6 @@ impl EventConsumer<'_> {
         }
     }
 
-    #[inline(always)]
     fn check_creds_baseline(&mut self, evt: &EbpfEvent) {
         if !self.filter.is_enabled(Type::CredsTampered) {
             return;
@@ -2271,7 +2208,6 @@ impl EventConsumer<'_> {
         }
     }
 
-    #[inline(always)]
     fn handle_event(&mut self, evt: EbpfEvent) {
         self.cache_namespaces(evt.info());
 
@@ -2536,7 +2472,6 @@ impl Stats {
         }
     }
 
-    #[inline(always)]
     fn update(&mut self, read: u64, lost: u64) {
         if self.is_empty() {
             self.start = time::Instant::now();
@@ -2545,12 +2480,10 @@ impl Stats {
         self.lost = self.lost.wrapping_add(lost);
     }
 
-    #[inline(always)]
     fn percent_loss(&self) -> f64 {
         self.lost as f64 * 100.0 / self.total() as f64
     }
 
-    #[inline(always)]
     fn eps(&self) -> f64 {
         self.total() as f64
             / (time::Instant::now()
@@ -2558,12 +2491,10 @@ impl Stats {
                 .as_secs_f64())
     }
 
-    #[inline(always)]
     fn total(&self) -> u64 {
         self.read.wrapping_add(self.lost)
     }
 
-    #[inline(always)]
     fn is_empty(&self) -> bool {
         self.read == 0 && self.lost == 0
     }
@@ -2585,7 +2516,6 @@ struct EventProducer {
     reload: bool,
 }
 
-#[inline(always)]
 const fn optimal_page_count(page_size: usize, max_event_size: usize, n_events: usize) -> usize {
     // Aya's PerfBuffer expects a page_count being a power of two
     // this is something required by the linux kernel
@@ -2630,7 +2560,6 @@ impl EventProducer {
     // Event ordering is a very important piece as it impacts on-host correlations.
     // Additionaly it is very useful as it guarantees events are printed/piped into
     // other tools in the damn good order.
-    #[inline(always)]
     async fn process_piped_events(&mut self) -> Result<usize, SendError<EbpfEvent>> {
         let mut c = 0;
         // nothing to do
@@ -2664,13 +2593,11 @@ impl EventProducer {
         Ok(c)
     }
 
-    #[inline(always)]
     async fn send_event(&self, event: EbpfEvent) -> Result<(), SendError<EbpfEvent>> {
         self.sender.send(event).await
     }
 
     /// Set event batch number then pipe event
-    #[inline(always)]
     fn pipe_event(&mut self, mut event: EbpfEvent) {
         event.set_batch(self.batch);
         self.pipe.push_back(event);
@@ -2680,7 +2607,6 @@ impl EventProducer {
     /// processing can be done in EventReader
     /// this function must return true if main processing loop has to pass to the next event
     /// after the call.
-    #[inline(always)]
     fn process_time_critical(&mut self, e: &mut EbpfEvent) -> bool {
         match e {
             EbpfEvent::BpfProgLoad(e) => {
@@ -2744,7 +2670,6 @@ impl EventProducer {
 
     /// this method pass through some events directly to the event processor
     /// only events that can be processed asynchronously should be passed through
-    #[inline(always)]
     async fn pass_through_events(&self, e: &EbpfEvent) {
         match e {
             EbpfEvent::Execve(e) => {
@@ -3005,7 +2930,6 @@ impl EventProducer {
         self.stop = true
     }
 
-    #[inline(always)]
     fn is_finished(&self) -> bool {
         self.tasks.iter().all(|t| t.is_finished())
     }

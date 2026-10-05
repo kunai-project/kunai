@@ -116,7 +116,6 @@ pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
     Ok(())
 }
 
-#[inline(always)]
 pub fn getrlimit(resource: rlimit_resource_t) -> Result<rlimit, io::Error> {
     let mut rlim: rlimit = rlimit {
         rlim_cur: 0, // Set the soft limit to 0 initially
@@ -131,7 +130,6 @@ pub fn getrlimit(resource: rlimit_resource_t) -> Result<rlimit, io::Error> {
     Ok(rlim)
 }
 
-#[inline(always)]
 pub fn setrlimit(resource: rlimit_resource_t, rlimit: rlimit) -> Result<(), io::Error> {
     // Set the new limit
     if unsafe { libc::setrlimit(resource, &rlimit) } != 0 {
