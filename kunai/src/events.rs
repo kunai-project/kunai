@@ -51,45 +51,44 @@ impl<'src> From<&'src Path> for File<'src> {
 
 #[derive(FieldGetter, Serialize, Deserialize, Clone)]
 #[getter(use_serde_rename)]
-pub struct ContainerSection {
-    pub name: String,
+pub struct ContainerSection<'src> {
+    pub name: Cow<'src, str>,
     #[serde(rename = "type")]
     pub ty: Option<Container>,
 }
 
-impl From<ContainerInfo> for ContainerSection {
-    fn from(value: ContainerInfo) -> Self {
+impl<'src> From<&'src ContainerInfo> for ContainerSection<'src> {
+    fn from(value: &'src ContainerInfo) -> Self {
         Self {
-            name: value.name,
+            name: Cow::Borrowed(&value.name),
             ty: value.ty,
         }
     }
 }
 
 #[derive(FieldGetter, Serialize, Deserialize, Clone)]
-pub struct HostSection {
-    #[getter(skip)]
-    pub uuid: uuid::Uuid,
-    pub name: String,
-    pub container: Option<ContainerSection>,
+pub struct HostSection<'src> {
+    pub uuid: Uuid,
+    pub name: Cow<'src, str>,
+    pub container: Option<ContainerSection<'src>>,
 }
 
 #[derive(FieldGetter, Serialize, Deserialize, Clone)]
 pub struct EventSection {
-    pub source: String,
+    pub source: Cow<'static, str>,
     pub id: u32,
-    pub name: String,
-    pub uuid: String,
+    pub name: Cow<'static, str>,
+    pub uuid: Uuid,
     pub batch: u64,
 }
 
 impl From<&StdEventInfo> for EventSection {
     fn from(value: &StdEventInfo) -> Self {
         Self {
-            source: "kunai".into(),
+            source: Cow::Borrowed("kunai"),
             id: value.bpf.etype.id(),
-            name: value.bpf.etype.to_string(),
-            uuid: value.bpf.uuid.into_uuid().hyphenated().to_string(),
+            name: Cow::Borrowed(value.bpf.etype.as_str()),
+            uuid: value.bpf.uuid.into_uuid(),
             batch: value.bpf.batch,
         }
     }
@@ -111,7 +110,7 @@ pub struct TaskSection<'src> {
     pub name: String,
     pub pid: i32,
     pub tgid: i32,
-    pub guuid: String,
+    pub guuid: Uuid,
     pub creds: Creds<'src>,
     pub namespaces: Option<NamespaceInfo>,
     #[serde(with = "u32_hex")]
@@ -125,7 +124,7 @@ impl<'src> TaskSection<'src> {
             name: ti.comm_string(),
             pid: ti.pid,
             tgid: ti.tgid,
-            guuid: ti.tg_uuid.into_uuid().hyphenated().to_string(),
+            guuid: ti.tg_uuid.into_uuid(),
             creds: Creds::from_bpf_and_additions(ti.creds, add, true),
             namespaces: ti.namespaces.map(|ns| ns.into()).into(),
             flags: ti.flags,
@@ -196,7 +195,7 @@ impl<'f> FieldGetter<'f> for UtcDateTime {
 
 #[derive(FieldGetter, Serialize, Deserialize, Clone)]
 pub struct EventInfo<'i> {
-    pub host: HostSection,
+    pub host: HostSection<'i>,
     pub event: EventSection,
     pub task: TaskSection<'i>,
     pub parent_task: TaskSection<'i>,
@@ -214,21 +213,15 @@ impl<'a> From<&'a StdEventInfo> for EventInfo<'a> {
 
         Self {
             host: HostSection {
-                name: value.additional.host.name.clone(),
+                name: Cow::Borrowed(&value.additional.host.name),
                 uuid: value.additional.host.uuid,
                 container: value
                     .additional
                     .container
-                    .clone()
+                    .as_ref()
                     .map(ContainerSection::from),
             },
-            event: EventSection {
-                source: "kunai".into(),
-                id: value.bpf.etype.id(),
-                name: value.bpf.etype.to_string(),
-                uuid: value.bpf.uuid.into_uuid().hyphenated().to_string(),
-                batch: value.bpf.batch,
-            },
+            event: EventSection::from(value),
             task,
             parent_task,
             utc_time: value.utc_timestamp.into(),
@@ -238,9 +231,9 @@ impl<'a> From<&'a StdEventInfo> for EventInfo<'a> {
 
 impl EventInfo<'_> {
     pub fn from_other_with_type(mut other: Self, ty: bpf_events::Type) -> Self {
-        other.event.name = ty.to_string();
+        other.event.name = Cow::Borrowed(ty.as_str());
         other.event.id = ty.id();
-        other.event.uuid = Uuid::new_v4().to_string();
+        other.event.uuid = Uuid::new_v4();
         other
     }
 }
@@ -479,7 +472,7 @@ impl<'i, T> UserEvent<'i, T> {
 
     pub fn with_type(mut self, ty: Type) -> Self {
         self.info.event.id = ty.id();
-        self.info.event.name = ty.to_string();
+        self.info.event.name = Cow::Borrowed(ty.as_str());
         self
     }
 }
@@ -1255,7 +1248,7 @@ pub struct FileScanData {
     #[getter(skip)]
     pub signatures: Vec<String>,
     pub positives: usize,
-    pub source_event: String,
+    pub source_event: Uuid,
     pub scan_error: Option<String>,
 }
 
