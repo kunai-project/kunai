@@ -16,7 +16,7 @@ pub unsafe fn config() -> Option<&'static BpfConfig> {
 impl BpfConfig {
     #[inline(always)]
     pub unsafe fn current_is_loader(&self) -> bool {
-        bpf_get_current_pid_tgid() as u32 == self.loader.tgid
+        (bpf_get_current_pid_tgid() >> 32) as u32 == self.loader.tgid
     }
 
     #[inline(always)]

@@ -2273,11 +2273,6 @@ impl EventConsumer<'_> {
 
     #[inline(always)]
     fn handle_event(&mut self, evt: EbpfEvent) {
-        // we don't handle our own events
-        if evt.info().process.tgid as u32 == std::process::id() {
-            debug!("skipping our event");
-        }
-
         self.cache_namespaces(evt.info());
 
         // check for credential tampering on every event except those which
@@ -2932,8 +2927,10 @@ impl EventProducer {
                         evt.set_batch(ep.batch);
 
                         // verify that we filter properly kunai events in eBPF
+                        // eBPF logs are not filtered and may come from kunai
                         debug_assert!(
-                            evt.info().process.pid as u32 != process::id(),
+                            evt.info().etype == Type::Log
+                                || evt.info().process.tgid as u32 != process::id(),
                             "kunai event should not reach userland"
                         );
 
