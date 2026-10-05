@@ -1220,9 +1220,9 @@ dependencies = [
 
 [[package]]
 name = "gene"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21ecb2c961096621eaaf73ebeda2567ceff3abd0ffaa18bde8ce7cc8ec6a487b"
+checksum = "443c567b5e03dfef4a4594d0977b1c6944955512fb8af1095c978f2e2fe7b9b1"
 dependencies = [
  "gene_derive",
  "lazy_static",
@@ -1232,13 +1232,14 @@ dependencies = [
  "serde",
  "serde_yaml",
  "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]
 name = "gene_derive"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d2e5f95f89c8b6583c878168506b087fcf684835e856df9b8098d5c09a8fc7e"
+checksum = "ba52a3d316fc1b9bd6e09f53bf2a4f1329baa6c2d853d2c6e31af9d93f082798"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3143,9 +3144,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.26.1"
+version = "1.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
+checksum = "97277d36b9c3ace13e58fa6e753f8b0bbbf302a18dd193240d70f9e29681059a"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",

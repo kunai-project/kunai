@@ -961,7 +961,7 @@ struct EventSink<'s> {
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
     cache: cache::Cache,
-    killed_tasks: LruHashSet<String>,
+    killed_tasks: LruHashSet<uuid::Uuid>,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
     magic_db: MagicDb,
@@ -1070,10 +1070,10 @@ impl EventSink<'_> {
             // might impact the system.
             if actions.contains(Action::Kill.as_str()) {
                 let pid = event.info().task.pid;
-                let guuid = &event.info().task.guuid;
-                // don't kill ourself: this check is redundant because kunai
+                let guuid = event.info().task.guuid;
+                // don't kill ourself: this check is redundant because kunai
                 // events aren't supposed to arrive until here but it is a cheap test
-                if pid as u32 != process::id() && !self.killed_tasks.contains(guuid) {
+                if pid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
                     // this is the kind of information we want to have
                     // at all time so we put this as a warning not to
                     // be disabled by the default logging policy
@@ -1081,7 +1081,7 @@ impl EventSink<'_> {
                     if let Err(e) = kill(pid, libc::SIGKILL) {
                         error!("error sending SIGKILL to PID={pid}: {e}")
                     } else {
-                        self.killed_tasks.insert(guuid.clone());
+                        self.killed_tasks.insert(guuid);
                     }
                 }
             }
@@ -1116,7 +1116,7 @@ impl EventSink<'_> {
 
         let pos = sigs.len();
         let mut data = FileScanData::from_hashes(self.get_hashes_in_ns(Some(ns), &cp));
-        data.source_event = event.info().event.uuid.clone();
+        data.source_event = event.info().event.uuid;
         data.signatures = sigs;
         data.positives = pos;
         data.scan_error = err;
