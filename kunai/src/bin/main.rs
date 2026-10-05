@@ -95,7 +95,7 @@ const MAX_ANCESTORS: usize = 1024;
 #[derive(Debug, Clone)]
 struct Process {
     image: PathBuf,
-    command_line: Vec<String>,
+    command_line: String,
     pid: i32,
     // process flags PF_* defined in sched.h
     flags: u32,
@@ -126,11 +126,6 @@ impl Process {
     fn is_kthread(&self) -> bool {
         // check if flag contains PF_KTHREAD
         self.flags & 0x00200000 == 0x00200000
-    }
-
-    #[inline(always)]
-    fn command_line_string(&self) -> String {
-        self.command_line.join(" ")
     }
 
     // run on task exit
@@ -169,25 +164,21 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_exe(&self, key: ProcKey) -> PathBuf {
-        let mut exe = PathBuf::from("?");
-        if let Some(task) = self.get(&key) {
-            exe = task.image.clone();
-        }
-        exe
+    fn get_exe(&self, key: ProcKey) -> &Path {
+        self.get(&key)
+            .map(|t| t.image.as_path())
+            .unwrap_or_else(|| Path::new("?"))
     }
 
     #[inline(always)]
-    fn get_command_line(&self, key: ProcKey) -> String {
-        let mut cl = String::from("?");
-        if let Some(t) = self.get(&key) {
-            cl = t.command_line_string();
-        }
-        cl
+    fn get_command_line(&self, key: ProcKey) -> Cow<'_, str> {
+        self.get(&key)
+            .map(|p| Cow::Borrowed(p.command_line.as_str()))
+            .unwrap_or(Cow::Borrowed("?"))
     }
 
     #[inline(always)]
-    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (PathBuf, String) {
+    fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (&Path, Cow<'_, str>) {
         let ck = i.process_key();
         (self.get_exe(ck), self.get_command_line(ck))
     }
@@ -238,23 +229,23 @@ impl Processes {
     }
 
     #[inline(always)]
-    fn get_parent_command_line(&self, i: &StdEventInfo) -> String {
+    fn get_parent_command_line(&self, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.process_key();
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| c.command_line.join(" "))
-            .unwrap_or("?".into())
+            .map(|c| Cow::Borrowed(c.command_line.as_str()))
+            .unwrap_or(Cow::Borrowed("?"))
     }
 
     #[inline(always)]
-    fn get_parent_image(&self, i: &StdEventInfo) -> String {
+    fn get_parent_image(&self, i: &StdEventInfo) -> Cow<'_, str> {
         let ck = i.process_key();
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| c.image.to_string_lossy().to_string())
-            .unwrap_or("?".into())
+            .map(|c| c.image.to_string_lossy())
+            .unwrap_or(Cow::Borrowed("?"))
     }
 
     #[inline(always)]
@@ -310,9 +301,8 @@ impl Processes {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
         let option = PrctlOption::try_from_uint(bpf_data.option)
-            .map(|o| o.as_str().into())
-            .unwrap_or(format!("unknown({})", bpf_data.option))
-            .to_string();
+            .map(|o| Cow::Borrowed(o.as_str()))
+            .unwrap_or_else(|_| format!("unknown({})", bpf_data.option).into());
 
         let data = PrctlData {
             ancestors: self.get_task_ancestors(info),
@@ -502,7 +492,7 @@ impl Processes {
     fn init_module_event<'src>(
         &'src self,
         info: &'src StdEventInfo,
-        bpf_data: bpf_events::InitModuleData,
+        bpf_data: &'src bpf_events::InitModuleData,
     ) -> UserEvent<'src, InitModuleData<'src>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
 
@@ -510,9 +500,9 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            syscall: bpf_data.args.syscall_name().into(),
-            module_name: bpf_data.name.to_string(),
-            args: bpf_data.uargs.to_string(),
+            syscall: Cow::Borrowed(bpf_data.args.syscall_name()),
+            module_name: Cow::Borrowed(bpf_data.name.as_str()),
+            args: Cow::Borrowed(bpf_data.uargs.as_str()),
             loaded: bpf_data.loaded,
         };
 
@@ -818,7 +808,7 @@ impl Processes {
             let mut data = DnsQueryData::new();
             data.ancestors = ancestors.clone();
             data.command_line = command_line.clone();
-            data.exe = exe.clone().into();
+            data.exe = exe.into();
             data.query = r.qname.clone();
             data.query_type = r.qtype;
             data.response = r.records;
@@ -882,7 +872,7 @@ impl SystemInfo {
             host_uuid: uuid::Uuid::from_u128(0),
             hostname: fs::read_to_string("/etc/hostname")
                 .map(|s| s.trim_end().to_string())
-                .unwrap_or("?".into()),
+                .unwrap_or_else(|_| "?".into()),
             mount_ns: Mnt::from_pid(pid)
                 .map_err(|e| anyhow!("cannot find mnt namespace of kunai: {e}"))?,
         })
@@ -1048,7 +1038,7 @@ impl EventSink<'_> {
                         error: Some(format!("{e}")),
                         ..Default::default()
                     };
-                    Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
+                    Arc::new(Hashes::with_meta(p.as_path().to_path_buf(), meta))
                 }
             }
         } else {
@@ -1056,7 +1046,7 @@ impl EventSink<'_> {
                 error: Some("unknown namespace".into()),
                 ..Default::default()
             };
-            Arc::new(Hashes::with_meta(p.to_path_buf().clone(), meta))
+            Arc::new(Hashes::with_meta(p.as_path().to_path_buf(), meta))
         }
     }
 
@@ -1152,12 +1142,10 @@ impl EventSink<'_> {
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
+        let cp = cache::Path::from(p.to_path_buf());
         // if the scanner is None, signatures will be an empty Vec
         let (sigs, err) = match self.file_scanner.as_mut() {
-            Some(s) => match self
-                .cache
-                .get_sig_in_ns(ns, &cache::Path::from(p.to_path_buf()), s)
-            {
+            Some(s) => match self.cache.get_sig_in_ns(ns, &cp, s) {
                 Ok((sigs, msg)) => (sigs, msg),
                 Err(e) => (vec![], Some(format!("{e}"))),
             },
@@ -1165,9 +1153,7 @@ impl EventSink<'_> {
         };
 
         let pos = sigs.len();
-        let mut data = FileScanData::from_hashes(
-            self.get_hashes_in_ns(Some(ns), &cache::Path::from(p.to_path_buf())),
-        );
+        let mut data = FileScanData::from_hashes(self.get_hashes_in_ns(Some(ns), &cp));
         data.source_event = event.info().event.uuid.clone();
         data.signatures = sigs;
         data.positives = pos;
@@ -1196,7 +1182,7 @@ impl EventSink<'_> {
             .scannable_files()
             .iter()
             // we don't scan file paths being ?
-            .filter(|&p| p != &PathBuf::from("?").into())
+            .filter(|p| p.as_ref() != Path::new("?"))
         {
             let mut event = self.file_scan_event(event, ns, p);
             // print a warning if a positive scan happens so that a trace
@@ -1454,7 +1440,7 @@ impl EventConsumer<'_> {
                 .get("name")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
-                .unwrap_or(String::from("unknown"));
+                .unwrap_or_else(|| String::from("unknown"));
 
             if let Some(events) = value
                 .get_mut("match-on")
@@ -1694,7 +1680,7 @@ impl EventConsumer<'_> {
             if stat.flags & 0x200000 == 0x200000 {
                 KERNEL_IMAGE.into()
             } else {
-                p.exe().unwrap_or("?".into())
+                p.exe().unwrap_or_else(|_| "?".into())
             }
         };
 
@@ -1732,7 +1718,10 @@ impl EventConsumer<'_> {
 
         let task = Process {
             image,
-            command_line: p.cmdline().unwrap_or(vec!["?".into()]),
+            command_line: p
+                .cmdline()
+                .map(|c| c.join(" "))
+                .unwrap_or_else(|_| "?".into()),
             pid: p.pid,
             flags: stat.flags,
             resolved: HashMap::new(),
@@ -1767,14 +1756,14 @@ impl EventConsumer<'_> {
             c.resolved
                 .entry(ip)
                 .and_modify(|r| *r = resolved.to_owned())
-                .or_insert(resolved.to_owned())
+                .or_insert_with(|| resolved.to_owned())
         });
 
         // update global resolve table
         self.resolved
             .entry(ip)
             .and_modify(|r| *r = resolved.to_owned())
-            .or_insert(resolved.to_owned());
+            .or_insert_with(|| resolved.to_owned());
     }
 
     #[inline(always)]
@@ -1885,7 +1874,7 @@ impl EventConsumer<'_> {
             &self.sink.magic_db,
         );
 
-        data.kunai.config.sha256 = self.sink.config.sha256().ok().unwrap_or("?".into());
+        data.kunai.config.sha256 = self.sink.config.sha256().ok().unwrap_or_else(|| "?".into());
 
         // setting up uptime and boottime
         if let Ok(uptime) = Uptime::from_sys().inspect_err(|e| error!("failed to get uptime: {e}"))
@@ -1896,11 +1885,11 @@ impl EventConsumer<'_> {
 
         // setting utsname info
         if let Ok(uts) = Utsname::from_sys() {
-            data.system.sysname = uts.sysname().unwrap_or("?".into()).into();
-            data.system.release = uts.release().unwrap_or("?".into()).into();
-            data.system.version = uts.version().unwrap_or("?".into()).into();
-            data.system.machine = uts.machine().unwrap_or("?".into()).into();
-            data.system.domainname = uts.domainname().unwrap_or("?".into()).into();
+            data.system.sysname = uts.sysname().unwrap_or_else(|_| "?".into()).into();
+            data.system.release = uts.release().unwrap_or_else(|_| "?".into()).into();
+            data.system.version = uts.version().unwrap_or_else(|_| "?".into()).into();
+            data.system.machine = uts.machine().unwrap_or_else(|_| "?".into()).into();
+            data.system.domainname = uts.domainname().unwrap_or_else(|_| "?".into()).into();
         }
 
         UserEvent::new(data, info)
@@ -2066,7 +2055,7 @@ impl EventConsumer<'_> {
         // we insert only if not existing
         self.processes.entry(pk).or_insert(Process {
             image,
-            command_line,
+            command_line: command_line.join(" "),
             pid: info.task_info().tgid,
             flags: info.task_info().flags,
             resolved: HashMap::new(),
@@ -2198,7 +2187,9 @@ impl EventConsumer<'_> {
             if mnt_ns != self.system_info.mount_ns {
                 let t = self.processes.get(&std_info.process_key());
                 container = Some(kunai::info::ContainerInfo {
-                    name: t.and_then(|t| t.nodename.clone()).unwrap_or("?".into()),
+                    name: t
+                        .and_then(|t| t.nodename.clone())
+                        .unwrap_or_else(|| "?".into()),
                     ty: t.and_then(|cd| cd.container),
                 });
             }
@@ -2432,7 +2423,7 @@ impl EventConsumer<'_> {
 
             EbpfEvent::InitModule(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.init_module_event(&std_info, e.data);
+                let mut e = self.processes.init_module_event(&std_info, &e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2777,7 +2768,7 @@ impl EventProducer {
 
         let shared = Arc::new(Mutex::new(self));
 
-        let event_producer = shared.clone();
+        let event_producer = Arc::clone(&shared);
 
         let t = task::spawn(async move {
             loop {
@@ -2818,8 +2809,8 @@ impl EventProducer {
                     )),
                 )
                 .expect("cannot open perf event buffer");
-            let event_producer = shared.clone();
-            let bar = barrier.clone();
+            let event_producer = Arc::clone(&shared);
+            let bar = Arc::clone(&barrier);
             let max_buffered_events = config.max_buffered_events as usize;
 
             // process each perf buffer in a separate task
@@ -3551,7 +3542,7 @@ impl TryFrom<serde_json::Value> for ReplayEvent {
             .and_then(|info| info.get("event"))
             .and_then(|event| event.get("name"))
             .and_then(|name| name.as_str())
-            .ok_or(anyhow!("failed to deserialize event"))?;
+            .ok_or_else(|| anyhow!("failed to deserialize event"))?;
 
         macro_rules! event_enum {
             ($from:ty, $into:expr) => {{
@@ -4087,10 +4078,7 @@ impl Command {
         let unit_path = &o.unit;
         let unit_name = unit_path
             .file_name()
-            .ok_or(anyhow!(
-                "unknown unit name: {}",
-                unit_path.to_string_lossy()
-            ))?
+            .ok_or_else(|| anyhow!("unknown unit name: {}", unit_path.to_string_lossy()))?
             .to_string_lossy();
         let unit = format!(
             r#"[Unit]
@@ -4152,10 +4140,7 @@ WantedBy=sysinit.target"#,
         if o.enable_unit {
             let unit_name = unit_path
                 .file_name()
-                .ok_or(anyhow!(
-                    "unknown unit name: {}",
-                    unit_path.to_string_lossy()
-                ))?
+                .ok_or_else(|| anyhow!("unknown unit name: {}", unit_path.to_string_lossy()))?
                 .to_string_lossy();
             println!("Enabling kunai systemd unit");
             // we first need to run daemon-reload because we added a new unit
@@ -4171,10 +4156,12 @@ WantedBy=sysinit.target"#,
         let current_kernel = Utsname::kernel_version()
             .map_err(|e| anyhow!("cannot retrieve kernel version: {e}"))?;
         let log_path = &o.log_file;
-        let log_dir = log_path.parent().ok_or(anyhow!(
-            "cannot find dirname for log path: {}",
-            log_path.to_string_lossy()
-        ))?;
+        let log_dir = log_path.parent().ok_or_else(|| {
+            anyhow!(
+                "cannot find dirname for log path: {}",
+                log_path.to_string_lossy()
+            )
+        })?;
 
         // checks on harden mode
         if o.harden {
@@ -4199,10 +4186,12 @@ WantedBy=sysinit.target"#,
             .create(log_dir)?;
 
         let config_path = &o.config;
-        let config_dir = config_path.parent().ok_or(anyhow!(
-            "cannot find dirname for config path: {}",
-            config_path.to_string_lossy()
-        ))?;
+        let config_dir = config_path.parent().ok_or_else(|| {
+            anyhow!(
+                "cannot find dirname for config path: {}",
+                config_path.to_string_lossy()
+            )
+        })?;
         println!(
             "Creating configuration directory: {}",
             config_dir.to_string_lossy()
@@ -4466,7 +4455,7 @@ mod tests {
     fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {
         Process {
             image: image.into(),
-            command_line: vec![],
+            command_line: String::new(),
             pid,
             flags: 0,
             resolved: HashMap::new(),

@@ -173,12 +173,6 @@ pub enum SaFamily {
     AF_XDP = 44, /* XDP sockets*/
 }
 
-impl SaFamily {
-    pub fn is_valid_sa_family<T: Into<u64>>(sa_family: T) -> bool {
-        Self::try_from_uint(sa_family).is_ok()
-    }
-}
-
 #[repr(u16)]
 #[derive(StrEnum, Debug, PartialEq, PartialOrd)]
 #[allow(non_camel_case_types)]
@@ -190,12 +184,6 @@ pub enum SockType {
     SOCK_SEQPACKET = 5,
     SOCK_DCCP = 6,
     SOCK_PACKET = 10,
-}
-
-impl SockType {
-    pub fn is_valid_type<T: Into<u64>>(ty: T) -> bool {
-        Self::try_from_uint(ty).is_ok()
-    }
 }
 
 // IPPROTO_ macros defined in the Linux kernel

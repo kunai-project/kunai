@@ -91,7 +91,7 @@ mod user {
             let u: u64 = u.into();
             Signal::try_from_uint(u)
                 .map(|o| o.as_str().into())
-                .unwrap_or(format!("SIG({})", u))
+                .unwrap_or_else(|_| format!("SIG({})", u))
         }
     }
 }

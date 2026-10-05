@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::{IpProto, IpType, SaFamily, SockAddr, SockType, SocketInfo};
@@ -12,29 +13,21 @@ impl From<SockAddr> for IpAddr {
 }
 
 impl SocketInfo {
-    pub fn type_to_string(&self) -> String {
-        if SockType::is_valid_type(self.ty) {
-            let d: SockType = unsafe { core::mem::transmute(self.ty) };
-            d.as_str().into()
-        } else {
-            format!("unknown({})", self.ty)
-        }
+    pub fn type_to_string(&self) -> Cow<'static, str> {
+        SockType::try_from_uint(self.ty)
+            .map(|t| t.as_str().into())
+            .unwrap_or_else(|_| format!("unknown({})", self.ty).into())
     }
 
-    pub fn domain_to_string(&self) -> String {
-        if SaFamily::is_valid_sa_family(self.domain) {
-            let t: SaFamily = unsafe { core::mem::transmute(self.domain) };
-            t.as_str().into()
-        } else {
-            format!("unknown({})", self.domain)
-        }
+    pub fn domain_to_string(&self) -> Cow<'static, str> {
+        SaFamily::try_from_uint(self.domain)
+            .map(|sa| sa.as_str().into())
+            .unwrap_or_else(|_| format!("unknown({})", self.domain).into())
     }
 
-    pub fn proto_to_string(&self) -> String {
-        if let Ok(p) = IpProto::try_from_uint(self.proto) {
-            p.as_str().into()
-        } else {
-            format!("unknown({})", self.proto)
-        }
+    pub fn proto_to_string(&self) -> Cow<'static, str> {
+        IpProto::try_from_uint(self.proto)
+            .map(|p| p.as_str().into())
+            .unwrap_or_else(|_| format!("unknown({})", self.proto).into())
     }
 }

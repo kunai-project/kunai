@@ -25,8 +25,8 @@ env_logger = "0.10"
 firo = "0.3"
 flate2 = "1.0"
 fs-walk = "0.1.0"
-gene = { version = ">=0.7.3" }
-gene_derive = { version = ">=0.7.3" }
+gene = { version = ">=0.7.4" }
+gene_derive = { version = ">=0.7.4" }
 hex = "0.4.3"
 huby = "0.2"
 humantime = "2.3.0"
@@ -54,6 +54,18 @@ yara-x = "1.20.0"
 md-5 = "0.11.0"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
+
+[workspace.lints.clippy]
+or_fun_call = "warn"
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+dbg_macro = "warn"
+todo = "warn"
+perf = "warn"
+complexity = "warn"
+style = "warn"
 
 [profile.dev]
 opt-level = 2
