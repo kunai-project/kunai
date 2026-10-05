@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # currently this test will work with a host running on amd64
-# aarch64 will be emulated and is not optimized to run on a aarch64 host
+# aarch64 will be emulated and is not optimized to run on a aarch64 host
 
 set -euxo pipefail
 
 system_arch=$(uname -m)
 qemu_arch=${ARCH:-$system_arch}
+CI=${CI:-"false"}
 
 if [[ "$qemu_arch" == "x86_64" ]]; then
     arch="amd64"
@@ -18,9 +19,13 @@ else
 fi
 
 test_bin=target/${qemu_arch}-unknown-linux-musl/debug/tests
-if [[ ! -f ${test_bin} ]]; then
-    echo "test binary ${test_bin} is missing compile program first"
-    exit 1
+if [[ "${CI}" == "true" ]]; then
+    if [[ ! -f ${test_bin} ]]; then
+        echo "test binary ${test_bin} is missing compile program first"
+        exit 1
+    fi
+else
+    cargo build --target=${qemu_arch}-unknown-linux-musl --bin tests
 fi
 
 tmp_dir=$(mktemp -d)
