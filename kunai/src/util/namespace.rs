@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::io::{self, Error as IoError};
 use std::num::ParseIntError;
@@ -71,6 +72,30 @@ pub trait Namespace: Default + std::fmt::Debug + PartialEq + Eq + Hash + Clone +
         ns.with_inum(s.parse::<u32>()?);
 
         Ok(ns)
+    }
+
+    /// Inode numbers of the namespaces of kind `N` used by running processes.
+    /// Processes exiting during the scan are skipped, any other error is returned.
+    fn live_inums<N: Namespace>() -> Result<HashSet<u32>, NsError> {
+        let mut inums = HashSet::new();
+        for entry in std::fs::read_dir("/proc")? {
+            let entry = entry?;
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            match Self::from_pid::<N>(pid) {
+                Ok(ns) => {
+                    inums.insert(ns.inum());
+                }
+                Err(NsError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(inums)
     }
 
     fn open<N: Namespace>(pid: u32) -> Result<File, NsError> {
@@ -237,5 +262,17 @@ where
         } else {
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn live_inums_contains_own_mnt_ns() {
+        let own = Mnt::from_pid::<Mnt>(process::id()).unwrap();
+        let live = Mnt::live_inums::<Mnt>().unwrap();
+        assert!(live.contains(&own.inum()));
     }
 }

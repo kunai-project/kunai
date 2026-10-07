@@ -12,6 +12,7 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
+    collections::HashSet,
     fs::{self, File},
     io::{self},
     os::unix::prelude::MetadataExt,
@@ -318,6 +319,10 @@ unsafe impl Sync for Key {}
 
 pub struct Cache {
     mnt_namespaces: LruHashMap<Mnt, namespace::Switcher<Mnt>>,
+    // LruHashMap cannot be iterated, so cached namespaces are tracked separately
+    mnt_ns_tracked: HashSet<Mnt>,
+    // namespaces found unused by the previous garbage collection
+    mnt_ns_unused: HashSet<Mnt>,
     hashes: LruHashMap<Key, Arc<Hashes>>,
     users: LruHashMap<Key, Arc<Users>>,
     groups: LruHashMap<Key, Arc<Groups>>,
@@ -335,6 +340,8 @@ impl Cache {
     pub fn with_max_entries(cap: usize) -> Self {
         Cache {
             mnt_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            mnt_ns_tracked: HashSet::new(),
+            mnt_ns_unused: HashSet::new(),
             users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             hashes: LruHashMap::with_max_entries(cap),
@@ -342,11 +349,37 @@ impl Cache {
         }
     }
 
+    /// Drops cached mount namespaces absent from `live`, returning their count. A
+    /// namespace must be unused in two consecutive calls, so in-flight events can finish.
+    pub fn gc_mnt_namespaces(&mut self, live: &HashSet<u32>) -> usize {
+        let mut dropped = 0;
+        let tracked: Vec<Mnt> = self.mnt_ns_tracked.iter().copied().collect();
+
+        for ns in tracked {
+            if live.contains(&ns.inum) {
+                self.mnt_ns_unused.remove(&ns);
+                continue;
+            }
+            if self.mnt_ns_unused.remove(&ns) {
+                self.mnt_namespaces.remove(&ns);
+                self.mnt_ns_tracked.remove(&ns);
+                dropped += 1;
+            } else {
+                self.mnt_ns_unused.insert(ns);
+            }
+        }
+        dropped
+    }
+
     pub fn cache_mnt_ns(&mut self, pid: i32, ns: Mnt) -> Result<(), Error> {
+        // an event still refers to it, so it must not be dropped
+        self.mnt_ns_unused.remove(&ns);
+
         if !self.mnt_namespaces.contains_key(&ns) {
             self.mnt_namespaces
                 .insert(ns, Switcher::new(pid as u32).map_err(Error::Namespace)?);
             debug_assert!(self.mnt_namespaces.contains_key(&ns));
+            self.mnt_ns_tracked.insert(ns);
         }
         Ok(())
     }
@@ -493,5 +526,74 @@ impl Cache {
         }
 
         res.map_err(Error::from)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::util::namespace::Namespace;
+
+    /// Cache holding the mount namespace of the test process
+    fn cache_with_own_ns() -> (Cache, Mnt) {
+        let pid = std::process::id();
+        let ns = Mnt::from_pid::<Mnt>(pid).unwrap();
+        let mut cache = Cache::with_max_entries(16);
+        cache.cache_mnt_ns(pid as i32, ns).unwrap();
+        (cache, ns)
+    }
+
+    fn is_cached(cache: &mut Cache, ns: Mnt) -> bool {
+        !matches!(cache.get_user_group_in_ns(ns), Err(Error::UnknownMntNs(_)))
+    }
+
+    #[test]
+    fn unused_mnt_ns_is_dropped_on_second_gc() {
+        let (mut cache, ns) = cache_with_own_ns();
+        let live = HashSet::new();
+
+        assert_eq!(cache.gc_mnt_namespaces(&live), 0);
+        assert!(is_cached(&mut cache, ns));
+
+        assert_eq!(cache.gc_mnt_namespaces(&live), 1);
+        assert!(!is_cached(&mut cache, ns));
+    }
+
+    #[test]
+    fn live_mnt_ns_is_kept() {
+        let (mut cache, ns) = cache_with_own_ns();
+        let live = HashSet::from([ns.inum]);
+
+        for _ in 0..3 {
+            assert_eq!(cache.gc_mnt_namespaces(&live), 0);
+            assert!(is_cached(&mut cache, ns));
+        }
+    }
+
+    #[test]
+    fn mnt_ns_referenced_by_event_between_gcs_is_kept() {
+        let (mut cache, ns) = cache_with_own_ns();
+        let live = HashSet::new();
+
+        assert_eq!(cache.gc_mnt_namespaces(&live), 0);
+        // an event still refers to the namespace
+        cache.cache_mnt_ns(std::process::id() as i32, ns).unwrap();
+        assert_eq!(cache.gc_mnt_namespaces(&live), 0);
+        assert!(is_cached(&mut cache, ns));
+
+        // nothing refers to it anymore
+        assert_eq!(cache.gc_mnt_namespaces(&live), 1);
+    }
+
+    #[test]
+    fn mnt_ns_seen_live_again_restarts_grace_period() {
+        let (mut cache, ns) = cache_with_own_ns();
+        let live = HashSet::from([ns.inum]);
+        let none = HashSet::new();
+
+        assert_eq!(cache.gc_mnt_namespaces(&none), 0);
+        assert_eq!(cache.gc_mnt_namespaces(&live), 0);
+        assert_eq!(cache.gc_mnt_namespaces(&none), 0);
+        assert!(is_cached(&mut cache, ns));
     }
 }

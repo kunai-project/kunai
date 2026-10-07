@@ -92,6 +92,8 @@ use communityid::{Flow, Protocol};
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
 const MAX_ANCESTORS: usize = 1024;
+/// minimum delay between two garbage collections of cached mount namespaces
+const MNT_NS_GC_INTERVAL: Duration = Duration::from_secs(10);
 // largest event seen in real logs is ~1.8 KiB
 const JSON_BUF_MAX_CAP: usize = 4 * 1024;
 
@@ -977,6 +979,7 @@ struct EventConsumer<'s> {
     tasks: HashMap<TaskKey, Task>,
     resolved: HashMap<IpAddr, String>,
     exited_tasks: u64,
+    last_mnt_ns_gc: time::Instant,
     sink: EventSink<'s>,
 }
 
@@ -1307,6 +1310,7 @@ impl EventConsumer<'_> {
             processes: Processes::with_capacity(512),
             tasks: HashMap::with_capacity(512),
             exited_tasks: 0,
+            last_mnt_ns_gc: time::Instant::now(),
             resolved: HashMap::new(),
             sink: EventSink {
                 config,
@@ -1818,6 +1822,21 @@ impl EventConsumer<'_> {
             }
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
+
+            // cached mount namespaces pin their tmpfs in the kernel, so unused
+            // ones must be released
+            if self.last_mnt_ns_gc.elapsed() >= MNT_NS_GC_INTERVAL {
+                self.last_mnt_ns_gc = time::Instant::now();
+                match Mnt::live_inums::<Mnt>() {
+                    Ok(live) => {
+                        let n = self.sink.cache.gc_mnt_namespaces(&live);
+                        if n > 0 {
+                            debug!("released {n} unused mount namespace(s)");
+                        }
+                    }
+                    Err(e) => warn!("failed to list live mount namespaces: {e}"),
+                }
+            }
         }
     }
 
