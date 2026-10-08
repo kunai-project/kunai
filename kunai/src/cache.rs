@@ -12,6 +12,7 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
+    collections::HashMap,
     fs::{self, File},
     io::{self},
     os::unix::prelude::MetadataExt,
@@ -22,6 +23,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
+    info::ProcKey,
     util::{
         account::{Groups, Users},
         namespace::{self, Mnt, Switcher},
@@ -316,8 +318,94 @@ impl Key {
 unsafe impl Send for Key {}
 unsafe impl Sync for Key {}
 
-pub struct Cache {
-    mnt_namespaces: LruHashMap<Mnt, namespace::Switcher<Mnt>>,
+/// Counts live processes per mount namespace, so that a namespace cache
+/// entry can be released as soon as its last process exits.
+#[derive(Default)]
+struct MntNsRefs {
+    // mount namespace each live process was last seen in
+    procs: HashMap<ProcKey, Mnt>,
+    refs: HashMap<Mnt, usize>,
+}
+
+impl MntNsRefs {
+    /// Records that process `pk` lives in mount namespace `ns`. A process
+    /// may change namespace (setns, unshare), in which case the reference
+    /// on the previous namespace is dropped. Returns the namespace left
+    /// without any process, if any.
+    fn track(&mut self, pk: ProcKey, ns: Mnt) -> Option<Mnt> {
+        let unused = match self.procs.insert(pk, ns) {
+            // process is already referenced
+            Some(old) if old == ns => return None,
+            // ns changed -> unref old mnt ns
+            Some(old) => self.unref(old),
+            // process newly tracked
+            None => None,
+        };
+        *self.refs.entry(ns).or_default() += 1;
+        unused
+    }
+
+    /// Forgets process `pk`. Returns its namespace if it was the last
+    /// process in it.
+    fn untrack(&mut self, pk: &ProcKey) -> Option<Mnt> {
+        let ns = self.procs.remove(pk)?;
+        self.unref(ns)
+    }
+
+    fn unref(&mut self, ns: Mnt) -> Option<Mnt> {
+        let refs = self.refs.get_mut(&ns)?;
+        *refs -= 1;
+        if *refs == 0 {
+            self.refs.remove(&ns);
+            return Some(ns);
+        }
+        None
+    }
+}
+
+/// Mount namespaces handles, released as soon as the last process living in
+/// a namespace exits, as an open handle keeps the namespace (and any
+/// filesystem mounted in it, like a tmpfs) alive. The LRU bound only acts as
+/// a safety net against missed exits.
+struct MntNsCache {
+    switchers: LruHashMap<Mnt, Switcher<Mnt>>,
+    refs: MntNsRefs,
+}
+
+impl MntNsCache {
+    fn with_max_entries(cap: usize) -> Self {
+        Self {
+            switchers: LruHashMap::with_max_entries(cap),
+            refs: MntNsRefs::default(),
+        }
+    }
+
+    fn cache(&mut self, pid: i32, ns: Mnt, track: Option<ProcKey>) -> Result<(), Error> {
+        if let Some(unused) = track.and_then(|pk| self.refs.track(pk, ns)) {
+            self.switchers.remove(&unused);
+        }
+
+        if !self.switchers.contains_key(&ns) {
+            self.switchers
+                .insert(ns, Switcher::new(pid as u32).map_err(Error::Namespace)?);
+            debug_assert!(self.switchers.contains_key(&ns));
+        }
+        Ok(())
+    }
+
+    fn untrack(&mut self, pk: &ProcKey) {
+        if let Some(unused) = self.refs.untrack(pk) {
+            self.switchers.remove(&unused);
+        }
+    }
+
+    fn get(&mut self, ns: &Mnt) -> Option<&Switcher<Mnt>> {
+        self.switchers.get(ns)
+    }
+}
+
+pub struct Caches {
+    mnt_namespaces: MntNsCache,
     hashes: LruHashMap<Key, Arc<Hashes>>,
     users: LruHashMap<Key, Arc<Users>>,
     groups: LruHashMap<Key, Arc<Groups>>,
@@ -330,11 +418,11 @@ pub struct Cache {
 
 const NS_CACHE_SIZE: usize = 256;
 
-impl Cache {
+impl Caches {
     // Constructs a new Hcache
     pub fn with_max_entries(cap: usize) -> Self {
-        Cache {
-            mnt_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+        Caches {
+            mnt_namespaces: MntNsCache::with_max_entries(NS_CACHE_SIZE),
             users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             hashes: LruHashMap::with_max_entries(cap),
@@ -342,13 +430,17 @@ impl Cache {
         }
     }
 
-    pub fn cache_mnt_ns(&mut self, pid: i32, ns: Mnt) -> Result<(), Error> {
-        if !self.mnt_namespaces.contains_key(&ns) {
-            self.mnt_namespaces
-                .insert(ns, Switcher::new(pid as u32).map_err(Error::Namespace)?);
-            debug_assert!(self.mnt_namespaces.contains_key(&ns));
-        }
-        Ok(())
+    /// Caches mount namespace `ns` of process `pid`. If `track` is set, the
+    /// process is recorded as living in `ns` until [Caches::untrack_mnt_ns],
+    /// so that `ns` is released once its last tracked process is gone.
+    pub fn cache_mnt_ns(&mut self, pid: i32, ns: Mnt, track: Option<ProcKey>) -> Result<(), Error> {
+        self.mnt_namespaces.cache(pid, ns, track)
+    }
+
+    /// Forgets process `pk`, releasing its mount namespace if it was the
+    /// last tracked process in it.
+    pub fn untrack_mnt_ns(&mut self, pk: &ProcKey) {
+        self.mnt_namespaces.untrack(pk)
     }
 
     /// Get the [Users] and [Groups] tables of the mount namespace `ns`, so that
@@ -493,5 +585,50 @@ impl Cache {
         }
 
         res.map_err(Error::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::namespace::Namespace;
+
+    fn pkey(pid: u32) -> ProcKey {
+        kunai_common::uuid::ProcUuid {
+            leader_start_time_ns: 0,
+            random: 0,
+            tgid: pid,
+        }
+        .into()
+    }
+
+    #[test]
+    fn mnt_ns_refs_release_on_last_process() {
+        let (host, jail) = (Mnt::from_inum::<Mnt>(1), Mnt::from_inum::<Mnt>(2));
+        let mut refs = MntNsRefs::default();
+
+        assert_eq!(refs.track(pkey(1), host), None);
+        assert_eq!(refs.track(pkey(2), host), None);
+        // tracking again the same process doesn't take another reference
+        assert_eq!(refs.track(pkey(2), host), None);
+        // process 2 unshares into the jail namespace
+        assert_eq!(refs.track(pkey(2), jail), None);
+        assert_eq!(refs.track(pkey(3), jail), None);
+
+        assert_eq!(refs.untrack(&pkey(2)), None);
+        assert_eq!(refs.untrack(&pkey(3)), Some(jail));
+        // unknown or already untracked process
+        assert_eq!(refs.untrack(&pkey(3)), None);
+        assert_eq!(refs.untrack(&pkey(1)), Some(host));
+    }
+
+    #[test]
+    fn mnt_ns_refs_release_on_ns_switch() {
+        let (a, b) = (Mnt::from_inum::<Mnt>(1), Mnt::from_inum::<Mnt>(2));
+        let mut refs = MntNsRefs::default();
+
+        assert_eq!(refs.track(pkey(1), a), None);
+        assert_eq!(refs.track(pkey(1), b), Some(a));
+        assert_eq!(refs.untrack(&pkey(1)), Some(b));
     }
 }

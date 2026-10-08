@@ -960,7 +960,7 @@ struct EventSink<'s> {
     json_buf: Vec<u8>,
     engine: gene::Engine,
     iocs: HashMap<String, u8>,
-    cache: cache::Cache,
+    caches: cache::Caches,
     killed_tasks: LruHashSet<uuid::Uuid>,
     output: Output,
     file_scanner: Option<Scanner<'s>>,
@@ -996,7 +996,7 @@ fn creds_diverged(
 impl EventSink<'_> {
     fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Arc<Hashes> {
         if let Some(ns) = ns {
-            match self.cache.get_hashes_in_ns(ns, p, &self.magic_db) {
+            match self.caches.get_hashes_in_ns(ns, p, &self.magic_db) {
                 Ok(h) => h,
                 Err(e) => {
                     let meta = FileMeta {
@@ -1107,7 +1107,7 @@ impl EventSink<'_> {
         let cp = cache::Path::from(p.to_path_buf());
         // if the scanner is None, signatures will be an empty Vec
         let (sigs, err) = match self.file_scanner.as_mut() {
-            Some(s) => match self.cache.get_sig_in_ns(ns, &cp, s) {
+            Some(s) => match self.caches.get_sig_in_ns(ns, &cp, s) {
                 Ok((sigs, msg)) => (sigs, msg),
                 Err(e) => (vec![], Some(format!("{e}"))),
             },
@@ -1313,7 +1313,7 @@ impl EventConsumer<'_> {
                 json_buf: Vec::new(),
                 engine: Engine::new(),
                 iocs: HashMap::new(),
-                cache: Cache::with_max_entries(10000),
+                caches: Caches::with_max_entries(10000),
                 killed_tasks: LruHashSet::with_max_entries(512),
                 output,
                 file_scanner: None,
@@ -1788,6 +1788,8 @@ impl EventConsumer<'_> {
         {
             let pk = info.process_key();
 
+            self.sink.caches.untrack_mnt_ns(&pk);
+
             if let Some(t) = self.processes.get(&pk) {
                 // only ExitGroup guarantees the whole thread group is gone
                 if matches!(etype, Type::ExitGroup) {
@@ -2078,13 +2080,13 @@ impl EventConsumer<'_> {
         mnt_ns: Mnt,
         ti: &bpf_events::TaskInfo,
     ) -> TaskAdditionalInfo {
-        let res = match self.sink.cache.get_user_group_in_ns(mnt_ns) {
+        let res = match self.sink.caches.get_user_group_in_ns(mnt_ns) {
             Ok(o) => Ok(o),
             Err(e) => match e {
                 Error::Namespace(ns) => {
                     if ns.is_other_and_io_kind(io::ErrorKind::NotFound) {
                         self.sink
-                            .cache
+                            .caches
                             .get_user_group_in_ns(self.system_info.mount_ns)
                     } else {
                         Err(ns.into())
@@ -2165,14 +2167,25 @@ impl EventConsumer<'_> {
     fn cache_namespaces(&mut self, i: &bpf_events::EventInfo) {
         if let Some(t_mnt_ns) = Self::task_mnt_ns(i) {
             let pid = i.process.pid;
-            if let Err(e) = self.sink.cache.cache_mnt_ns(pid, t_mnt_ns) {
+            // threads exiting after exit_group would track a dead process again
+            let track = (!matches!(i.etype, Type::Exit | Type::ExitGroup))
+                .then(|| ProcKey::from(i.process.tg_uuid));
+            if let Err(e) = self.sink.caches.cache_mnt_ns(pid, t_mnt_ns, track) {
                 debug!("failed to cache namespace pid={pid} ns={t_mnt_ns}: {e}");
             }
         }
 
         if let Some(p_mnt_ns) = Self::parent_mnt_ns(i) {
             let pid = i.parent.pid;
-            if let Err(e) = self.sink.cache.cache_mnt_ns(pid, p_mnt_ns) {
+            let pk = ProcKey::from(i.parent.tg_uuid);
+            // an already exited parent would never be untracked again and
+            // would pin its namespace, the LRU takes care of those
+            let track = self
+                .processes
+                .get(&pk)
+                .is_some_and(|p| !p.exit)
+                .then_some(pk);
+            if let Err(e) = self.sink.caches.cache_mnt_ns(pid, p_mnt_ns, track) {
                 debug!("failed to cache namespace pid={pid} ns={p_mnt_ns}: {e}");
             }
         }
