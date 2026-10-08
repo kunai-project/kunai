@@ -26,7 +26,7 @@ use crate::{
     info::ProcKey,
     util::{
         account::{Groups, Users},
-        namespace::{self, Mnt, Switcher},
+        namespace::{self, Mnt, SelfNs, Switcher},
     },
     yara::Scanner,
 };
@@ -370,6 +370,8 @@ impl MntNsRefs {
 struct MntNsCache {
     switchers: LruHashMap<Mnt, Switcher<Mnt>>,
     refs: MntNsRefs,
+    // shared by all switchers so that each entry holds a single fd
+    self_ns: Option<SelfNs<Mnt>>,
 }
 
 impl MntNsCache {
@@ -377,6 +379,7 @@ impl MntNsCache {
         Self {
             switchers: LruHashMap::with_max_entries(cap),
             refs: MntNsRefs::default(),
+            self_ns: None,
         }
     }
 
@@ -386,8 +389,12 @@ impl MntNsCache {
         }
 
         if !self.switchers.contains_key(&ns) {
+            let self_ns = match self.self_ns.as_ref() {
+                Some(s) => s,
+                None => self.self_ns.insert(SelfNs::open()?),
+            };
             self.switchers
-                .insert(ns, Switcher::new(pid as u32).map_err(Error::Namespace)?);
+                .insert(ns, Switcher::new(pid as u32, self_ns)?);
             debug_assert!(self.switchers.contains_key(&ns));
         }
         Ok(())
