@@ -6,6 +6,7 @@ use std::os::unix::io::RawFd;
 
 use std::path::PathBuf;
 use std::process;
+use std::sync::Arc;
 use std::{fs::File, os::fd::AsRawFd};
 
 use libc::{c_int, pid_t, syscall, SYS_pidfd_open, CLONE_NEWNS};
@@ -130,10 +131,28 @@ pub enum NsError {
     Io(#[from] IoError),
 }
 
+/// Shareable handle on a namespace of the current process, so that
+/// [Switcher]s don't each hold their own fd on it.
+#[derive(Debug, Clone)]
+pub struct SelfNs<N: Namespace> {
+    namespace: N,
+    file: Arc<File>,
+}
+
+impl<N: Namespace> SelfNs<N> {
+    pub fn open() -> Result<Self, Error> {
+        let pid = process::id();
+        Ok(Self {
+            namespace: N::from_pid::<N>(pid)?,
+            file: Arc::new(N::open::<N>(pid)?),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct Switcher<N: Namespace> {
     pub namespace: N,
-    src: Option<File>,
+    src: Option<Arc<File>>,
     dst: Option<File>,
 }
 
@@ -182,19 +201,17 @@ impl<N> Switcher<N>
 where
     N: Namespace,
 {
-    pub fn new(pid: u32) -> Result<Self, Error> {
-        let self_pid = process::id();
-        let self_ns = N::from_pid::<N>(self_pid)?;
+    /// Creates a switcher into the namespace of `pid`, coming back to
+    /// `src` on exit.
+    pub fn new(pid: u32, src: &SelfNs<N>) -> Result<Self, Error> {
         let target_ns = N::from_pid::<N>(pid)?;
 
-        let (src, dst) = if self_ns == target_ns {
+        let (src, dst) = if src.namespace == target_ns {
             (None, None)
         } else {
-            // namespace of the current process
-            let src = N::open::<N>(self_pid)?;
             // namespace of the target process
             let dst = N::open::<N>(pid)?;
-            (Some(src), Some(dst))
+            (Some(Arc::clone(&src.file)), Some(dst))
         };
 
         Ok(Self {
