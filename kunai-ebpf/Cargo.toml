@@ -7,9 +7,6 @@ repository = "https://github.com/kunai-project/kunai"
 license = "GPL-3.0"
 publish = false
 
-[lints]
-workspace = true
-
 [[bin]]
 name = "kunai-ebpf"
 path = "src/main.rs"
@@ -24,3 +21,6 @@ paste = { workspace = true }
 [features]
 # enable debug probes
 debug = []
+
+[lints]
+workspace = true

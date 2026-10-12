@@ -7,9 +7,6 @@ repository.workspace = true
 license.workspace = true
 publish = false
 
-[lints]
-workspace = true
-
 [[bin]]
 name = "kunai"
 path = "src/bin/main.rs"
@@ -97,3 +94,6 @@ cargo_metadata = { workspace = true }
 # workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
 # features.
 kunai-ebpf = { path = "../kunai-ebpf" }
+
+[lints]
+workspace = true

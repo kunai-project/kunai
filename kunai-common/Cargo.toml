@@ -7,9 +7,6 @@ repository.workspace = true
 license.workspace = true
 publish = false
 
-[lints]
-workspace = true
-
 [dependencies]
 # optional deps (only for userland)
 base64ct = { workspace = true, features = ["alloc"], optional = true }
@@ -39,3 +36,6 @@ bindgen = "0.72"
 default = []
 # to enable only when using this crate in userland code
 user = ["aya", "base64ct", "serde", "simple-dns", "thiserror", "uuid"]
+
+[lints]
+workspace = true
