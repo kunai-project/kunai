@@ -24,9 +24,12 @@ fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q, bpf_target_arch:
 
     std::fs::create_dir_all(out_dir).expect("failed to create Rust shim output directory");
 
-    bindings
-        .write_to_file(out_file)
-        .expect("failed at writing generated bindings");
+    // rewriting identical content bumps the mtime, which dirties kunai's build script
+    // (it watches this crate) and rebuilds the eBPF program on every check
+    let new = bindings.to_string();
+    if std::fs::read_to_string(&out_file).ok().as_deref() != Some(new.as_str()) {
+        std::fs::write(&out_file, new).expect("failed at writing generated bindings");
+    }
 }
 
 fn main() {
