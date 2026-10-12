@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use gene::{FieldGetter, FieldNameIterator, FieldValue};
 use gene_derive::FieldGetter;
 
@@ -42,13 +43,26 @@ pub enum Error {
     #[error("{0}")]
     IoError(#[from] io::Error),
     #[error("file changed since kernel event: {0}")]
-    FileModSinceKernelEvent(&'static str),
+    FileModSinceKernelEvent(FileMod),
     #[error("metadata is needed for ebpf path")]
     MetadataRequired,
     #[error("yara scan error: {0}")]
     ScanError(#[from] yara_x::errors::ScanError),
     #[error("file size exceeds scan limit")]
     FileSizeScanLimit,
+}
+
+#[derive(Error, Debug)]
+pub enum FileMod {
+    #[error("size changed: kernel={kernel} userland={userland}")]
+    Size { kernel: u64, userland: u64 },
+    #[error("inode changed: kernel={kernel} userland={userland}")]
+    Inode { kernel: u64, userland: u64 },
+    #[error("mtime changed: kernel={kernel} userland={userland}")]
+    Mtime {
+        kernel: DateTime<Utc>,
+        userland: DateTime<Utc>,
+    },
 }
 
 impl Error {
@@ -299,15 +313,25 @@ impl Key {
             let ebpf_meta = ebpf_meta.ok_or(Error::MetadataRequired)?;
 
             if ebpf_meta.size as u64 != meta.size() {
-                return Err(Error::FileModSinceKernelEvent("size changed"));
+                return Err(Error::FileModSinceKernelEvent(FileMod::Size {
+                    kernel: ebpf_meta.size as u64,
+                    userland: meta.size(),
+                }));
             }
 
             if ebpf_meta.ino != meta.ino() {
-                return Err(Error::FileModSinceKernelEvent("inode changed"));
+                return Err(Error::FileModSinceKernelEvent(FileMod::Inode {
+                    kernel: ebpf_meta.ino,
+                    userland: meta.ino(),
+                }));
             }
 
-            if SystemTime::from(&ebpf_meta.mtime) != k.modified {
-                return Err(Error::FileModSinceKernelEvent("mtime changed"));
+            let kernel_mtime = SystemTime::from(&ebpf_meta.mtime);
+            if kernel_mtime != k.modified {
+                return Err(Error::FileModSinceKernelEvent(FileMod::Mtime {
+                    kernel: kernel_mtime.into(),
+                    userland: k.modified.into(),
+                }));
             }
         }
 
