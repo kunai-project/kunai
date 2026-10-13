@@ -50,13 +50,13 @@ fn test_as_str() {
 
 #[test]
 fn test_meta_list() {
-    let attr: Attribute = syn::parse_quote!(#[error(gen = true)]);
+    let attr: Attribute = syn::parse_quote!(#[error(generate = true)]);
     let args = attr.parse_args::<MetaNameValue>().unwrap();
-    assert!(args.path.is_ident("gen"));
-    if let syn::Expr::Lit(v) = args.value {
-        if let syn::Lit::Bool(b) = v.lit {
-            assert!(b.value)
-        }
+    assert!(args.path.is_ident("generate"));
+    if let syn::Expr::Lit(v) = args.value
+        && let syn::Lit::Bool(b) = v.lit
+    {
+        assert!(b.value)
     }
 }
 
