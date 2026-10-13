@@ -1,7 +1,7 @@
 use aya_ebpf::{macros::map, maps::LruPerCpuHashMap};
 
 use crate::{
-    bpf_events::{log, LogEvent},
+    bpf_events::{LogEvent, log},
     option::BpfOption,
     string::String,
 };

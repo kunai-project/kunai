@@ -3,11 +3,11 @@ use aya_ebpf::cty::c_void;
 use crate::kernel;
 use crate::version::kernel_version;
 
-use super::gen::{self, *};
-use super::{page, rust_shim_kernel_impl, rust_shim_user_impl, CoRe};
+use super::bindings::{self, *};
+use super::{CoRe, page, rust_shim_kernel_impl, rust_shim_user_impl};
 
 #[allow(non_camel_case_types)]
-pub type iovec = CoRe<gen::iovec>;
+pub type iovec = CoRe<bindings::iovec>;
 
 impl iovec {
     rust_shim_kernel_impl!(pub, iovec, iov_base, *mut c_void);
@@ -17,12 +17,12 @@ impl iovec {
 
     #[inline(always)]
     pub unsafe fn get(&self, i: usize) -> Self {
-        self.as_ptr().add(i).into()
+        unsafe { self.as_ptr().add(i).into() }
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type bio_vec = CoRe<gen::bio_vec>;
+pub type bio_vec = CoRe<bindings::bio_vec>;
 
 impl bio_vec {
     rust_shim_kernel_impl!(pub, bio_vec, bv_page, page);
@@ -31,7 +31,7 @@ impl bio_vec {
 
     #[inline(always)]
     pub unsafe fn get(&self, i: usize) -> Self {
-        self.as_ptr().add(i).into()
+        unsafe { self.as_ptr().add(i).into() }
     }
 }
 
@@ -91,7 +91,7 @@ impl IterType {
 }
 
 #[allow(non_camel_case_types)]
-pub type iov_iter = CoRe<gen::iov_iter>;
+pub type iov_iter = CoRe<bindings::iov_iter>;
 
 impl iov_iter {
     rust_shim_kernel_impl!(pub(self), _iter_type, iov_iter, iter_type, u8);
@@ -99,11 +99,13 @@ impl iov_iter {
 
     #[inline(always)]
     pub unsafe fn iter_type(&self) -> Option<IterType> {
-        let t = self
-            ._iter_type()
-            .or_else(|| self._type().map(|t| t as u8))?;
+        unsafe {
+            let t = self
+                ._iter_type()
+                .or_else(|| self._type().map(|t| t as u8))?;
 
-        IterType::from_u8(t)
+            IterType::from_u8(t)
+        }
     }
 
     rust_shim_kernel_impl!(pub, iov_iter, count, u64);
@@ -153,6 +155,6 @@ impl iov_iter {
 
     #[inline(always)]
     pub unsafe fn iov(&self) -> Option<iovec> {
-        self._iov().or_else(|| self.___iov())
+        unsafe { self._iov().or_else(|| self.___iov()) }
     }
 }

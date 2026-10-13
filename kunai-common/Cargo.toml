@@ -1,7 +1,7 @@
 [package]
 name = "kunai-common"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 description = "Package providing shared structures between eBPF and userland"
 repository.workspace = true
 license.workspace = true

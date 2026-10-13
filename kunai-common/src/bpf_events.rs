@@ -316,10 +316,12 @@ impl<T> Event<T> {
 
     #[inline]
     unsafe fn as_byte_slice(&self) -> &[u8] {
-        core::slice::from_raw_parts(
-            (self as *const Self) as *const u8,
-            core::mem::size_of::<Event<T>>(),
-        )
+        unsafe {
+            core::slice::from_raw_parts(
+                (self as *const Self) as *const u8,
+                core::mem::size_of::<Event<T>>(),
+            )
+        }
     }
 
     #[inline]

@@ -1,4 +1,4 @@
-use bindgen::builder;
+use bindgen::{RustEdition, builder};
 use std::{path::Path, process::Command};
 
 fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q, bpf_target_arch: &str) {
@@ -10,6 +10,7 @@ fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q, bpf_target_arch:
         .use_core() // --use-core
         .allowlist_function("shim_.*")
         .size_t_is_usize(false) // --no-size_t-is-usize
+        .rust_edition(RustEdition::Edition2024)
         .clang_arg("-target")
         .clang_arg("bpf")
         .disable_header_comment();
@@ -34,7 +35,7 @@ fn bindgen<P: AsRef<Path>, Q: AsRef<Path>>(file: P, out_dir: Q, bpf_target_arch:
 
 fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let gen_dir = Path::new("src/co_re/gen");
+    let bindings_dir = Path::new("src/co_re/bindings");
     let shim_dir = Path::new("src/co_re/c");
     let shim_file = shim_dir.join("shim.c");
 
@@ -44,7 +45,7 @@ fn main() {
             "bpf_target_arch cfg must be set (via RUSTFLAGS) when building for the bpf target",
         );
 
-        bindgen(&shim_file, gen_dir, bpf_target_arch.as_str());
+        bindgen(&shim_file, bindings_dir, bpf_target_arch.as_str());
 
         let s = Command::new("clang")
             .arg("-I")
@@ -69,12 +70,12 @@ fn main() {
             panic!("failed to compile C-shim")
         }
 
-        println!("cargo:rerun-if-changed={}", gen_dir.display());
+        println!("cargo:rerun-if-changed={}", bindings_dir.display());
         println!("cargo:rustc-link-search=native={out_dir}");
         println!("cargo:rustc-link-lib=link-arg={out_dir}/shim.o");
     }
 
     println!("cargo:rerun-if-changed={}", shim_file.to_string_lossy());
-    // gen.rs/shim.o content depends on this cfg
+    // bindings/shim.o content depends on this cfg
     println!("cargo:rerun-if-env-changed=CARGO_CFG_BPF_TARGET_ARCH");
 }

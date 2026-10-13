@@ -1,7 +1,7 @@
 use super::KernelVersion;
 use core::ptr;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 static LINUX_KERNEL_VERSION: KernelVersion = KernelVersion::MIN_VERSION;
 
 #[inline(always)]

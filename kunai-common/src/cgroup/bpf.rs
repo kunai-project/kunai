@@ -12,33 +12,35 @@ impl Cgroup {
     /// to minimize the number of instructions.
     #[inline(always)]
     pub unsafe fn resolve(&mut self, cgroup: co_re::cgroup) -> Result<(), Error> {
-        // initialize error
-        self.error = BpfOption::None;
+        unsafe {
+            // initialize error
+            self.error = BpfOption::None;
 
-        if cgroup.is_null() {
-            return Ok(());
-        }
-
-        let mut kn = core_read_kernel!(cgroup, kn).ok_or(Error::Kn)?;
-
-        for _ in 0..MAX_CGROUP_DEPTH {
-            let kn_name = core_read_kernel!(kn, name).ok_or(Error::KnName)?;
-            self.path.append_kernel_str_bytes(kn_name).map_err(|_| {
-                self.error = BpfOption::Some(Error::Append);
-                Error::Append
-            })?;
-
-            kn = core_read_kernel!(kn, parent).ok_or(Error::KnParent)?;
-            if kn.is_null() {
-                break;
+            if cgroup.is_null() {
+                return Ok(());
             }
 
-            self.path.push_char('/').map_err(|_| {
-                self.error = BpfOption::Some(Error::Append);
-                Error::Append
-            })?;
-        }
+            let mut kn = core_read_kernel!(cgroup, kn).ok_or(Error::Kn)?;
 
-        Ok(())
+            for _ in 0..MAX_CGROUP_DEPTH {
+                let kn_name = core_read_kernel!(kn, name).ok_or(Error::KnName)?;
+                self.path.append_kernel_str_bytes(kn_name).map_err(|_| {
+                    self.error = BpfOption::Some(Error::Append);
+                    Error::Append
+                })?;
+
+                kn = core_read_kernel!(kn, parent).ok_or(Error::KnParent)?;
+                if kn.is_null() {
+                    break;
+                }
+
+                self.path.push_char('/').map_err(|_| {
+                    self.error = BpfOption::Some(Error::Append);
+                    Error::Append
+                })?;
+            }
+
+            Ok(())
+        }
     }
 }

@@ -1,11 +1,11 @@
 use aya_ebpf::cty::c_void;
 use aya_ebpf::helpers::{bpf_probe_read_kernel_buf, bpf_probe_read_user_buf};
 
-use super::gen::{self, *};
-use super::{iov_iter, iovec, rust_shim_kernel_impl, rust_shim_user_impl, CoRe};
+use super::bindings::{self, *};
+use super::{CoRe, iov_iter, iovec, rust_shim_kernel_impl, rust_shim_user_impl};
 
 #[allow(non_camel_case_types)]
-pub type in6_addr = CoRe<gen::in6_addr>;
+pub type in6_addr = CoRe<bindings::in6_addr>;
 
 impl in6_addr {
     rust_shim_kernel_impl!(pub(self), in6_addr, u6_addr8, *mut u8);
@@ -13,46 +13,58 @@ impl in6_addr {
 
     #[inline(always)]
     pub unsafe fn addr8(&self) -> Option<[u8; 16]> {
-        let mut addr = [0u8; 16];
-        bpf_probe_read_kernel_buf(self.u6_addr8()?, addr.as_mut_slice()).ok()?;
-        Some(addr)
+        unsafe {
+            let mut addr = [0u8; 16];
+            bpf_probe_read_kernel_buf(self.u6_addr8()?, addr.as_mut_slice()).ok()?;
+            Some(addr)
+        }
     }
 
     #[inline(always)]
     pub unsafe fn addr16(&self) -> Option<[u16; 8]> {
-        let addr = self.addr8()?;
-        Some(core::mem::transmute::<[u8; 16], [u16; 8]>(addr))
+        unsafe {
+            let addr = self.addr8()?;
+            Some(core::mem::transmute::<[u8; 16], [u16; 8]>(addr))
+        }
     }
 
     #[inline(always)]
     pub unsafe fn addr32(&self) -> Option<[u32; 4]> {
-        let addr = self.addr8()?;
-        let o = core::mem::transmute::<[u8; 16], [u32; 4]>(addr);
-        Some(o)
+        unsafe {
+            let addr = self.addr8()?;
+            let o = core::mem::transmute::<[u8; 16], [u32; 4]>(addr);
+            Some(o)
+        }
     }
 
     #[inline(always)]
     pub unsafe fn addr8_user(&self) -> Option<[u8; 16]> {
-        let mut addr = [0u8; 16];
-        bpf_probe_read_user_buf(self.u6_addr8_user()?, addr.as_mut_slice()).ok()?;
-        Some(addr)
+        unsafe {
+            let mut addr = [0u8; 16];
+            bpf_probe_read_user_buf(self.u6_addr8_user()?, addr.as_mut_slice()).ok()?;
+            Some(addr)
+        }
     }
 
     #[inline(always)]
     pub unsafe fn addr16_user(&self) -> Option<[u16; 8]> {
-        let addr = self.addr8_user()?;
-        Some(core::mem::transmute::<[u8; 16], [u16; 8]>(addr))
+        unsafe {
+            let addr = self.addr8_user()?;
+            Some(core::mem::transmute::<[u8; 16], [u16; 8]>(addr))
+        }
     }
 
     #[inline(always)]
     pub unsafe fn addr32_user(&self) -> Option<[u32; 4]> {
-        let addr = self.addr8_user()?;
-        Some(core::mem::transmute::<[u8; 16], [u32; 4]>(addr))
+        unsafe {
+            let addr = self.addr8_user()?;
+            Some(core::mem::transmute::<[u8; 16], [u32; 4]>(addr))
+        }
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type socket = CoRe<gen::socket>;
+pub type socket = CoRe<bindings::socket>;
 
 impl socket {
     rust_shim_kernel_impl!(pub, socket, sk, sock);
@@ -61,14 +73,14 @@ impl socket {
 // this is used for older kernels < 5.6
 // where sk_protocol is a bitfield
 #[allow(non_camel_case_types)]
-type sock___pre_5_6 = CoRe<gen::sock___pre_5_6>;
+type sock___pre_5_6 = CoRe<bindings::sock___pre_5_6>;
 
 impl sock___pre_5_6 {
     rust_shim_kernel_impl!(pub(self), sock___pre_5_6, sk_protocol, u8);
 }
 
 #[allow(non_camel_case_types)]
-pub type sock = CoRe<gen::sock>;
+pub type sock = CoRe<bindings::sock>;
 
 impl sock {
     rust_shim_kernel_impl!(pub, sk_common, sock, __sk_common, sock_common);
@@ -78,17 +90,19 @@ impl sock {
 
     // for any kernel
     pub unsafe fn sk_protocol(&self) -> Option<u16> {
-        let os = sock___pre_5_6::from_ptr(self.as_ptr() as *const gen::sock___pre_5_6);
-        os.sk_protocol()
-            .map(u16::from)
-            .or_else(|| self._sk_protocol())
+        unsafe {
+            let os = sock___pre_5_6::from_ptr(self.as_ptr() as *const bindings::sock___pre_5_6);
+            os.sk_protocol()
+                .map(u16::from)
+                .or_else(|| self._sk_protocol())
+        }
     }
 
     rust_shim_kernel_impl!(pub, sock, sk_receive_queue, sk_buff_head);
 }
 
 #[allow(non_camel_case_types)]
-pub type sock_common = CoRe<gen::sock_common>;
+pub type sock_common = CoRe<bindings::sock_common>;
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
@@ -110,28 +124,36 @@ impl sock_common {
 
     #[inline(always)]
     pub unsafe fn skc_daddr(&self) -> Option<u32> {
-        let addrpair: skc_addrpair = core::mem::transmute(self.skc_addrpair()?);
-        Some(addrpair.skc_daddr)
+        unsafe {
+            let addrpair: skc_addrpair = core::mem::transmute(self.skc_addrpair()?);
+            Some(addrpair.skc_daddr)
+        }
     }
 
     #[inline(always)]
     pub unsafe fn skc_rcv_saddr(&self) -> Option<u32> {
-        let addrpair: skc_addrpair = core::mem::transmute(self.skc_addrpair()?);
-        Some(addrpair.skc_rcv_saddr)
+        unsafe {
+            let addrpair: skc_addrpair = core::mem::transmute(self.skc_addrpair()?);
+            Some(addrpair.skc_rcv_saddr)
+        }
     }
 
     rust_shim_kernel_impl!(pub, sock_common, skc_portpair, u32);
 
     #[inline(always)]
     pub unsafe fn skc_dport(&self) -> Option<u16> {
-        let portpair: skc_portpair = core::mem::transmute(self.skc_portpair()?);
-        Some(portpair.skc_dport)
+        unsafe {
+            let portpair: skc_portpair = core::mem::transmute(self.skc_portpair()?);
+            Some(portpair.skc_dport)
+        }
     }
 
     #[inline(always)]
     pub unsafe fn skc_num(&self) -> Option<u16> {
-        let portpair: skc_portpair = core::mem::transmute(self.skc_portpair()?);
-        Some(portpair.skc_num)
+        unsafe {
+            let portpair: skc_portpair = core::mem::transmute(self.skc_portpair()?);
+            Some(portpair.skc_num)
+        }
     }
 
     rust_shim_kernel_impl!(pub, sock_common, skc_v6_daddr, in6_addr);
@@ -139,28 +161,30 @@ impl sock_common {
 }
 
 #[allow(non_camel_case_types)]
-pub type msghdr = CoRe<gen::msghdr>;
+pub type msghdr = CoRe<bindings::msghdr>;
 
 impl msghdr {
     rust_shim_kernel_impl!(pub, msghdr, msg_name, *mut c_void);
     rust_shim_kernel_impl!(pub, msghdr, msg_iter, iov_iter);
 
     pub unsafe fn sockaddr(&self) -> Option<sockaddr> {
-        if let Some(msg_name) = self.msg_name() {
-            if !msg_name.is_null() {
+        unsafe {
+            if let Some(msg_name) = self.msg_name()
+                && !msg_name.is_null()
+            {
                 return Some(sockaddr::from_ptr(msg_name as *const _));
             }
+            None
         }
-        None
     }
 
     pub unsafe fn has_msg_name(&self) -> bool {
-        self.msg_name().map(|n| !n.is_null()).unwrap_or(false)
+        unsafe { self.msg_name().map(|n| !n.is_null()).unwrap_or(false) }
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type sk_buff = CoRe<gen::sk_buff>;
+pub type sk_buff = CoRe<bindings::sk_buff>;
 
 impl sk_buff {
     rust_shim_kernel_impl!(pub, sk_buff, len, u32);
@@ -168,7 +192,7 @@ impl sk_buff {
 }
 
 #[allow(non_camel_case_types)]
-pub type sk_buff_list = CoRe<gen::sk_buff_list>;
+pub type sk_buff_list = CoRe<bindings::sk_buff_list>;
 
 impl sk_buff_list {
     rust_shim_kernel_impl!(pub, sk_buff_list, next, sk_buff);
@@ -176,7 +200,7 @@ impl sk_buff_list {
 }
 
 #[allow(non_camel_case_types)]
-pub type sk_buff_head = CoRe<gen::sk_buff_head>;
+pub type sk_buff_head = CoRe<bindings::sk_buff_head>;
 
 impl sk_buff_head {
     rust_shim_kernel_impl!(pub(self), _next, sk_buff_head, next, sk_buff);
@@ -187,18 +211,20 @@ impl sk_buff_head {
     // we handle that case here.
     #[inline(always)]
     pub unsafe fn next(&self) -> Option<sk_buff> {
-        if let Some(next) = self._next() {
-            return Some(next);
+        unsafe {
+            if let Some(next) = self._next() {
+                return Some(next);
+            }
+            if let Some(list) = self._list() {
+                return list.next();
+            }
+            None
         }
-        if let Some(list) = self._list() {
-            return list.next();
-        }
-        None
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type user_msghdr = CoRe<gen::user_msghdr>;
+pub type user_msghdr = CoRe<bindings::user_msghdr>;
 
 impl user_msghdr {
     rust_shim_user_impl!(pub, user_msghdr, msg_name, *mut c_void);
@@ -207,7 +233,7 @@ impl user_msghdr {
 }
 
 #[allow(non_camel_case_types)]
-pub type sockaddr = CoRe<gen::sockaddr>;
+pub type sockaddr = CoRe<bindings::sockaddr>;
 
 impl sockaddr {
     rust_shim_kernel_impl!(pub, sockaddr, sa_family, u32);
@@ -215,7 +241,7 @@ impl sockaddr {
 }
 
 #[allow(non_camel_case_types)]
-pub type sockaddr_in = CoRe<gen::sockaddr_in>;
+pub type sockaddr_in = CoRe<bindings::sockaddr_in>;
 
 impl From<sockaddr> for sockaddr_in {
     #[inline(always)]
@@ -236,7 +262,7 @@ impl sockaddr_in {
 }
 
 #[allow(non_camel_case_types)]
-pub type sockaddr_in6 = CoRe<gen::sockaddr_in6>;
+pub type sockaddr_in6 = CoRe<bindings::sockaddr_in6>;
 
 impl From<sockaddr> for sockaddr_in6 {
     fn from(value: sockaddr) -> Self {

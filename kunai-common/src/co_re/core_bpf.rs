@@ -1,17 +1,17 @@
 use aya_ebpf::helpers::bpf_probe_read_kernel_buf;
 
-use super::gen::{self, *};
-use super::{rust_shim_kernel_impl, sock_fprog_kern, CoRe};
+use super::bindings::{self, *};
+use super::{CoRe, rust_shim_kernel_impl, sock_fprog_kern};
 
 #[allow(non_camel_case_types)]
-pub type bpf_ksym = CoRe<gen::bpf_ksym>;
+pub type bpf_ksym = CoRe<bindings::bpf_ksym>;
 
 impl bpf_ksym {
     rust_shim_kernel_impl!(pub, bpf_ksym, name, *mut u8);
 }
 
 #[allow(non_camel_case_types)]
-pub type bpf_prog = CoRe<gen::bpf_prog>;
+pub type bpf_prog = CoRe<bindings::bpf_prog>;
 
 impl bpf_prog {
     rust_shim_kernel_impl!(pub, bpf_prog, len, u32);
@@ -24,18 +24,20 @@ impl bpf_prog {
 
     #[inline(always)]
     pub unsafe fn tag_array(&self) -> Option<[u8; 8]> {
-        let mut out = [0; 8];
-        if let Some(tag) = self.tag() {
-            if !tag.is_null() {
+        unsafe {
+            let mut out = [0; 8];
+            if let Some(tag) = self.tag()
+                && !tag.is_null()
+            {
                 bpf_probe_read_kernel_buf(tag, out.as_mut_slice()).ok()?;
             }
+            Some(out)
         }
-        Some(out)
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type bpf_prog_aux = CoRe<gen::bpf_prog_aux>;
+pub type bpf_prog_aux = CoRe<bindings::bpf_prog_aux>;
 
 impl bpf_prog_aux {
     rust_shim_kernel_impl!(pub, bpf_prog_aux, id, u32);
