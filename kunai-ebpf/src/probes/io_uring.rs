@@ -48,19 +48,21 @@ fn handle_issue_sqe(ctx: ProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_io_issue_sqe(ctx: &ProbeContext) -> ProbeResult<()> {
-    let req = io_kiocb::from_ptr(kprobe_arg!(ctx, 0)?);
+    unsafe {
+        let req = io_kiocb::from_ptr(kprobe_arg!(ctx, 0)?);
 
-    alloc::init()?;
+        alloc::init()?;
 
-    let event = alloc::alloc_zero::<IoUringSqeEvent>()?;
+        let event = alloc::alloc_zero::<IoUringSqeEvent>()?;
 
-    event.init_from_current_task(Type::IoUringSqe)?;
+        event.init_from_current_task(Type::IoUringSqe)?;
 
-    // set event data
-    event.data.opcode = core_read_kernel!(req, opcode)?;
+        // set event data
+        event.data.opcode = core_read_kernel!(req, opcode)?;
 
-    pipe_event(ctx, event);
-    Ok(())
+        pipe_event(ctx, event);
+        Ok(())
+    }
 }
 
 /// For kernels in [5.1; 5.4]
@@ -83,18 +85,20 @@ pub fn enter_io_submit_sqe(ctx: ProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_io_submit_sqe(ctx: &ProbeContext) -> ProbeResult<()> {
-    // Assuming the first argument is the io_kiocb pointer, similar to io_issue_sqe
-    let s = sqe_submit::from_ptr(kprobe_arg!(ctx, 2)?);
+    unsafe {
+        // Assuming the first argument is the io_kiocb pointer, similar to io_issue_sqe
+        let s = sqe_submit::from_ptr(kprobe_arg!(ctx, 2)?);
 
-    alloc::init()?;
+        alloc::init()?;
 
-    let event = alloc::alloc_zero::<IoUringSqeEvent>()?;
+        let event = alloc::alloc_zero::<IoUringSqeEvent>()?;
 
-    event.init_from_current_task(Type::IoUringSqe)?;
+        event.init_from_current_task(Type::IoUringSqe)?;
 
-    // Set event data
-    event.data.opcode = core_read_kernel!(s, sqe, opcode)?;
+        // Set event data
+        event.data.opcode = core_read_kernel!(s, sqe, opcode)?;
 
-    pipe_event(ctx, event);
-    Ok(())
+        pipe_event(ctx, event);
+        Ok(())
+    }
 }

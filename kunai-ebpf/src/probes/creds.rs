@@ -2,8 +2,8 @@ use aya_ebpf::programs::ProbeContext;
 
 use super::*;
 
-/// commit_creds() is the single choke point every credential change goes through, 
-/// and it runs after all the LSM fixups (cap_emulate_setxuid() and friends), so `new` 
+/// commit_creds() is the single choke point every credential change goes through,
+/// and it runs after all the LSM fixups (cap_emulate_setxuid() and friends), so `new`
 /// holds exactly what the kernel installs on the task.
 ///
 /// match-proto:v5.4:kernel/cred.c:int commit_creds(struct cred *new)
@@ -25,29 +25,31 @@ pub fn creds_commit_creds(ctx: ProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_commit_creds(ctx: &ProbeContext) -> Result<(), ProbeError> {
-    if_disabled_return!(Type::CommitCreds, ());
+    unsafe {
+        if_disabled_return!(Type::CommitCreds, ());
 
-    let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
+        let new = co_re::cred::from_ptr(kprobe_arg!(ctx, 0)?);
 
-    if new.is_null() {
-        return Ok(());
+        if new.is_null() {
+            return Ok(());
+        }
+
+        // creds are not committed yet so the task still carries the old ones
+        let task = co_re::task_struct::current();
+        let old = core_read_kernel!(task, cred)?;
+
+        if old.is_null() {
+            return Ok(());
+        }
+
+        alloc::init()?;
+        let event = alloc::alloc_zero::<CommitCredsEvent>()?;
+        event.init_from_current_task(Type::CommitCreds)?;
+        event.data.old.from_cred(old)?;
+        event.data.new.from_cred(new)?;
+
+        pipe_event(ctx, event);
+
+        Ok(())
     }
-
-    // creds are not committed yet so the task still carries the old ones
-    let task = co_re::task_struct::current();
-    let old = core_read_kernel!(task, cred)?;
-
-    if old.is_null() {
-        return Ok(());
-    }
-
-    alloc::init()?;
-    let event = alloc::alloc_zero::<CommitCredsEvent>()?;
-    event.init_from_current_task(Type::CommitCreds)?;
-    event.data.old.from_cred(old)?;
-    event.data.new.from_cred(new)?;
-
-    pipe_event(ctx, event);
-
-    Ok(())
 }

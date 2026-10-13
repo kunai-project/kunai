@@ -33,22 +33,24 @@ pub fn syscalls_sys_enter_prctl(ctx: RawTracePointContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_enter_prctl(ctx: &RawSysEnterContext) -> ProbeResult<()> {
-    // early return if event is disabled
-    if_disabled_return!(Type::Prctl, ());
+    unsafe {
+        // early return if event is disabled
+        if_disabled_return!(Type::Prctl, ());
 
-    // we need it for kernel 5.4 to prove entire memory is written
-    let mut args = core::mem::zeroed::<PrctlData>();
-    args.option = ctx.arg(0).ok_or(ProbeError::RawSyscallArgFailure)?;
-    args.arg2 = ctx.arg(1).ok_or(ProbeError::RawSyscallArgFailure)?;
-    args.arg3 = ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?;
-    args.arg4 = ctx.arg(3).ok_or(ProbeError::RawSyscallArgFailure)?;
-    args.arg5 = ctx.arg(4).ok_or(ProbeError::RawSyscallArgFailure)?;
-    args.success = false;
+        // we need it for kernel 5.4 to prove entire memory is written
+        let mut args = core::mem::zeroed::<PrctlData>();
+        args.option = ctx.arg(0).ok_or(ProbeError::RawSyscallArgFailure)?;
+        args.arg2 = ctx.arg(1).ok_or(ProbeError::RawSyscallArgFailure)?;
+        args.arg3 = ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?;
+        args.arg4 = ctx.arg(3).ok_or(ProbeError::RawSyscallArgFailure)?;
+        args.arg5 = ctx.arg(4).ok_or(ProbeError::RawSyscallArgFailure)?;
+        args.success = false;
 
-    // we ignore result as we can check something went wrong when we try to insert argument
-    ignore_result!(PRCTL_ARGS.insert(&bpf_task_tracking_id(), &args, 0));
+        // we ignore result as we can check something went wrong when we try to insert argument
+        ignore_result!(PRCTL_ARGS.insert(&bpf_task_tracking_id(), &args, 0));
 
-    Ok(())
+        Ok(())
+    }
 }
 
 #[raw_tracepoint(tracepoint = "sys_exit")]
@@ -76,26 +78,28 @@ pub fn syscalls_sys_exit_prctl(ctx: RawTracePointContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_exit_prctl(ctx: &RawSysExitContext) -> ProbeResult<()> {
-    // early return if event is disabled
-    if_disabled_return!(Type::Prctl, ());
+    unsafe {
+        // early return if event is disabled
+        if_disabled_return!(Type::Prctl, ());
 
-    let key = bpf_task_tracking_id();
+        let key = bpf_task_tracking_id();
 
-    let entry_args = *(PRCTL_ARGS.get(&key).ok_or(errors::MapError::GetFailure)?);
+        let entry_args = *(PRCTL_ARGS.get(&key).ok_or(errors::MapError::GetFailure)?);
 
-    alloc::init()?;
-    let event = alloc::alloc_zero::<PrctlEvent>()?;
+        alloc::init()?;
+        let event = alloc::alloc_zero::<PrctlEvent>()?;
 
-    event.init_from_current_task(Type::Prctl)?;
+        event.init_from_current_task(Type::Prctl)?;
 
-    event.data = entry_args;
-    // on error returns -1
-    event.data.success = ctx.ret() >= 0;
+        event.data = entry_args;
+        // on error returns -1
+        event.data.success = ctx.ret() >= 0;
 
-    pipe_event(ctx, event);
+        pipe_event(ctx, event);
 
-    // cleanup prctl arguments no need to handle failure
-    ignore_result!(PRCTL_ARGS.remove(&key));
+        // cleanup prctl arguments no need to handle failure
+        ignore_result!(PRCTL_ARGS.remove(&key));
 
-    Ok(())
+        Ok(())
+    }
 }

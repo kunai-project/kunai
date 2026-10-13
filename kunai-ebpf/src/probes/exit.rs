@@ -39,18 +39,20 @@ pub fn syscalls_sys_enter_exit(ctx: RawTracePointContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_sys_enter_exit(ctx: &RawSysEnterContext, t: Type) -> ProbeResult<()> {
-    alloc::init()?;
-    let event = alloc::alloc_zero::<ExitEvent>()?;
+    unsafe {
+        alloc::init()?;
+        let event = alloc::alloc_zero::<ExitEvent>()?;
 
-    event.init_from_current_task(t)?;
+        event.init_from_current_task(t)?;
 
-    // set event data
-    event.data.error_code = ctx
-        .arg(0)
-        .ok_or(ProbeError::RawSyscallArgFailure)
-        .inspect_err(|_| error!(ctx, "failed to get exit error code"))
-        .unwrap_or_default();
-    pipe_event(ctx, event);
+        // set event data
+        event.data.error_code = ctx
+            .arg(0)
+            .ok_or(ProbeError::RawSyscallArgFailure)
+            .inspect_err(|_| error!(ctx, "failed to get exit error code"))
+            .unwrap_or_default();
+        pipe_event(ctx, event);
 
-    Ok(())
+        Ok(())
+    }
 }

@@ -28,35 +28,37 @@ pub fn syscalls_sys_enter_mmap(ctx: RawTracePointContext) -> u32 {
 }
 
 unsafe fn try_sys_enter_mmap(ctx: &RawSysEnterContext) -> ProbeResult<()> {
-    // early return if event is disabled
-    if_disabled_return!(Type::MmapExec, ());
+    unsafe {
+        // early return if event is disabled
+        if_disabled_return!(Type::MmapExec, ());
 
-    let prot: u64 = ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?;
-    let fd: i32 = ctx.arg(4).ok_or(ProbeError::RawSyscallArgFailure)?;
+        let prot: u64 = ctx.arg(2).ok_or(ProbeError::RawSyscallArgFailure)?;
+        let fd: i32 = ctx.arg(4).ok_or(ProbeError::RawSyscallArgFailure)?;
 
-    if fd >= 0 && prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
-        let current = task_struct::current();
+        if fd >= 0 && prot & PROT_EXEC as u64 == PROT_EXEC as u64 {
+            let current = task_struct::current();
 
-        let file = current
-            .get_fd(fd as usize)
-            .ok_or(ProbeError::FileNotFound)?;
+            let file = current
+                .get_fd(fd as usize)
+                .ok_or(ProbeError::FileNotFound)?;
 
-        if file.is_null() {
-            return Err(ProbeError::FileNotFound);
+            if file.is_null() {
+                return Err(ProbeError::FileNotFound);
+            }
+
+            alloc::init()?;
+            let event = alloc::alloc_zero::<MmapExecEvent>()?;
+
+            event.init_from_current_task(Type::MmapExec)?;
+
+            event
+                .data
+                .filename
+                .core_resolve_file(&file, MAX_PATH_DEPTH)?;
+
+            pipe_event(ctx, event);
         }
 
-        alloc::init()?;
-        let event = alloc::alloc_zero::<MmapExecEvent>()?;
-
-        event.init_from_current_task(Type::MmapExec)?;
-
-        event
-            .data
-            .filename
-            .core_resolve_file(&file, MAX_PATH_DEPTH)?;
-
-        pipe_event(ctx, event);
+        Ok(())
     }
-
-    Ok(())
 }
