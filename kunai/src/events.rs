@@ -1246,7 +1246,7 @@ pub struct FileScanData {
     pub path: PathBuf,
     pub meta: FileMeta,
     #[getter(skip)]
-    pub signatures: Vec<String>,
+    pub signatures: Arc<[String]>,
     pub positives: usize,
     pub source_event: Uuid,
     pub scan_error: Option<String>,

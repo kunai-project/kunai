@@ -1105,20 +1105,21 @@ impl EventSink<'_> {
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
         let cp = cache::Path::from(p.to_path_buf());
-        // if the scanner is None, signatures will be an empty Vec
+        // if the scanner is None, signatures stay at their (empty) default
         let (sigs, err) = match self.file_scanner.as_mut() {
             Some(s) => match self.caches.get_sig_in_ns(ns, &cp, s) {
-                Ok((sigs, msg)) => (sigs, msg),
-                Err(e) => (vec![], Some(format!("{e}"))),
+                Ok((sigs, msg)) => (Some(sigs), msg),
+                Err(e) => (None, Some(format!("{e}"))),
             },
-            None => (vec![], None),
+            None => (None, None),
         };
 
-        let pos = sigs.len();
         let mut data = FileScanData::from_hashes(self.get_hashes_in_ns(Some(ns), &cp));
         data.source_event = event.info().event.uuid;
-        data.signatures = sigs;
-        data.positives = pos;
+        if let Some(sigs) = sigs {
+            data.positives = sigs.len();
+            data.signatures = sigs;
+        }
         data.scan_error = err;
 
         let info = EventInfo::from_other_with_type(event.info().clone(), Type::FileScan);
