@@ -240,12 +240,12 @@ macro_rules! rust_shim_user_impl {
 pub(crate) use rust_shim_user_impl;
 
 macro_rules! core_read_kernel {
-    ($struc:expr_2021, $field:ident) => {
+    ($struc:expr, $field:ident) => {
         $struc
             .$field()
     };
 
-    ($struc:expr_2021, $first:ident, $($rest: ident),*) => {
+    ($struc:expr, $first:ident, $($rest: ident),*) => {
         $struc
             .$first()
             $(

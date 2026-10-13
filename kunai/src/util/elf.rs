@@ -27,15 +27,14 @@ impl ElfInfo {
             if let Some(section) = sym
                 .section_index()
                 .and_then(|i| obj.section_by_index(i).ok())
+                && let (Ok(sym_name), Ok(sec_name)) = (sym.name(), section.name())
             {
-                if let (Ok(sym_name), Ok(sec_name)) = (sym.name(), section.name()) {
-                    s.symbols.insert(
-                        sym_name.to_string(),
-                        SymbolInfo {
-                            section_name: sec_name.to_string(),
-                        },
-                    );
-                }
+                s.symbols.insert(
+                    sym_name.to_string(),
+                    SymbolInfo {
+                        section_name: sec_name.to_string(),
+                    },
+                );
             }
         }
         Ok(s)

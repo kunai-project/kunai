@@ -14,11 +14,11 @@ use gene::{Compiler, Engine};
 use huby::ByteSize;
 use kunai::containers::Container;
 use kunai::events::{
-    agent::AgentEventInfo, BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData,
-    CommitCredsData, ConnectData, Creds, CredsTamperedData, DnsQueryData, ErrorData, EventInfo,
-    ExecveData, ExitData, FileData, FileRenameData, FileScanData, FilterInfo, InitModuleData,
-    KillData, KunaiEvent, LossData, MmapExecData, MprotectData, NetworkInfo, PrctlData, PtraceData,
-    ScanResult, SendDataData, SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData, UserEvent,
+    BpfProgLoadData, BpfProgTypeInfo, BpfSocketFilterData, CloneData, CommitCredsData, ConnectData,
+    Creds, CredsTamperedData, DnsQueryData, ErrorData, EventInfo, ExecveData, ExitData, FileData,
+    FileRenameData, FileScanData, FilterInfo, InitModuleData, KillData, KunaiEvent, LossData,
+    MmapExecData, MprotectData, NetworkInfo, PrctlData, PtraceData, ScanResult, SendDataData,
+    SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData, UserEvent, agent::AgentEventInfo,
 };
 use kunai::events::{IoUringOp, IoUringSqeData, StartData};
 use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo, TaskKey};
@@ -34,7 +34,7 @@ use kunai::util::{
 use kunai::yara::{Scanner, SourceCode};
 use kunai::{cache, util};
 use kunai_common::bpf_events::{
-    self, DomainResponse, EbpfEvent, PrctlOption, Signal, TaskInfo, Type, MAX_BPF_EVENT_SIZE,
+    self, DomainResponse, EbpfEvent, MAX_BPF_EVENT_SIZE, PrctlOption, Signal, TaskInfo, Type,
 };
 use kunai_common::config::Filter;
 use kunai_common::io_uring::io_uring_op;
@@ -43,13 +43,13 @@ use kunai_common::{creds, inspect_err, kernel};
 
 use kunai::util::namespace::{Mnt, Namespace};
 use kunai_macros::StrEnum;
-use libc::{RLIMIT_MEMLOCK, RLIM_INFINITY};
+use libc::{RLIM_INFINITY, RLIMIT_MEMLOCK};
 use log::LevelFilter;
 use lru_st::collections::LruHashSet;
 use pure_magic::MagicDb;
 use serde::{Deserialize, Serialize};
 
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::timeout;
 
@@ -73,13 +73,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{process, vec};
 
-use aya::{maps::perf::PerfEventArray, maps::HashMap as AyaHashMap, util::online_cpus, Ebpf};
+use aya::{Ebpf, maps::HashMap as AyaHashMap, maps::perf::PerfEventArray, util::online_cpus};
 
 use aya::VerifierLogLevel;
 
 use log::{debug, error, info, warn};
 
-use tokio::sync::{mpsc, Barrier, Mutex};
+use tokio::sync::{Barrier, Mutex, mpsc};
 use tokio::{task, time};
 
 use kunai::cache::*;
@@ -209,10 +209,12 @@ impl Processes {
 
         if ancestors.len() >= MAX_ANCESTORS - 1 {
             ancestors.push("(truncated)".into());
-        } else if let Some(last) = last {
-            if last.pid != 1 && !last.is_kthread() && skip == 0 {
-                ancestors.push("?".into());
-            }
+        } else if let Some(last) = last
+            && last.pid != 1
+            && !last.is_kthread()
+            && skip == 0
+        {
+            ancestors.push("?".into());
         }
 
         ancestors.reverse();
@@ -1257,13 +1259,13 @@ impl EventConsumer<'_> {
             v => {
                 let path = PathBuf::from(v);
 
-                if let Some(parent) = path.parent() {
-                    if !parent.exists() {
-                        // we only create parent directory
-                        DirBuilder::new().mode(0o700).create(parent).map_err(|e| {
-                            anyhow!("failed to create output directory {parent:?}: {e}")
-                        })?;
-                    }
+                if let Some(parent) = path.parent()
+                    && !parent.exists()
+                {
+                    // we only create parent directory
+                    DirBuilder::new().mode(0o700).create(parent).map_err(|e| {
+                        anyhow!("failed to create output directory {parent:?}: {e}")
+                    })?;
                 }
 
                 let mut opts = firo::OpenOptions::new();
@@ -1885,11 +1887,10 @@ impl EventConsumer<'_> {
                 .get(&pk)
                 .and_then(|p| p.real_parent_key)
                 .as_ref()
+                && no_running_desc.contains(rpk)
             {
-                if no_running_desc.contains(rpk) {
-                    no_running_desc.insert(pk);
-                    continue;
-                }
+                no_running_desc.insert(pk);
+                continue;
             }
 
             if !self.proc_has_running_descendent(&pk) {
