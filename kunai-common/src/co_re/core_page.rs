@@ -5,25 +5,25 @@ use aya_ebpf::cty::c_void;
 use aya_ebpf::helpers::bpf_probe_read_kernel;
 
 use super::{
-    gen::{self, shim_size_of_page},
     CoRe,
+    bindings::{self, shim_size_of_page},
 };
 use core::ptr;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 static PAGE_SIZE: u64 = 0;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 static PAGE_SHIFT: u64 = 0;
 
 #[cfg(bpf_target_arch = "x86_64")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 static VMEMMAP_BASE_PTR: u64 = 0;
 #[cfg(any(bpf_target_arch = "x86_64", bpf_target_arch = "aarch64"))]
 static mut VMEMMAP_BASE: u64 = 0;
 
 #[cfg(bpf_target_arch = "x86_64")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 static PAGE_OFFSET_BASE_PTR: u64 = 0;
 #[cfg(any(bpf_target_arch = "x86_64", bpf_target_arch = "aarch64"))]
 static mut PAGE_OFFSET_BASE: u64 = 0;
@@ -131,7 +131,7 @@ fn find_mem_layout_aarch64(page_ptr: u64) -> Option<(u64, u64)> {
 
 /// BPF CO-RE wrapper for the kernel `struct page`.
 #[allow(non_camel_case_types)]
-pub type page = CoRe<gen::page>;
+pub type page = CoRe<bindings::page>;
 
 impl page {
     /// Returns the size of `struct page` as reported by the kernel via CO-RE.

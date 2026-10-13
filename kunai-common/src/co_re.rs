@@ -1,8 +1,8 @@
 #[allow(non_camel_case_types)]
 #[allow(non_upper_case_globals)]
 #[allow(dead_code)]
-mod gen;
-pub use gen::timespec64;
+mod bindings;
+pub use bindings::timespec64;
 
 mod core_task_struct;
 pub use core_task_struct::*;
@@ -126,15 +126,17 @@ macro_rules! rust_shim_kernel_impl_out {
         #[inline(always)]
         #[allow(clippy::len_without_is_empty)]
         $pub unsafe fn $fn_name(&self) -> Option<$ret> {
-            if !self.is_null()
-                && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())
-            {
-                let mut out: $ret = core::mem::zeroed();
-                let shim = paste::paste! {[<shim_ $struct _ $member>]};
-                shim(self.as_ptr_mut(), &mut out);
-                return Some(out);
+            unsafe {
+                if !self.is_null()
+                    && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())
+                {
+                    let mut out: $ret = core::mem::zeroed();
+                    let shim = paste::paste! {[<shim_ $struct _ $member>]};
+                    shim(self.as_ptr_mut(), &mut out);
+                    return Some(out);
+                }
+                None
             }
-            None
         }
     };
 }
@@ -173,18 +175,20 @@ macro_rules! rust_shim_kernel_impl {
         #[inline(always)]
         #[allow(clippy::len_without_is_empty)]
         $pub unsafe fn $fn_name(&self) -> Option<$ret> {
-            const {
-                assert!(
-                    core::mem::size_of::<$ret>() <= 8,
-                    "return type doesn't fit in a register, use the out-pointer variant instead"
-                )
-            };
-            if !self.is_null()
-                && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())
-            {
-                return Some(paste::paste! {[<shim_ $struct _ $member>]}(self.as_ptr_mut()).into());
+            unsafe {
+                const {
+                    assert!(
+                        core::mem::size_of::<$ret>() <= 8,
+                        "return type doesn't fit in a register, use the out-pointer variant instead"
+                    )
+                };
+                if !self.is_null()
+                    && paste::paste! {[<shim_ $struct _ $member _exists>]}(self.as_ptr_mut())
+                {
+                    return Some(paste::paste! {[<shim_ $struct _ $member>]}(self.as_ptr_mut()).into());
+                }
+                None
             }
-            None
         }
     };
 }
@@ -214,18 +218,20 @@ macro_rules! rust_shim_user_impl {
         paste::item!{
         #[inline(always)]
         $pub unsafe fn [<$fn_name _user>] (&self) -> Option<$ret> {
-            const {
-                assert!(
-                    core::mem::size_of::<$ret>() <= 8,
-                    "return type doesn't fit in a register, use the out-pointer variant instead"
-                )
-            };
-            if !self.is_null()
-                && [<shim_ $struct _ $member _exists>](self.as_ptr_mut())
-            {
-                return Some(paste::paste! {[<shim_ $struct _ $member _user>]}(self.as_ptr_mut()).into());
+            unsafe {
+                const {
+                    assert!(
+                        core::mem::size_of::<$ret>() <= 8,
+                        "return type doesn't fit in a register, use the out-pointer variant instead"
+                    )
+                };
+                if !self.is_null()
+                    && [<shim_ $struct _ $member _exists>](self.as_ptr_mut())
+                {
+                    return Some(paste::paste! {[<shim_ $struct _ $member _user>]}(self.as_ptr_mut()).into());
+                }
+                None
             }
-            None
         }
         }
     };

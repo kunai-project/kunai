@@ -32,80 +32,82 @@ pub fn net_security_socket_sendmsg(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_sock_send_data(ctx: &ProbeContext) -> ProbeResult<()> {
-    // returns early if event is disabled
-    if_disabled_return!(Type::SendData, ());
+    unsafe {
+        // returns early if event is disabled
+        if_disabled_return!(Type::SendData, ());
 
-    // we get bpf configuration
-    let c = get_cfg!()?;
+        // we get bpf configuration
+        let c = get_cfg!()?;
 
-    let socket = co_re::socket::from_ptr(kprobe_arg!(ctx, 0)?);
+        let socket = co_re::socket::from_ptr(kprobe_arg!(ctx, 0)?);
 
-    let pmsg = co_re::msghdr::from_ptr(kprobe_arg!(ctx, 1)?);
+        let pmsg = co_re::msghdr::from_ptr(kprobe_arg!(ctx, 1)?);
 
-    let sock = core_read_kernel!(socket, sk)?;
-    let sk_common = core_read_kernel!(sock, sk_common)?;
-    let si = SocketInfo::try_from(sock)?;
+        let sock = core_read_kernel!(socket, sk)?;
+        let sk_common = core_read_kernel!(sock, sk_common)?;
+        let si = SocketInfo::try_from(sock)?;
 
-    // we process only IPv4 and IPv6
-    if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
-        return Ok(());
-    }
+        // we process only IPv4 and IPv6
+        if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
+            return Ok(());
+        }
 
-    let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
+        let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
 
-    alloc::init()?;
+        alloc::init()?;
 
-    let iov_buf = alloc::alloc_zero::<Buffer<ENCRYPT_DATA_MAX_BUFFER_SIZE>>()?;
+        let iov_buf = alloc::alloc_zero::<Buffer<ENCRYPT_DATA_MAX_BUFFER_SIZE>>()?;
 
-    let msg_size = core_read_kernel!(iov_iter, count)?;
+        let msg_size = core_read_kernel!(iov_iter, count)?;
 
-    // if iov_iter contains enough bytes to trigger event
-    if msg_size < c.send_data_min_len {
-        return Ok(());
-    }
+        // if iov_iter contains enough bytes to trigger event
+        if msg_size < c.send_data_min_len {
+            return Ok(());
+        }
 
-    let dst_ip_port = {
-        // handle this particular case: https://elixir.bootlin.com/linux/v6.9.5/source/net/socket.c#L2180
-        if pmsg.has_msg_name() {
-            let sock_addr = core_read_kernel!(pmsg, sockaddr)?;
-            SockAddr::from_sockaddr(sock_addr)?
+        let dst_ip_port = {
+            // handle this particular case: https://elixir.bootlin.com/linux/v6.9.5/source/net/socket.c#L2180
+            if pmsg.has_msg_name() {
+                let sock_addr = core_read_kernel!(pmsg, sockaddr)?;
+                SockAddr::from_sockaddr(sock_addr)?
+            } else {
+                SockAddr::dst_from_sock_common(sk_common)?
+            }
+        };
+
+        let src_ip_port = SockAddr::src_from_sock_common(sk_common)?;
+
+        let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
+
+        let res = if kernel_version() < kernel!(5, 5, 0) {
+            // verifier trips with program too large in 5.4
+            iov_buf.fill_from_iov_iter::<96>(iov_iter)
         } else {
-            SockAddr::dst_from_sock_common(sk_common)?
+            iov_buf.fill_from_iov_iter::<128>(iov_iter)
+        };
+
+        if let Err(e) = res {
+            match e {
+                // buffer full is not a bad error it just tell we have no more space in our buffer
+                kunai_common::buffer::Error::BufferFull => {}
+                e => return Err(e.into()),
+            }
         }
-    };
 
-    let src_ip_port = SockAddr::src_from_sock_common(sk_common)?;
+        let event = alloc::alloc_zero::<SendEntropyEvent>()?;
 
-    let iov_iter = core_read_kernel!(pmsg, msg_iter)?;
+        event.init_from_current_task(Type::SendData)?;
 
-    let res = if kernel_version() < kernel!(5, 5, 0) {
-        // verifier trips with program too large in 5.4
-        iov_buf.fill_from_iov_iter::<96>(iov_iter)
-    } else {
-        iov_buf.fill_from_iov_iter::<128>(iov_iter)
-    };
+        // setting events' data
+        event.data.socket = si;
+        event.data.src = src_ip_port;
+        event.data.dst = dst_ip_port;
+        event.data.real_data_size = msg_size;
+        // we update the frequencies we are going to send to userland
+        event.update_frequencies(iov_buf.as_slice());
 
-    if let Err(e) = res {
-        match e {
-            // buffer full is not a bad error it just tell we have no more space in our buffer
-            kunai_common::buffer::Error::BufferFull => {}
-            e => return Err(e.into()),
-        }
+        pipe_event(ctx, event);
+
+        Ok(())
     }
-
-    let event = alloc::alloc_zero::<SendEntropyEvent>()?;
-
-    event.init_from_current_task(Type::SendData)?;
-
-    // setting events' data
-    event.data.socket = si;
-    event.data.src = src_ip_port;
-    event.data.dst = dst_ip_port;
-    event.data.real_data_size = msg_size;
-    // we update the frequencies we are going to send to userland
-    event.update_frequencies(iov_buf.as_slice());
-
-    pipe_event(ctx, event);
-
-    Ok(())
 }

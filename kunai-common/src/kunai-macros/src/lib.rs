@@ -64,16 +64,16 @@ pub fn error_derive(item: TokenStream) -> TokenStream {
         }
 
         if gen_attr.is_some() {
-            let gen = split_on_capital_letters(&name.to_string())
+            let desc = split_on_capital_letters(&name.to_string())
                 .iter()
                 .map(|s| s.to_ascii_lowercase())
                 .collect::<Vec<String>>()
                 .join(" ");
             if v.fields.is_empty() {
-                desc_arms.push(quote!(Self::#name => #gen,));
+                desc_arms.push(quote!(Self::#name => #desc,));
             } else {
                 let v = vec![quote!(_); v.fields.len()];
-                desc_arms.push(quote!(Self::#name(#(#v),*) => #gen,));
+                desc_arms.push(quote!(Self::#name(#(#v),*) => #desc,));
             }
         }
 

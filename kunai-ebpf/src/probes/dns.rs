@@ -37,67 +37,71 @@ impl SockHelper {
         opt_server: Option<SockAddr>, // optional server IpPort
         tcp_header: bool,             // whether the data contains tcp_header
     ) -> ProbeResult<()> {
-        let socket = self.socket;
-        let sock = core_read_kernel!(socket, sk)?;
-        let sk_common = core_read_kernel!(sock, sk_common)?;
+        unsafe {
+            let socket = self.socket;
+            let sock = core_read_kernel!(socket, sk)?;
+            let sk_common = core_read_kernel!(sock, sk_common)?;
 
-        let si = SocketInfo::try_from(sock)?;
+            let si = SocketInfo::try_from(sock)?;
 
-        // we process only IPv4 and IPv6
-        if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
-            return Ok(());
-        }
-
-        // in some cases it ip/port info is empty in socket
-        // if there is an optional server it takes precedence over addr got from socket
-        let dst = match opt_server {
-            Some(server) => server,
-            None => SockAddr::dst_from_sock_common(sk_common).unwrap_or_default(),
-        };
-
-        // we don't take protocol communicating on other ports than dns
-        if dst.port() != 53 {
-            return Ok(());
-        }
-
-        alloc::init()?;
-        let event = alloc::alloc_zero::<DnsQueryEvent>()?;
-
-        event.data.socket = si;
-        event.data.src = SockAddr::src_from_sock_common(sk_common)?;
-        event.data.dst = dst;
-        event.data.tcp_header = tcp_header;
-
-        match self.udata {
-            Udata::Buf(ubuf, size) => {
-                if size < DNS_HEADER_SIZE {
-                    return Ok(());
-                }
-                event.data.data.read_user_at(ubuf, size as u32)?
+            // we process only IPv4 and IPv6
+            if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
+                return Ok(());
             }
+
+            // in some cases it ip/port info is empty in socket
+            // if there is an optional server it takes precedence over addr got from socket
+            let dst = match opt_server {
+                Some(server) => server,
+                None => SockAddr::dst_from_sock_common(sk_common).unwrap_or_default(),
+            };
+
+            // we don't take protocol communicating on other ports than dns
+            if dst.port() != 53 {
+                return Ok(());
+            }
+
+            alloc::init()?;
+            let event = alloc::alloc_zero::<DnsQueryEvent>()?;
+
+            event.data.socket = si;
+            event.data.src = SockAddr::src_from_sock_common(sk_common)?;
+            event.data.dst = dst;
+            event.data.tcp_header = tcp_header;
+
+            match self.udata {
+                Udata::Buf(ubuf, size) => {
+                    if size < DNS_HEADER_SIZE {
+                        return Ok(());
+                    }
+                    event.data.data.read_user_at(ubuf, size as u32)?
+                }
+            }
+
+            event.init_from_current_task(Type::DnsQuery)?;
+            pipe_event(ctx, event);
+
+            Ok(())
         }
-
-        event.init_from_current_task(Type::DnsQuery)?;
-        pipe_event(ctx, event);
-
-        Ok(())
     }
 }
 
 #[inline(always)]
 unsafe fn is_dns_dst(sock: &co_re::sock) -> Result<bool, ProbeError> {
-    let si = SocketInfo::try_from(*sock)?;
+    unsafe {
+        let si = SocketInfo::try_from(*sock)?;
 
-    // return if socket neither is INET nor INET6
-    if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
-        return Ok(false);
+        // return if socket neither is INET nor INET6
+        if !si.is_family(SaFamily::AF_INET) && !si.is_family(SaFamily::AF_INET6) {
+            return Ok(false);
+        }
+
+        let sock_common = core_read_kernel!(sock, sk_common)?;
+        let dst = SockAddr::dst_from_sock_common(sock_common)?;
+
+        // filter on dst port
+        Ok(dst.port() == 53)
     }
-
-    let sock_common = core_read_kernel!(sock, sk_common)?;
-    let dst = SockAddr::dst_from_sock_common(sock_common)?;
-
-    // filter on dst port
-    Ok(dst.port() == 53)
 }
 
 /// match-proto:v5.0:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
@@ -120,27 +124,29 @@ pub fn net_dns_enter_vfs_read(ctx: ProbeContext) -> u32 {
 // many vfs_read ar happening (not only on sockets) so this function
 // aims at filtering as much as we can to save only interesting contexts
 unsafe fn try_enter_vfs_read(ctx: &ProbeContext) -> ProbeResult<()> {
-    let file = co_re::file::from_ptr(kprobe_arg!(ctx, 0)?);
-    let ubuf: *const u8 = kprobe_arg!(ctx, 1)?;
-    let count: size_t = kprobe_arg!(ctx, 2)?;
+    unsafe {
+        let file = co_re::file::from_ptr(kprobe_arg!(ctx, 0)?);
+        let ubuf: *const u8 = kprobe_arg!(ctx, 1)?;
+        let count: size_t = kprobe_arg!(ctx, 2)?;
 
-    if !file.is_sock().unwrap_or(false) || ubuf.is_null() || count == 0 {
-        return Ok(());
+        if !file.is_sock().unwrap_or(false) || ubuf.is_null() || count == 0 {
+            return Ok(());
+        }
+
+        let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+        let sock = core_read_kernel!(socket, sk)?;
+
+        // check if it looks like a connection to a DNS server
+        if !is_dns_dst(&sock)? {
+            return Ok(());
+        }
+
+        // we report saving error as we are going to
+        // miss entries later if that is the case
+        ProbeFn::dns_vfs_read.save_ctx(ctx)?;
+
+        Ok(())
     }
-
-    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
-    let sock = core_read_kernel!(socket, sk)?;
-
-    // check if it looks like a connection to a DNS server
-    if !is_dns_dst(&sock)? {
-        return Ok(());
-    }
-
-    // we report saving error as we are going to
-    // miss entries later if that is the case
-    ProbeFn::dns_vfs_read.save_ctx(ctx)?;
-
-    Ok(())
 }
 
 /// match-proto:v5.0:fs/read_write.c:ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
@@ -164,39 +170,41 @@ pub fn net_dns_exit_vfs_read(ctx: RetProbeContext) -> u32 {
 }
 
 unsafe fn try_exit_vfs_read(ctx: &RetProbeContext) -> ProbeResult<()> {
-    // we restore entry context
-    let saved_ctx = match ProbeFn::dns_vfs_read.restore_ctx() {
-        Ok(ctx) => ctx.probe_context(),
-        _ => return Ok(()),
-    };
+    unsafe {
+        // we restore entry context
+        let saved_ctx = match ProbeFn::dns_vfs_read.restore_ctx() {
+            Ok(ctx) => ctx.probe_context(),
+            _ => return Ok(()),
+        };
 
-    let rc: c_int = ctx.ret();
+        let rc: c_int = ctx.ret();
 
-    // rc is also the size of the data read so we don't irrelevant cases
-    if rc < DNS_HEADER_SIZE as i32 {
-        return Ok(());
+        // rc is also the size of the data read so we don't irrelevant cases
+        if rc < DNS_HEADER_SIZE as i32 {
+            return Ok(());
+        }
+
+        let file = co_re::file::from_ptr(kprobe_arg!(&saved_ctx, 0)?);
+        let ubuf: *const u8 = kprobe_arg!(&saved_ctx, 1)?;
+
+        if file.is_null() {
+            return Err(ProbeError::NullPointer);
+        }
+
+        if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
+            return Ok(());
+        }
+
+        let sh = SockHelper::from_ubuf(
+            co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _),
+            ubuf as *const _,
+            rc as usize,
+        );
+
+        sh.dns_event(ctx, None, true)?;
+
+        Ok(())
     }
-
-    let file = co_re::file::from_ptr(kprobe_arg!(&saved_ctx, 0)?);
-    let ubuf: *const u8 = kprobe_arg!(&saved_ctx, 1)?;
-
-    if file.is_null() {
-        return Err(ProbeError::NullPointer);
-    }
-
-    if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
-        return Ok(());
-    }
-
-    let sh = SockHelper::from_ubuf(
-        co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _),
-        ubuf as *const _,
-        rc as usize,
-    );
-
-    sh.dns_event(ctx, None, true)?;
-
-    Ok(())
 }
 
 /// match-proto:v5.0:net/socket.c:int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags, struct sockaddr __user *addr, int __user *addr_len)
@@ -217,36 +225,38 @@ pub fn net_dns_enter_sys_recvfrom(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_enter_sys_recvfrom(ctx: &ProbeContext) -> ProbeResult<()> {
-    let fd: c_int = kprobe_arg!(ctx, 0)?;
-    let ubuf: *const u8 = kprobe_arg!(ctx, 1)?;
-    let from_addr = sockaddr::from_ptr(kprobe_arg!(ctx, 4)?);
+    unsafe {
+        let fd: c_int = kprobe_arg!(ctx, 0)?;
+        let ubuf: *const u8 = kprobe_arg!(ctx, 1)?;
+        let from_addr = sockaddr::from_ptr(kprobe_arg!(ctx, 4)?);
 
-    let current = task_struct::current();
-    let file = current
-        .get_fd(fd as usize)
-        .ok_or(ProbeError::FileNotFound)?;
+        let current = task_struct::current();
+        let file = current
+            .get_fd(fd as usize)
+            .ok_or(ProbeError::FileNotFound)?;
 
-    if file.is_null() {
-        return Err(ProbeError::NullPointer);
+        if file.is_null() {
+            return Err(ProbeError::NullPointer);
+        }
+
+        if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
+            return Ok(());
+        }
+
+        let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+        let sock = core_read_kernel!(socket, sk)?;
+
+        // if from_addr isn't null it means we expect the kernel to fill
+        // the remote address during the call. It is possible that socket
+        // does not contain information about the destination address
+        if from_addr.is_null() && !is_dns_dst(&sock)? {
+            return Ok(());
+        }
+
+        ProbeFn::dns_sys_recv_from.save_ctx(ctx)?;
+
+        Ok(())
     }
-
-    if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
-        return Ok(());
-    }
-
-    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
-    let sock = core_read_kernel!(socket, sk)?;
-
-    // if from_addr isn't null it means we expect the kernel to fill
-    // the remote address during the call. It is possible that socket
-    // does not contain information about the destination address
-    if from_addr.is_null() && !is_dns_dst(&sock)? {
-        return Ok(());
-    }
-
-    ProbeFn::dns_sys_recv_from.save_ctx(ctx)?;
-
-    Ok(())
 }
 
 /// match-proto:v5.0:net/socket.c:int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags, struct sockaddr __user *addr, int __user *addr_len)
@@ -270,49 +280,51 @@ pub fn net_dns_exit_sys_recvfrom(ctx: RetProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_exit_sys_recvfrom(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
-    // we restore entry context
-    let ent_probe_ctx = match ProbeFn::dns_sys_recv_from.restore_ctx() {
-        Ok(ctx) => ctx.probe_context(),
-        _ => return Ok(()),
-    };
+    unsafe {
+        // we restore entry context
+        let ent_probe_ctx = match ProbeFn::dns_sys_recv_from.restore_ctx() {
+            Ok(ctx) => ctx.probe_context(),
+            _ => return Ok(()),
+        };
 
-    let rc: c_int = exit_ctx.ret();
+        let rc: c_int = exit_ctx.ret();
 
-    // rc is also the size of the data read so we don't irrelevant cases
-    if rc < DNS_HEADER_SIZE as i32 {
-        return Ok(());
+        // rc is also the size of the data read so we don't irrelevant cases
+        if rc < DNS_HEADER_SIZE as i32 {
+            return Ok(());
+        }
+
+        let fd: c_int = kprobe_arg!(ent_probe_ctx, 0)?;
+        let ubuf: *const u8 = kprobe_arg!(ent_probe_ctx, 1)?;
+        let from_addr = sockaddr::from_ptr(kprobe_arg!(ent_probe_ctx, 4)?);
+
+        let mut opt_server = None;
+
+        if let Ok(from) = SockAddr::from_sockaddr_user(from_addr) {
+            opt_server.replace(from);
+        }
+        let file = task_struct::current()
+            .get_fd(fd as usize)
+            .ok_or(ProbeError::FileNotFound)?;
+
+        if file.is_null() {
+            return Err(ProbeError::NullPointer);
+        }
+
+        if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
+            return Ok(());
+        }
+
+        let sh = SockHelper::from_ubuf(
+            co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _),
+            ubuf as *const _,
+            rc as usize,
+        );
+
+        sh.dns_event(exit_ctx, opt_server, false)?;
+
+        Ok(())
     }
-
-    let fd: c_int = kprobe_arg!(ent_probe_ctx, 0)?;
-    let ubuf: *const u8 = kprobe_arg!(ent_probe_ctx, 1)?;
-    let from_addr = sockaddr::from_ptr(kprobe_arg!(ent_probe_ctx, 4)?);
-
-    let mut opt_server = None;
-
-    if let Ok(from) = SockAddr::from_sockaddr_user(from_addr) {
-        opt_server.replace(from);
-    }
-    let file = task_struct::current()
-        .get_fd(fd as usize)
-        .ok_or(ProbeError::FileNotFound)?;
-
-    if file.is_null() {
-        return Err(ProbeError::NullPointer);
-    }
-
-    if !file.is_sock().unwrap_or(false) || ubuf.is_null() {
-        return Ok(());
-    }
-
-    let sh = SockHelper::from_ubuf(
-        co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _),
-        ubuf as *const _,
-        rc as usize,
-    );
-
-    sh.dns_event(exit_ctx, opt_server, false)?;
-
-    Ok(())
 }
 
 /// match-proto:v5.0:net/socket.c:long __sys_recvmsg(int fd, struct user_msghdr __user *msg, unsigned int flags, bool forbid_cmsg_compat)
@@ -333,35 +345,37 @@ pub fn net_dns_enter_sys_recvmsg(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_enter_sys_recvmsg(ctx: &ProbeContext) -> ProbeResult<()> {
-    let fd: c_int = kprobe_arg!(ctx, 0)?;
-    let current = task_struct::current();
+    unsafe {
+        let fd: c_int = kprobe_arg!(ctx, 0)?;
+        let current = task_struct::current();
 
-    // here getting file from FdMap always fails
-    // so we need to lookup task_struct's files->fd_array
-    let file = current
-        .get_fd(fd as usize)
-        .ok_or(ProbeError::FileNotFound)?;
+        // here getting file from FdMap always fails
+        // so we need to lookup task_struct's files->fd_array
+        let file = current
+            .get_fd(fd as usize)
+            .ok_or(ProbeError::FileNotFound)?;
 
-    // file should not be null
-    if file.is_null() {
-        return Err(ProbeError::NullPointer);
+        // file should not be null
+        if file.is_null() {
+            return Err(ProbeError::NullPointer);
+        }
+
+        if !file.is_sock().unwrap_or(false) {
+            return Ok(());
+        }
+
+        let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+        let sock = core_read_kernel!(socket, sk)?;
+
+        if !is_dns_dst(&sock)? {
+            return Ok(());
+        }
+
+        // we save context
+        ProbeFn::net_dns_sys_recvmsg.save_ctx(ctx)?;
+
+        Ok(())
     }
-
-    if !file.is_sock().unwrap_or(false) {
-        return Ok(());
-    }
-
-    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
-    let sock = core_read_kernel!(socket, sk)?;
-
-    if !is_dns_dst(&sock)? {
-        return Ok(());
-    }
-
-    // we save context
-    ProbeFn::net_dns_sys_recvmsg.save_ctx(ctx)?;
-
-    Ok(())
 }
 
 /// match-proto:v5.0:net/socket.c:long __sys_recvmsg(int fd, struct user_msghdr __user *msg, unsigned int flags, bool forbid_cmsg_compat)
@@ -386,52 +400,54 @@ pub fn net_dns_exit_sys_recvmsg(ctx: RetProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_exit_recvmsg(exit_ctx: &RetProbeContext) -> ProbeResult<()> {
-    // we restore saved context
-    let saved_ctx = match ProbeFn::net_dns_sys_recvmsg.restore_ctx() {
-        Ok(ctx) => ctx.probe_context(),
-        _ => return Ok(()),
-    };
+    unsafe {
+        // we restore saved context
+        let saved_ctx = match ProbeFn::net_dns_sys_recvmsg.restore_ctx() {
+            Ok(ctx) => ctx.probe_context(),
+            _ => return Ok(()),
+        };
 
-    let rc: c_int = exit_ctx.ret();
+        let rc: c_int = exit_ctx.ret();
 
-    // rc is also the size of the data read so we don't handle irrelevant cases
-    if rc < DNS_HEADER_SIZE as i32 {
-        return Ok(());
-    }
-
-    let fd: c_int = kprobe_arg!(saved_ctx, 0)?;
-
-    let file = task_struct::current()
-        .get_fd(fd as usize)
-        .ok_or(ProbeError::FileNotFound)?;
-
-    // File may be null here. We initially returned an error but it
-    // occurred too frequently. Since dns_query events work correctly
-    // with null file, we now return Ok. Traffic causing null file is
-    // likely unrelated to DNS. Note: we cannot verify traffic type.
-    if !file.is_sock().unwrap_or(false) {
-        return Ok(());
-    }
-
-    let msg = co_re::user_msghdr::from_ptr(kprobe_arg!(saved_ctx, 1)?);
-
-    let ubuf = core_read_user!(msg, msg_iov, iov_base)?;
-
-    let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
-
-    let sh = SockHelper::from_ubuf(socket, ubuf, rc as usize);
-
-    let msg_name = core_read_user!(msg, msg_name)?;
-
-    let mut server = None;
-
-    if !msg_name.is_null() {
-        let addr = co_re::sockaddr::from_ptr(msg_name as *const _);
-        if let Ok(sa) = SockAddr::from_sockaddr(addr) {
-            server = Some(sa)
+        // rc is also the size of the data read so we don't handle irrelevant cases
+        if rc < DNS_HEADER_SIZE as i32 {
+            return Ok(());
         }
-    }
 
-    sh.dns_event(exit_ctx, server, false)?;
-    Ok(())
+        let fd: c_int = kprobe_arg!(saved_ctx, 0)?;
+
+        let file = task_struct::current()
+            .get_fd(fd as usize)
+            .ok_or(ProbeError::FileNotFound)?;
+
+        // File may be null here. We initially returned an error but it
+        // occurred too frequently. Since dns_query events work correctly
+        // with null file, we now return Ok. Traffic causing null file is
+        // likely unrelated to DNS. Note: we cannot verify traffic type.
+        if !file.is_sock().unwrap_or(false) {
+            return Ok(());
+        }
+
+        let msg = co_re::user_msghdr::from_ptr(kprobe_arg!(saved_ctx, 1)?);
+
+        let ubuf = core_read_user!(msg, msg_iov, iov_base)?;
+
+        let socket = co_re::socket::from_ptr(core_read_kernel!(file, private_data)? as *const _);
+
+        let sh = SockHelper::from_ubuf(socket, ubuf, rc as usize);
+
+        let msg_name = core_read_user!(msg, msg_name)?;
+
+        let mut server = None;
+
+        if !msg_name.is_null() {
+            let addr = co_re::sockaddr::from_ptr(msg_name as *const _);
+            if let Ok(sa) = SockAddr::from_sockaddr(addr) {
+                server = Some(sa)
+            }
+        }
+
+        sh.dns_event(exit_ctx, server, false)?;
+        Ok(())
+    }
 }

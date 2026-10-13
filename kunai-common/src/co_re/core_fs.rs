@@ -2,11 +2,11 @@ use aya_ebpf::cty::c_void;
 
 use crate::co_re::rust_shim_kernel_impl_out;
 
-use super::gen::{self, *};
-use super::{rust_shim_kernel_impl, CoRe};
+use super::bindings::{self, *};
+use super::{CoRe, rust_shim_kernel_impl};
 
 #[allow(non_camel_case_types)]
-pub type inode = CoRe<gen::inode>;
+pub type inode = CoRe<bindings::inode>;
 
 const S_IFMT: u16 = 0o00170000;
 const S_IFREG: u16 = 0o0100000;
@@ -28,12 +28,14 @@ impl inode {
 
     #[inline(always)]
     pub unsafe fn i_atime(&self) -> Option<timespec64> {
-        self._i_atime().or_else(|| self.___i_atime()).or_else(|| {
-            Some(timespec64 {
-                tv_sec: self.i_atime_sec()?,
-                tv_nsec: self.i_atime_nsec()? as i64,
+        unsafe {
+            self._i_atime().or_else(|| self.___i_atime()).or_else(|| {
+                Some(timespec64 {
+                    tv_sec: self.i_atime_sec()?,
+                    tv_nsec: self.i_atime_nsec()? as i64,
+                })
             })
-        })
+        }
     }
 
     // for kernels < 6.7
@@ -46,12 +48,14 @@ impl inode {
 
     #[inline(always)]
     pub unsafe fn i_mtime(&self) -> Option<timespec64> {
-        self._i_mtime().or_else(|| self.___i_mtime()).or_else(|| {
-            Some(timespec64 {
-                tv_sec: self.i_mtime_sec()?,
-                tv_nsec: self.i_mtime_nsec()? as i64,
+        unsafe {
+            self._i_mtime().or_else(|| self.___i_mtime()).or_else(|| {
+                Some(timespec64 {
+                    tv_sec: self.i_mtime_sec()?,
+                    tv_nsec: self.i_mtime_nsec()? as i64,
+                })
             })
-        })
+        }
     }
 
     // for kernels < 6.6
@@ -64,27 +68,29 @@ impl inode {
 
     #[inline(always)]
     pub unsafe fn i_ctime(&self) -> Option<timespec64> {
-        self._i_ctime().or_else(|| self.___i_ctime()).or_else(|| {
-            Some(timespec64 {
-                tv_sec: self.i_ctime_sec()?,
-                tv_nsec: self.i_ctime_nsec()? as i64,
+        unsafe {
+            self._i_ctime().or_else(|| self.___i_ctime()).or_else(|| {
+                Some(timespec64 {
+                    tv_sec: self.i_ctime_sec()?,
+                    tv_nsec: self.i_ctime_nsec()? as i64,
+                })
             })
-        })
+        }
     }
 
     #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {
-        Some(self.i_mode()? & S_IFMT == S_IFREG)
+        unsafe { Some(self.i_mode()? & S_IFMT == S_IFREG) }
     }
 
     #[inline(always)]
     pub unsafe fn is_sock(&self) -> Option<bool> {
-        Some(self.i_mode()? & S_IFMT == S_IFSOCK)
+        unsafe { Some(self.i_mode()? & S_IFMT == S_IFSOCK) }
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type file = CoRe<gen::file>;
+pub type file = CoRe<bindings::file>;
 
 impl file {
     rust_shim_kernel_impl!(pub, file, f_path, path);
@@ -94,26 +100,26 @@ impl file {
 
     #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {
-        self.f_inode()?.is_file()
+        unsafe { self.f_inode()?.is_file() }
     }
 
     #[inline(always)]
     pub unsafe fn is_sock(&self) -> Option<bool> {
-        self.f_inode()?.is_sock()
+        unsafe { self.f_inode()?.is_sock() }
     }
 
     rust_shim_kernel_impl!(pub, file, private_data, *mut c_void);
 }
 
 #[allow(non_camel_case_types)]
-pub type fd = CoRe<gen::fd>;
+pub type fd = CoRe<bindings::fd>;
 
 impl fd {
     rust_shim_kernel_impl!(pub, fd, file, file);
 }
 
 #[allow(non_camel_case_types)]
-pub type path = CoRe<gen::path>;
+pub type path = CoRe<bindings::path>;
 
 impl path {
     rust_shim_kernel_impl!(pub, path, mnt, vfsmount);
@@ -121,7 +127,7 @@ impl path {
 }
 
 #[allow(non_camel_case_types)]
-pub type qstr = CoRe<gen::qstr>;
+pub type qstr = CoRe<bindings::qstr>;
 
 impl qstr {
     rust_shim_kernel_impl!(pub, qstr, name, *const u8);
@@ -131,7 +137,7 @@ impl qstr {
 }
 
 #[allow(non_camel_case_types)]
-pub type dentry = CoRe<gen::dentry>;
+pub type dentry = CoRe<bindings::dentry>;
 
 const DCACHE_MOUNTED: u32 = 0x00010000;
 
@@ -142,7 +148,7 @@ impl dentry {
 
     #[inline(always)]
     pub unsafe fn is_mountpoint(&self) -> Option<bool> {
-        Some(self.d_flags()? & DCACHE_MOUNTED == DCACHE_MOUNTED)
+        unsafe { Some(self.d_flags()? & DCACHE_MOUNTED == DCACHE_MOUNTED) }
     }
 
     rust_shim_kernel_impl!(pub, dentry, d_name, qstr);
@@ -150,19 +156,19 @@ impl dentry {
 
     #[inline(always)]
     pub unsafe fn is_file(&self) -> Option<bool> {
-        self.d_inode()?.is_file()
+        unsafe { self.d_inode()?.is_file() }
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type super_block = CoRe<gen::super_block>;
+pub type super_block = CoRe<bindings::super_block>;
 
 impl super_block {
     rust_shim_kernel_impl!(pub, super_block, s_root, dentry);
 }
 
 #[allow(non_camel_case_types)]
-pub type mount = CoRe<gen::mount>;
+pub type mount = CoRe<bindings::mount>;
 
 impl mount {
     rust_shim_kernel_impl!(pub, mount, mnt, vfsmount);
@@ -172,19 +178,19 @@ impl mount {
 }
 
 #[allow(non_camel_case_types)]
-pub type vfsmount = CoRe<gen::vfsmount>;
+pub type vfsmount = CoRe<bindings::vfsmount>;
 
 impl vfsmount {
     #[inline(always)]
     pub unsafe fn mount(&self) -> mount {
-        mount::from_ptr(shim_mount_from_vfsmount(self.as_ptr_mut()))
+        unsafe { mount::from_ptr(shim_mount_from_vfsmount(self.as_ptr_mut())) }
     }
 
     rust_shim_kernel_impl!(pub, vfsmount, mnt_root, dentry);
 }
 
 #[allow(non_camel_case_types)]
-pub type mountpoint = CoRe<gen::mountpoint>;
+pub type mountpoint = CoRe<bindings::mountpoint>;
 
 impl mountpoint {
     rust_shim_kernel_impl!(mountpoint, m_dentry, dentry);

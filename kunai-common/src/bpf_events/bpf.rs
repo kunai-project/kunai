@@ -13,34 +13,40 @@ use aya_ebpf::helpers::bpf_get_current_task;
 impl<T> Event<T> {
     #[inline(always)]
     pub unsafe fn init_from_current_task(&mut self, ty: Type) -> Result<(), Error> {
-        self.init_from_task(
-            ty,
-            task_struct::from_ptr(bpf_get_current_task() as *const _),
-        )
+        unsafe {
+            self.init_from_task(
+                ty,
+                task_struct::from_ptr(bpf_get_current_task() as *const _),
+            )
+        }
     }
 
     #[inline(always)]
     pub unsafe fn init_from_task(&mut self, ty: Type, ts: task_struct) -> Result<(), Error> {
-        self.info.init(ty, ts)?;
-        Ok(())
+        unsafe {
+            self.info.init(ty, ts)?;
+            Ok(())
+        }
     }
 }
 
 impl EventInfo {
     #[inline(always)]
     pub(crate) unsafe fn init(&mut self, t: Type, task: task_struct) -> Result<(), Error> {
-        self.etype = t;
+        unsafe {
+            self.etype = t;
 
-        // create a new Uuid for event
-        self.uuid = Uuid::new_random();
+            // create a new Uuid for event
+            self.uuid = Uuid::new_random();
 
-        if !task.is_null() {
-            self.process.from_task(task)?;
-            self.parent
-                .from_task(task.real_parent().ok_or(Error::RealParentFieldMissing)?)?;
+            if !task.is_null() {
+                self.process.from_task(task)?;
+                self.parent
+                    .from_task(task.real_parent().ok_or(Error::RealParentFieldMissing)?)?;
+            }
+
+            Ok(())
         }
-
-        Ok(())
     }
 }
 
@@ -49,44 +55,46 @@ impl TaskInfo {
     /// * task must be a pointer to a valid task_struct
     #[inline(always)]
     pub unsafe fn from_task(&mut self, task: task_struct) -> Result<(), Error> {
-        // flags
-        self.flags = task.flags().ok_or(Error::FlagFieldMissing)?;
+        unsafe {
+            // flags
+            self.flags = task.flags().ok_or(Error::FlagFieldMissing)?;
 
-        // process start time
-        self.start_time = task.start_boottime().ok_or(Error::BootTimeMissing)?;
-        self.tgid = task.tgid().ok_or(Error::TgidFieldMissing)?;
-        self.pid = task.pid().ok_or(Error::PidFieldMissing)?;
+            // process start time
+            self.start_time = task.start_boottime().ok_or(Error::BootTimeMissing)?;
+            self.tgid = task.tgid().ok_or(Error::TgidFieldMissing)?;
+            self.pid = task.pid().ok_or(Error::PidFieldMissing)?;
 
-        // the leader structure member points to the task leader of the thread group
-        let leader = task.group_leader().ok_or(Error::GroupLeaderMissing)?;
+            // the leader structure member points to the task leader of the thread group
+            let leader = task.group_leader().ok_or(Error::GroupLeaderMissing)?;
 
-        // start_time is the time in jiffies and is contained in /proc/$pid/stat
-        // file -> this way we can also compute unique ID from procfs
-        self.tg_uuid.init(
-            leader.start_boottime().ok_or(Error::BootTimeMissing)?,
-            self.tgid as u32,
-        );
+            // start_time is the time in jiffies and is contained in /proc/$pid/stat
+            // file -> this way we can also compute unique ID from procfs
+            self.tg_uuid.init(
+                leader.start_boottime().ok_or(Error::BootTimeMissing)?,
+                self.tgid as u32,
+            );
 
-        // copy comm
-        self.comm = task.comm_array().ok_or(Error::CommMissing)?;
+            // copy comm
+            self.comm = task.comm_array().ok_or(Error::CommMissing)?;
 
-        // if task_struct is valid cannot be null
-        let cred = task.cred().ok_or(Error::CredFieldMissing)?;
-        self.creds
-            .from_cred(cred)
-            .map_err(|_| Error::CredFieldMissing)?;
+            // if task_struct is valid cannot be null
+            let cred = task.cred().ok_or(Error::CredFieldMissing)?;
+            self.creds
+                .from_cred(cred)
+                .map_err(|_| Error::CredFieldMissing)?;
 
-        if let Some(nsproxy) = core_read_kernel!(task, nsproxy) {
-            // it may happen that under some very specific conditions nsproxy
-            // gets null (see https://github.com/kunai-project/kunai/issues/34)
-            if !nsproxy.is_null() {
-                self.namespaces = BpfOption::Some(Namespaces {
-                    mnt: core_read_kernel!(nsproxy, mnt_ns, ns, inum)
-                        .ok_or(Error::MntNamespaceFailure)?,
-                });
+            if let Some(nsproxy) = core_read_kernel!(task, nsproxy) {
+                // it may happen that under some very specific conditions nsproxy
+                // gets null (see https://github.com/kunai-project/kunai/issues/34)
+                if !nsproxy.is_null() {
+                    self.namespaces = BpfOption::Some(Namespaces {
+                        mnt: core_read_kernel!(nsproxy, mnt_ns, ns, inum)
+                            .ok_or(Error::MntNamespaceFailure)?,
+                    });
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     }
 }

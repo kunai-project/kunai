@@ -1,6 +1,6 @@
 [package]
 name = "kunai-macros"
-edition = "2021"
+edition.workspace = true
 description = "Package providing proc-macro specific to Kunai"
 version.workspace = true
 license.workspace = true

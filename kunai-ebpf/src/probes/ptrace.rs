@@ -21,26 +21,28 @@ pub fn kprobe_ptrace_access_check(ctx: ProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_ptrace_access_check(ctx: &ProbeContext) -> Result<(), ProbeError> {
-    let target = co_re::task_struct::from_ptr(kprobe_arg!(ctx, 0)?);
-    let mode: c_uint = kprobe_arg!(ctx, 1)?;
+    unsafe {
+        let target = co_re::task_struct::from_ptr(kprobe_arg!(ctx, 0)?);
+        let mode: c_uint = kprobe_arg!(ctx, 1)?;
 
-    // only catch PTRACE_MODE_ATTACH
-    if mode & 0x2 != 0x2 {
-        return Ok(());
+        // only catch PTRACE_MODE_ATTACH
+        if mode & 0x2 != 0x2 {
+            return Ok(());
+        }
+
+        // initialize allocator
+        alloc::init()?;
+        // alloc a new event
+        let event = alloc::alloc_zero::<PtraceEvent>()?;
+        // initialize eventc
+        event.init_from_current_task(Type::Ptrace)?;
+        // ptrace mode
+        event.data.mode = mode;
+        // initialize target task
+        event.data.target.from_task(target)?;
+
+        pipe_event(ctx, event);
+
+        Ok(())
     }
-
-    // initialize allocator
-    alloc::init()?;
-    // alloc a new event
-    let event = alloc::alloc_zero::<PtraceEvent>()?;
-    // initialize eventc
-    event.init_from_current_task(Type::Ptrace)?;
-    // ptrace mode
-    event.data.mode = mode;
-    // initialize target task
-    event.data.target.from_task(target)?;
-
-    pipe_event(ctx, event);
-
-    Ok(())
 }

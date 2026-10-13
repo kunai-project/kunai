@@ -48,10 +48,10 @@ pub use user::*;
 mod user {
     use super::*;
     use base64ct::{Base64, Encoding};
-    use simple_dns::{rdata::RData, Packet, ResourceRecord, SimpleDnsError, QTYPE, TYPE};
+    use simple_dns::{Packet, QTYPE, ResourceRecord, SimpleDnsError, TYPE, rdata::RData};
     use std::{
         borrow::Cow,
-        collections::{hash_map::Entry, HashMap},
+        collections::{HashMap, hash_map::Entry},
         net::{Ipv4Addr, Ipv6Addr},
         vec::Vec,
     };

@@ -5,7 +5,7 @@ default-members = ["kunai", "kunai-common"]
 
 [workspace.package]
 version = "0.7.0-rc.1"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/kunai-project/kunai"
 license = "GPL-3.0"
 

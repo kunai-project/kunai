@@ -1,6 +1,6 @@
 use crate::co_re::pt_regs;
 
-use aya_ebpf::{cty::c_long, programs::RawTracePointContext, Argument, EbpfContext};
+use aya_ebpf::{Argument, EbpfContext, cty::c_long, programs::RawTracePointContext};
 
 /// A raw_tracepoint attached to "sys_enter" receives its arguments as
 /// declared in the kernel's `TP_PROTO(struct pt_regs *regs, long id)` for
@@ -38,7 +38,7 @@ impl EbpfContext for RawSysEnterContext {
 impl RawSysEnterContext {
     #[inline(always)]
     pub unsafe fn arg<T: Argument>(&self, n: usize) -> Option<T> {
-        self.pt_regs.syscall_arg(n)
+        unsafe { self.pt_regs.syscall_arg(n) }
     }
 
     #[inline(always)]
@@ -85,6 +85,6 @@ impl RawSysExitContext {
 
     #[inline(always)]
     pub unsafe fn sys_nr(&self) -> Option<i64> {
-        self.pt_regs.sys_nr()
+        unsafe { self.pt_regs.sys_nr() }
     }
 }

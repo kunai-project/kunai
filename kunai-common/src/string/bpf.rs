@@ -5,13 +5,15 @@ use super::{Error, String};
 impl<const N: usize> String<N> {
     #[inline(always)]
     pub unsafe fn read_user_str_bytes<T>(&mut self, src: *const T) -> Result<(), Error> {
-        // do not return error if attempting to read null pointer
-        if !src.is_null() {
-            let s = bpf_probe_read_user_str_bytes(src as *const _, self.s.as_mut())
-                .map_err(|_| Error::BpfProbeReadFailure)?;
-            self.len = s.len();
+        unsafe {
+            // do not return error if attempting to read null pointer
+            if !src.is_null() {
+                let s = bpf_probe_read_user_str_bytes(src as *const _, self.s.as_mut())
+                    .map_err(|_| Error::BpfProbeReadFailure)?;
+                self.len = s.len();
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// This function can be used to append reading to the current string. However there is
@@ -20,32 +22,36 @@ impl<const N: usize> String<N> {
     /// Without the string len before bpf_probe_read_kernel_str we cannot upper bound the read limit
     /// efficiently so bpf_probe_read_kernel_str always think upper bound is the String size.
     pub unsafe fn append_kernel_str_bytes<T>(&mut self, src: *const T) -> Result<(), Error> {
-        let limit = self.s.len() / 2;
+        unsafe {
+            let limit = self.s.len() / 2;
 
-        // do not return error if attempting to read null pointer
-        if !src.is_null() {
-            let k = self.len;
+            // do not return error if attempting to read null pointer
+            if !src.is_null() {
+                let k = self.len;
 
-            if k >= limit {
-                return Err(Error::AppendLimit);
+                if k >= limit {
+                    return Err(Error::AppendLimit);
+                }
+
+                let dst = self.s[k..limit].as_mut();
+                let s = bpf_probe_read_kernel_str_bytes(src as *const _, dst)
+                    .map_err(|_| Error::BpfProbeReadFailure)?;
+                self.len += s.len();
             }
-
-            let dst = self.s[k..limit].as_mut();
-            let s = bpf_probe_read_kernel_str_bytes(src as *const _, dst)
-                .map_err(|_| Error::BpfProbeReadFailure)?;
-            self.len += s.len();
+            Ok(())
         }
-        Ok(())
     }
 
     #[inline(always)]
     pub unsafe fn read_kernel_str_bytes<T>(&mut self, src: *const T) -> Result<(), Error> {
-        // do not return error if attempting to read null pointer
-        if !src.is_null() {
-            let s = bpf_probe_read_kernel_str_bytes(src as *const _, self.s.as_mut())
-                .map_err(|_| Error::BpfProbeReadFailure)?;
-            self.len = s.len();
+        unsafe {
+            // do not return error if attempting to read null pointer
+            if !src.is_null() {
+                let s = bpf_probe_read_kernel_str_bytes(src as *const _, self.s.as_mut())
+                    .map_err(|_| Error::BpfProbeReadFailure)?;
+                self.len = s.len();
+            }
+            Ok(())
         }
-        Ok(())
     }
 }

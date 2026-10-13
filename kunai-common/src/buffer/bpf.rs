@@ -13,145 +13,157 @@ impl<const N: usize> Buffer<N> {
         &mut self,
         iter: iov_iter,
     ) -> Result<(), Error> {
-        let nr_segs = iter.nr_segs().ok_or(Error::NrSegsMissing)? as usize;
+        unsafe {
+            let nr_segs = iter.nr_segs().ok_or(Error::NrSegsMissing)? as usize;
 
-        // in case we are iterating over a ubuf
-        if iter.is_iter_ubuf() {
-            let ubuf = iter.ubuf().ok_or(Error::UbufMissing)?;
-            let count = iter.count().ok_or(Error::CountMissing)?;
-            // ubuf is in userland so we need to read it accordingly
-            self.read_user_at(ubuf, count as u32)?;
-        } else if iter.is_iter_iovec() {
-            let iov = iter.iov().ok_or(Error::IovMissing)?;
+            // in case we are iterating over a ubuf
+            if iter.is_iter_ubuf() {
+                let ubuf = iter.ubuf().ok_or(Error::UbufMissing)?;
+                let count = iter.count().ok_or(Error::CountMissing)?;
+                // ubuf is in userland so we need to read it accordingly
+                self.read_user_at(ubuf, count as u32)?;
+            } else if iter.is_iter_iovec() {
+                let iov = iter.iov().ok_or(Error::IovMissing)?;
 
-            if iov.is_null() {
-                return Err(Error::IovNull);
-            }
-
-            // we put a threshold to nr_segs (that can be fixed from call site)
-            for i in 0..MAX_NR_SEGS {
-                if self.is_full() || i >= nr_segs {
-                    break;
+                if iov.is_null() {
+                    return Err(Error::IovNull);
                 }
-                self.append_iov(iov.get(i))?;
-            }
-        } else if iter.is_iter_bvec() {
-            let bvec = iter.bvec().ok_or(Error::BvecMissing)?;
 
-            for i in 0..MAX_NR_SEGS {
-                if self.is_full() || i >= nr_segs {
-                    break;
+                // we put a threshold to nr_segs (that can be fixed from call site)
+                for i in 0..MAX_NR_SEGS {
+                    if self.is_full() || i >= nr_segs {
+                        break;
+                    }
+                    self.append_iov(iov.get(i))?;
                 }
-                self.append_bio_vec(bvec.get(i))?;
+            } else if iter.is_iter_bvec() {
+                let bvec = iter.bvec().ok_or(Error::BvecMissing)?;
+
+                for i in 0..MAX_NR_SEGS {
+                    if self.is_full() || i >= nr_segs {
+                        break;
+                    }
+                    self.append_bio_vec(bvec.get(i))?;
+                }
+            } else {
+                return Err(Error::UnimplementedIter);
             }
-        } else {
-            return Err(Error::UnimplementedIter);
+
+            Ok(())
         }
-
-        Ok(())
     }
 
     #[inline(always)]
     unsafe fn append_iov(&mut self, iov: iovec) -> Result<(), Error> {
-        let iov_len = iov.iov_len().ok_or(Error::IovLenMissing)?;
-        let iov_base = iov.iov_base().ok_or(Error::IovBaseMissing)?;
+        unsafe {
+            let iov_len = iov.iov_len().ok_or(Error::IovLenMissing)?;
+            let iov_base = iov.iov_base().ok_or(Error::IovBaseMissing)?;
 
-        let size = min(iov_len as i64, self.space_left() as i64);
+            let size = min(iov_len as i64, self.space_left() as i64);
 
-        // verifier massage: offset can never be greater than buf capacity
-        let offset = verifier_clamp(self.len() as i64, 0, N as i64) as usize;
+            // verifier massage: offset can never be greater than buf capacity
+            let offset = verifier_clamp(self.len() as i64, 0, N as i64) as usize;
 
-        if let Some(dst) = self.buf.get_mut(offset..N).map(|d| d.as_mut_ptr()) {
-            if generated::bpf_probe_read_user(
-                dst as *mut _,
-                verifier_clamp(size, 0, N as i64) as u32,
-                iov_base as *const _,
-            ) < 0
-            {
-                return Err(Error::FailedToReadIovec);
+            if let Some(dst) = self.buf.get_mut(offset..N).map(|d| d.as_mut_ptr()) {
+                if generated::bpf_probe_read_user(
+                    dst as *mut _,
+                    verifier_clamp(size, 0, N as i64) as u32,
+                    iov_base as *const _,
+                ) < 0
+                {
+                    return Err(Error::FailedToReadIovec);
+                }
+
+                self.len += size as usize;
             }
-
-            self.len += size as usize;
+            Ok(())
         }
-        Ok(())
     }
 
     #[inline(always)]
     unsafe fn append_bio_vec(&mut self, bvec: bio_vec) -> Result<(), Error> {
-        let page = bvec.bv_page().ok_or(Error::BvecPageMissing)?;
-        let bv_offset = bvec.bv_offset().ok_or(Error::BvecOffsetMissing)?;
-        let bv_len = bvec.bv_len().ok_or(Error::BvecLenMissing)?;
+        unsafe {
+            let page = bvec.bv_page().ok_or(Error::BvecPageMissing)?;
+            let bv_offset = bvec.bv_offset().ok_or(Error::BvecOffsetMissing)?;
+            let bv_len = bvec.bv_len().ok_or(Error::BvecLenMissing)?;
 
-        let bvec_data = if let Some(pa) = page.page_to_virt() {
-            if pa.is_null() {
-                return Err(Error::BvecNullBase);
+            let bvec_data = if let Some(pa) = page.page_to_virt() {
+                if pa.is_null() {
+                    return Err(Error::BvecNullBase);
+                }
+                pa.byte_offset(bv_offset as isize)
+            } else {
+                return Err(Error::UnsupportedArch);
+            };
+
+            let size = min(self.space_left() as i64, bv_len as i64);
+
+            let offset = verifier_clamp(self.len() as i64, 0, N as i64) as usize;
+
+            if let Some(dst) = self.buf.get_mut(offset..N).map(|d| d.as_mut_ptr()) {
+                if generated::bpf_probe_read_kernel(
+                    dst as *mut _,
+                    verifier_clamp(size, 0, N as i64) as u32,
+                    bvec_data,
+                ) < 0
+                {
+                    return Err(Error::FailedToReadBioVec);
+                }
+
+                self.len += size as usize;
             }
-            pa.byte_offset(bv_offset as isize)
-        } else {
-            return Err(Error::UnsupportedArch);
-        };
-
-        let size = min(self.space_left() as i64, bv_len as i64);
-
-        let offset = verifier_clamp(self.len() as i64, 0, N as i64) as usize;
-
-        if let Some(dst) = self.buf.get_mut(offset..N).map(|d| d.as_mut_ptr()) {
-            if generated::bpf_probe_read_kernel(
-                dst as *mut _,
-                verifier_clamp(size, 0, N as i64) as u32,
-                bvec_data,
-            ) < 0
-            {
-                return Err(Error::FailedToReadBioVec);
-            }
-
-            self.len += size as usize;
+            Ok(())
         }
-        Ok(())
     }
 
     #[inline(always)]
     pub unsafe fn read_kernel_str<P>(&mut self, src: *const P) -> Result<(), Error> {
-        bpf_probe_read_kernel_str_bytes(src as *const _, &mut self.buf)
-            .map_err(|_| Error::FailedToRead)?;
-        Ok(())
+        unsafe {
+            bpf_probe_read_kernel_str_bytes(src as *const _, &mut self.buf)
+                .map_err(|_| Error::FailedToRead)?;
+            Ok(())
+        }
     }
 
     #[inline(always)]
     pub unsafe fn read_user_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
-        let size = (size as i64).clamp(0, N as i64);
+        unsafe {
+            let size = (size as i64).clamp(0, N as i64);
 
-        if check_bounds_signed(size, 0, N as i64) {
-            let ret = generated::bpf_probe_read_user(
-                self.buf.as_mut_ptr() as *mut _,
-                size as u32,
-                from as *const _,
-            );
-            if ret != 0 {
-                return Err(Error::FailedToRead);
+            if check_bounds_signed(size, 0, N as i64) {
+                let ret = generated::bpf_probe_read_user(
+                    self.buf.as_mut_ptr() as *mut _,
+                    size as u32,
+                    from as *const _,
+                );
+                if ret != 0 {
+                    return Err(Error::FailedToRead);
+                }
             }
-        }
 
-        self.len = size as usize;
-        Ok(())
+            self.len = size as usize;
+            Ok(())
+        }
     }
 
     #[inline(always)]
     pub unsafe fn read_kernel_at<P>(&mut self, from: *const P, size: u32) -> Result<(), Error> {
-        let size = (size as i64).clamp(0, N as i64);
+        unsafe {
+            let size = (size as i64).clamp(0, N as i64);
 
-        if check_bounds_signed(size, 0, N as i64) {
-            let ret = generated::bpf_probe_read_kernel(
-                self.buf.as_mut_ptr() as *mut _,
-                size as u32,
-                from as *const _,
-            );
-            if ret != 0 {
-                return Err(Error::FailedToRead);
+            if check_bounds_signed(size, 0, N as i64) {
+                let ret = generated::bpf_probe_read_kernel(
+                    self.buf.as_mut_ptr() as *mut _,
+                    size as u32,
+                    from as *const _,
+                );
+                if ret != 0 {
+                    return Err(Error::FailedToRead);
+                }
             }
-        }
 
-        self.len = size as usize;
-        Ok(())
+            self.len = size as usize;
+            Ok(())
+        }
     }
 }

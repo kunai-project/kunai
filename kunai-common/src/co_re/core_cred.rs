@@ -1,8 +1,8 @@
-use super::gen::{self, *};
-use super::{rust_shim_kernel_impl, CoRe};
+use super::bindings::{self, *};
+use super::{CoRe, rust_shim_kernel_impl};
 
 #[allow(non_camel_case_types)]
-pub type cred = CoRe<gen::cred>;
+pub type cred = CoRe<bindings::cred>;
 
 impl cred {
     rust_shim_kernel_impl!(cred, uid, u32);
@@ -28,29 +28,35 @@ impl cred {
 
     #[inline(always)]
     pub unsafe fn cap_effective(&self) -> Option<u64> {
-        self.cap_effective_val().or_else(|| {
-            let lo = self.cap_effective_cap_lo()?;
-            let hi = self.cap_effective_cap_hi()?;
-            Some(((hi as u64) << 32) | (lo as u64))
-        })
+        unsafe {
+            self.cap_effective_val().or_else(|| {
+                let lo = self.cap_effective_cap_lo()?;
+                let hi = self.cap_effective_cap_hi()?;
+                Some(((hi as u64) << 32) | (lo as u64))
+            })
+        }
     }
 
     /// Permitted capability set packed into a u64.
     #[inline(always)]
     pub unsafe fn cap_permitted(&self) -> Option<u64> {
-        self.cap_permitted_val().or_else(|| {
-            let lo = self.cap_permitted_cap_lo()?;
-            let hi = self.cap_permitted_cap_hi()?;
-            Some(((hi as u64) << 32) | (lo as u64))
-        })
+        unsafe {
+            self.cap_permitted_val().or_else(|| {
+                let lo = self.cap_permitted_cap_lo()?;
+                let hi = self.cap_permitted_cap_hi()?;
+                Some(((hi as u64) << 32) | (lo as u64))
+            })
+        }
     }
 
     #[inline(always)]
     pub unsafe fn cap_inheritable(&self) -> Option<u64> {
-        self.cap_inheritable_val().or_else(|| {
-            let lo = self.cap_inheritable_cap_lo()?;
-            let hi = self.cap_inheritable_cap_hi()?;
-            Some(((hi as u64) << 32) | (lo as u64))
-        })
+        unsafe {
+            self.cap_inheritable_val().or_else(|| {
+                let lo = self.cap_inheritable_cap_lo()?;
+                let hi = self.cap_inheritable_cap_hi()?;
+                Some(((hi as u64) << 32) | (lo as u64))
+            })
+        }
     }
 }

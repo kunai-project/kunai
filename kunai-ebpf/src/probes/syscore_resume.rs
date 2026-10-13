@@ -21,10 +21,12 @@ pub fn enter_syscore_resume(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_syscore_resume(ctx: &ProbeContext) -> ProbeResult<()> {
-    let evt = alloc::alloc_zero::<SysCoreResumeEvent>()?;
+    unsafe {
+        let evt = alloc::alloc_zero::<SysCoreResumeEvent>()?;
 
-    evt.init_from_current_task(Type::SyscoreResume)?;
+        evt.init_from_current_task(Type::SyscoreResume)?;
 
-    pipe_event(ctx, evt);
-    Ok(())
+        pipe_event(ctx, evt);
+        Ok(())
+    }
 }

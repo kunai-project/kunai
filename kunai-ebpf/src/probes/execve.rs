@@ -1,9 +1,9 @@
 use super::*;
 
+use aya_ebpf::EbpfContext;
 use aya_ebpf::cty::c_int;
 use aya_ebpf::maps::LruHashMap;
 use aya_ebpf::programs::{ProbeContext, RawTracePointContext, RetProbeContext};
-use aya_ebpf::EbpfContext;
 use co_re::task_struct;
 use kunai_common::syscalls::RawSysExitContext;
 
@@ -45,43 +45,45 @@ pub fn execve_security_bprm_check(ctx: ProbeContext) -> u32 {
 }
 
 unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
-    let linux_binprm = co_re::linux_binprm::from_ptr(ctx.arg(0).unwrap_or(core::ptr::null()));
-    let current = co_re::task_struct::current();
-    let task_uuid = current.uuid();
+    unsafe {
+        let linux_binprm = co_re::linux_binprm::from_ptr(ctx.arg(0).unwrap_or(core::ptr::null()));
+        let current = co_re::task_struct::current();
+        let task_uuid = current.uuid();
 
-    if EXECVE_TRACKING.get_ptr_mut(&task_uuid).is_some() {
-        // security_bprm_check is running in a loop
-        // we aleady processed the higher call giving executable
-        return Ok(());
+        if EXECVE_TRACKING.get_ptr_mut(&task_uuid).is_some() {
+            // security_bprm_check is running in a loop
+            // we aleady processed the higher call giving executable
+            return Ok(());
+        }
+
+        // we keep track of linux_binprm
+        if !linux_binprm.is_null() {
+            ignore_result!(BPRM_EXECVE_ARGS.insert(&bpf_task_tracking_id(), &linux_binprm, 0))
+        }
+
+        alloc::init()?;
+        let event = alloc::alloc_zero::<ExecveEvent>()?;
+
+        if let Some(file) = linux_binprm.file() {
+            event
+                .data
+                .executable
+                .core_resolve_file(&file, MAX_PATH_DEPTH)?;
+        }
+
+        // read uts nodename and store it in event
+        // it was put here to offload a bit from execve_event
+        event.data.nodename.read_kernel_at(
+            core_read_kernel!(current, nsproxy, uts_ns, name, nodename)?,
+            event.data.nodename.cap() as u32,
+        )?;
+
+        EXECVE_TRACKING
+            .insert(&task_uuid, event, 0)
+            .map_err(|_| MapError::InsertFailure)?;
+
+        Ok(())
     }
-
-    // we keep track of linux_binprm
-    if !linux_binprm.is_null() {
-        ignore_result!(BPRM_EXECVE_ARGS.insert(&bpf_task_tracking_id(), &linux_binprm, 0))
-    }
-
-    alloc::init()?;
-    let event = alloc::alloc_zero::<ExecveEvent>()?;
-
-    if let Some(file) = linux_binprm.file() {
-        event
-            .data
-            .executable
-            .core_resolve_file(&file, MAX_PATH_DEPTH)?;
-    }
-
-    // read uts nodename and store it in event
-    // it was put here to offload a bit from execve_event
-    event.data.nodename.read_kernel_at(
-        core_read_kernel!(current, nsproxy, uts_ns, name, nodename)?,
-        event.data.nodename.cap() as u32,
-    )?;
-
-    EXECVE_TRACKING
-        .insert(&task_uuid, event, 0)
-        .map_err(|_| MapError::InsertFailure)?;
-
-    Ok(())
 }
 
 #[map]
@@ -111,71 +113,75 @@ pub fn execve_exit_bprm_execve(ctx: RetProbeContext) -> u32 {
 
 #[inline(always)]
 unsafe fn execve_event<C: EbpfContext>(ctx: &C, rc: i32) -> ProbeResult<()> {
-    let linux_binprm = *BPRM_EXECVE_ARGS
-        .get(&bpf_task_tracking_id())
-        .ok_or(MapError::GetFailure)?;
+    unsafe {
+        let linux_binprm = *BPRM_EXECVE_ARGS
+            .get(&bpf_task_tracking_id())
+            .ok_or(MapError::GetFailure)?;
 
-    let current = task_struct::current();
+        let current = task_struct::current();
 
-    let task_uuid = current.uuid();
+        let task_uuid = current.uuid();
 
-    let event = EXECVE_TRACKING
-        .get_ptr_mut(&task_uuid)
-        .ok_or(MapError::GetFailure)?;
+        let event = EXECVE_TRACKING
+            .get_ptr_mut(&task_uuid)
+            .ok_or(MapError::GetFailure)?;
 
-    let event = &mut (*event);
+        let event = &mut (*event);
 
-    // initializing event
-    event.init_from_task(Type::Execve, current)?;
+        // initializing event
+        event.init_from_task(Type::Execve, current)?;
 
-    // file should not be null here
-    // we are getting interpreter which is set to the file attribute by exec_binprm kernel function
-    if let Some(file) = linux_binprm.file() {
-        event
+        // file should not be null here
+        // we are getting interpreter which is set to the file attribute by exec_binprm kernel function
+        if let Some(file) = linux_binprm.file() {
+            event
+                .data
+                .interpreter
+                .core_resolve_file(&file, MAX_PATH_DEPTH)?;
+        }
+
+        event.data.rc = rc;
+
+        let arg_start = core_read_kernel!(current, mm, arg_start)?;
+        let arg_len = core_read_kernel!(current, mm, arg_len)?;
+
+        // parsing argv
+        if event
             .data
-            .interpreter
-            .core_resolve_file(&file, MAX_PATH_DEPTH)?;
+            .argv
+            .read_user_at(arg_start as *const u8, arg_len as u32)
+            .is_err()
+        {
+            warn!(ctx, "failed to read argv")
+        }
+
+        // cgroup parsing
+        let cgroup = core_read_kernel!(current, sched_task_group, css, cgroup)?;
+        // we do not raise any error on cgroup parsing, we let a chance to userland to solve it
+        ignore_result!(event.data.cgroup.resolve(cgroup));
+
+        pipe_event(ctx, event);
+
+        // we use LruHashMap so we can safely ignore results
+        ignore_result!(EXECVE_TRACKING.remove(&task_uuid));
+        ignore_result!(BPRM_EXECVE_ARGS.remove(&bpf_task_tracking_id()));
+
+        Ok(())
     }
-
-    event.data.rc = rc;
-
-    let arg_start = core_read_kernel!(current, mm, arg_start)?;
-    let arg_len = core_read_kernel!(current, mm, arg_len)?;
-
-    // parsing argv
-    if event
-        .data
-        .argv
-        .read_user_at(arg_start as *const u8, arg_len as u32)
-        .is_err()
-    {
-        warn!(ctx, "failed to read argv")
-    }
-
-    // cgroup parsing
-    let cgroup = core_read_kernel!(current, sched_task_group, css, cgroup)?;
-    // we do not raise any error on cgroup parsing, we let a chance to userland to solve it
-    ignore_result!(event.data.cgroup.resolve(cgroup));
-
-    pipe_event(ctx, event);
-
-    // we use LruHashMap so we can safely ignore results
-    ignore_result!(EXECVE_TRACKING.remove(&task_uuid));
-    ignore_result!(BPRM_EXECVE_ARGS.remove(&bpf_task_tracking_id()));
-
-    Ok(())
 }
 
 #[inline(always)]
 unsafe fn try_bprm_execve(ctx: &RetProbeContext) -> ProbeResult<()> {
-    let rc: c_int = ctx.ret();
+    unsafe {
+        let rc: c_int = ctx.ret();
 
-    // execve failed
-    if rc < 0 {
-        return Ok(());
+        // execve failed
+        if rc < 0 {
+            return Ok(());
+        }
+
+        execve_event(ctx, rc)
     }
-
-    execve_event(ctx, rc)
 }
 
 /// execve/execveat exit hook for kernel < 5.9, where bprm_execve does not
@@ -208,12 +214,14 @@ pub fn sys_exit_execve(ctx: RawTracePointContext) -> u32 {
 
 #[inline(always)]
 unsafe fn try_sys_exit_execve(ctx: &RawSysExitContext) -> ProbeResult<()> {
-    let rc = ctx.ret() as i32;
+    unsafe {
+        let rc = ctx.ret() as i32;
 
-    // execve failed
-    if rc < 0 {
-        return Ok(());
+        // execve failed
+        if rc < 0 {
+            return Ok(());
+        }
+
+        execve_event(ctx, rc)
     }
-
-    execve_event(ctx, rc)
 }

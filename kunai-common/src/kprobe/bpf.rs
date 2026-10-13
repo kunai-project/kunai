@@ -55,52 +55,62 @@ impl ProbeFn {
 
     #[inline(always)]
     unsafe fn get_depth(&self) -> Option<u8> {
-        if let Some(d) = FN_DEPTH.get(&self.depth_key()) {
-            return Some(*d);
+        unsafe {
+            if let Some(d) = FN_DEPTH.get(&self.depth_key()) {
+                return Some(*d);
+            }
+            None
         }
-        None
     }
 
     #[inline(always)]
     pub unsafe fn save_ctx(&self, ctx: &ProbeContext) -> Result<(), Error> {
-        let depth = self.get_depth().unwrap_or(0).wrapping_add(1);
+        unsafe {
+            let depth = self.get_depth().unwrap_or(0).wrapping_add(1);
 
-        let k = self.ctx_key(depth);
-        SAVED_CTX
-            .insert(&k, &KProbeEntryContext::new(*self, ctx.regs), 0)
-            .map_err(|_| Error::CtxInsert)?;
+            let k = self.ctx_key(depth);
+            SAVED_CTX
+                .insert(&k, &KProbeEntryContext::new(*self, ctx.regs), 0)
+                .map_err(|_| Error::CtxInsert)?;
 
-        self.update_depth(depth)
+            self.update_depth(depth)
+        }
     }
 
     #[inline(always)]
     pub unsafe fn restore_ctx(&self) -> Result<&'static mut KProbeEntryContext, Error> {
-        let depth = self.get_depth().ok_or(Error::DepthGet)?;
-        let k = self.ctx_key(depth);
-        let ctx = SAVED_CTX.get_ptr_mut(&k).ok_or(Error::CtxGet)?;
-        Ok(&mut (*ctx))
+        unsafe {
+            let depth = self.get_depth().ok_or(Error::DepthGet)?;
+            let k = self.ctx_key(depth);
+            let ctx = SAVED_CTX.get_ptr_mut(&k).ok_or(Error::CtxGet)?;
+            Ok(&mut (*ctx))
+        }
     }
 
     #[inline(always)]
     pub unsafe fn clean_ctx(&self) -> Result<(), Error> {
-        let depth = self.get_depth().ok_or(Error::DepthGet)?;
-        // this is not a big deal if we fail at removing the context
-        // as it probably means it's already been replaced by a newer entry
-        let _ = SAVED_CTX.remove(&self.ctx_key(depth));
-        // we decrement depth and update map
-        self.update_depth(depth.wrapping_sub(1))
+        unsafe {
+            let depth = self.get_depth().ok_or(Error::DepthGet)?;
+            // this is not a big deal if we fail at removing the context
+            // as it probably means it's already been replaced by a newer entry
+            let _ = SAVED_CTX.remove(&self.ctx_key(depth));
+            // we decrement depth and update map
+            self.update_depth(depth.wrapping_sub(1))
+        }
     }
 
     #[inline(always)]
     unsafe fn update_depth(&self, depth: u8) -> Result<(), Error> {
-        FN_DEPTH
-            .insert(&self.depth_key(), &depth, 0)
-            .map_err(|_| Error::DepthInsert)
+        unsafe {
+            FN_DEPTH
+                .insert(&self.depth_key(), &depth, 0)
+                .map_err(|_| Error::DepthInsert)
+        }
     }
 
     #[inline(always)]
     pub unsafe fn depth_key(&self) -> u128 {
-        core::mem::transmute([bpf_task_tracking_id(), *self as u64])
+        unsafe { core::mem::transmute([bpf_task_tracking_id(), *self as u64]) }
     }
 }
 
@@ -113,12 +123,12 @@ pub struct KProbeEntryContext {
 impl KProbeEntryContext {
     #[inline(always)]
     pub unsafe fn new(ty: ProbeFn, regs: *mut pt_regs) -> Self {
-        Self { ty, regs: *regs }
+        unsafe { Self { ty, regs: *regs } }
     }
 
     #[inline(always)]
     pub unsafe fn uuid(&self) -> u128 {
-        self.ty.depth_key()
+        unsafe { self.ty.depth_key() }
     }
 
     #[inline(always)]

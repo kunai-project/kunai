@@ -1,11 +1,11 @@
 use aya_ebpf::Argument;
 
-use super::gen::{self, *};
-use super::{rust_shim_kernel_impl, CoRe};
+use super::bindings::{self, *};
+use super::{CoRe, rust_shim_kernel_impl};
 
 /// CO-RE-relocated access to the kernel's `pt_regs`.
 #[allow(non_camel_case_types)]
-pub type pt_regs = CoRe<gen::pt_regs>;
+pub type pt_regs = CoRe<bindings::pt_regs>;
 
 #[cfg(bpf_target_arch = "x86_64")]
 impl pt_regs {
@@ -19,19 +19,21 @@ impl pt_regs {
     rust_shim_kernel_impl!(pt_regs, orig_ax, u64);
 
     unsafe fn syscall_arg_at(&self, index: usize) -> Option<u64> {
-        match index {
-            0 => self.di(),
-            1 => self.si(),
-            2 => self.dx(),
-            3 => self.r10(), // syscall ABI substitutes r10 for the usual cx slot
-            4 => self.r8(),
-            5 => self.r9(),
-            _ => None,
+        unsafe {
+            match index {
+                0 => self.di(),
+                1 => self.si(),
+                2 => self.dx(),
+                3 => self.r10(), // syscall ABI substitutes r10 for the usual cx slot
+                4 => self.r8(),
+                5 => self.r9(),
+                _ => None,
+            }
         }
     }
 
     pub(crate) unsafe fn sys_nr(&self) -> Option<i64> {
-        self.orig_ax().map(|v| v as i64)
+        unsafe { self.orig_ax().map(|v| v as i64) }
     }
 }
 
@@ -74,14 +76,16 @@ impl pt_regs {
     /// # Note
     /// This function must only be used to access syscall arguments, due to register clobbering.
     pub(crate) unsafe fn syscall_arg<T: Argument>(&self, n: usize) -> Option<T> {
-        let reg = self.syscall_arg_at(n)?;
-        #[expect(clippy::allow_attributes, reason = "architecture-specific")]
-        #[allow(
-            clippy::cast_sign_loss,
-            clippy::unnecessary_cast,
-            trivial_numeric_casts,
-            reason = "architecture-specific"
-        )]
-        Some(T::from_register(reg))
+        unsafe {
+            let reg = self.syscall_arg_at(n)?;
+            #[expect(clippy::allow_attributes, reason = "architecture-specific")]
+            #[allow(
+                clippy::cast_sign_loss,
+                clippy::unnecessary_cast,
+                trivial_numeric_casts,
+                reason = "architecture-specific"
+            )]
+            Some(T::from_register(reg))
+        }
     }
 }

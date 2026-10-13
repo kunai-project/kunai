@@ -7,7 +7,7 @@ use std::{
 };
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
-use gene::{rules::MAX_SEVERITY, Event, FieldGetter, FieldNameIterator, FieldValue};
+use gene::{Event, FieldGetter, FieldNameIterator, FieldValue, rules::MAX_SEVERITY};
 use gene_derive::{Event, FieldGetter};
 
 use kunai_common::{
@@ -15,7 +15,7 @@ use kunai_common::{
     consts::caps_to_str_vec,
     creds, net,
 };
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
 use uuid::Uuid;
 
 use crate::{

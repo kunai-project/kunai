@@ -66,16 +66,16 @@ impl<'f> FieldGetter<'f> for Container {
 
 impl Container {
     fn from_split_cgroup<S: AsRef<str>>(cgroup: &[S]) -> Option<Container> {
-        if let Some(last) = cgroup.last() {
-            if last.as_ref().starts_with("docker-") {
-                return Some(Container::Docker);
-            }
+        if let Some(last) = cgroup.last()
+            && last.as_ref().starts_with("docker-")
+        {
+            return Some(Container::Docker);
         }
 
-        if let Some(first) = cgroup.get(1) {
-            if first.as_ref().starts_with("lxc.payload.") {
-                return Some(Container::Lxc);
-            }
+        if let Some(first) = cgroup.get(1)
+            && first.as_ref().starts_with("lxc.payload.")
+        {
+            return Some(Container::Lxc);
         }
 
         None

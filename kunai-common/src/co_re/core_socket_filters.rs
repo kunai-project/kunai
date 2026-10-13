@@ -1,8 +1,8 @@
-use super::gen::{self, *};
-use super::{rust_shim_kernel_impl, CoRe};
+use super::bindings::{self, *};
+use super::{CoRe, rust_shim_kernel_impl};
 
 #[allow(non_camel_case_types)]
-pub type sock_fprog = CoRe<gen::sock_fprog>;
+pub type sock_fprog = CoRe<bindings::sock_fprog>;
 
 impl sock_fprog {
     rust_shim_kernel_impl!(pub, sock_fprog, len, u16);
@@ -10,12 +10,12 @@ impl sock_fprog {
 
     #[inline(always)]
     pub unsafe fn size(&self) -> Option<usize> {
-        Some(self.len()? as usize * core::mem::size_of::<gen::sock_filter>())
+        unsafe { Some(self.len()? as usize * core::mem::size_of::<bindings::sock_filter>()) }
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type sock_fprog_kern = CoRe<gen::sock_fprog_kern>;
+pub type sock_fprog_kern = CoRe<bindings::sock_fprog_kern>;
 
 impl sock_fprog_kern {
     rust_shim_kernel_impl!(pub, sock_fprog_kern, len, u16);
@@ -23,17 +23,17 @@ impl sock_fprog_kern {
 
     #[inline(always)]
     pub unsafe fn byte_size_from_len(len: u16) -> usize {
-        len as usize * core::mem::size_of::<gen::sock_filter>()
+        len as usize * core::mem::size_of::<bindings::sock_filter>()
     }
 
     #[inline(always)]
     pub unsafe fn byte_size(&self) -> Option<usize> {
-        Some(Self::byte_size_from_len(self.len()?))
+        unsafe { Some(Self::byte_size_from_len(self.len()?)) }
     }
 }
 
 #[allow(non_camel_case_types)]
-pub type sock_filter = CoRe<gen::sock_filter>;
+pub type sock_filter = CoRe<bindings::sock_filter>;
 
 impl sock_filter {
     rust_shim_kernel_impl!(pub, sock_filter, code, u16);

@@ -10,7 +10,7 @@ static mut KUNAI_CONFIG_ARRAY: Array<BpfConfig> = Array::with_max_entries(1, 0);
 
 /// Function to retrieve configuration into eBPF code
 pub unsafe fn config() -> Option<&'static BpfConfig> {
-    KUNAI_CONFIG_ARRAY.get(0)
+    unsafe { KUNAI_CONFIG_ARRAY.get(0) }
 }
 
 impl BpfConfig {
