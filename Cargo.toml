@@ -13,8 +13,8 @@ license = "GPL-3.0"
 anyhow = { version = "1", default-features = false }
 aya = "0.14.0"
 aya-build = { version = "0.2.0", default-features = false }
-aya-ebpf = "0.2.1"
-aya-ebpf-macros = "0.2.0"
+aya-ebpf = { git = "https://github.com/aya-rs/aya.git", rev = "ca6d6e95ee6d87ff5d9fba39d00e88b95c1760d8" }
+aya-ebpf-macros = { git = "https://github.com/aya-rs/aya.git", rev = "ca6d6e95ee6d87ff5d9fba39d00e88b95c1760d8" }
 aya-obj = "0.3.0"
 base64ct = { version = "1.8.3", default-features = false }
 cargo_metadata = { version = "0.23.0", default-features = false }
