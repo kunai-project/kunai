@@ -444,7 +444,7 @@ pub struct Caches {
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
     // any race
-    signatures: LruHashMap<Key, Vec<String>>,
+    signatures: LruHashMap<Key, Arc<[String]>>,
 }
 
 const NS_CACHE_SIZE: usize = 256;
@@ -542,7 +542,7 @@ impl Caches {
         ns: Mnt,
         path: &Path,
         scanner: &mut Scanner<'_>,
-    ) -> Result<(Vec<String>, Option<String>), Error> {
+    ) -> Result<(Arc<[String]>, Option<String>), Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
@@ -560,17 +560,18 @@ impl Caches {
 
             let sigs = match self.signatures.get(&key) {
                 // we have caches signatures
-                Some(sig) => sig.clone(),
+                Some(sig) => Arc::clone(sig),
                 // we don't have cached signatures
                 None => {
-                    let mut sigs = vec![];
                     // lock should never fail as the scanner is used only in one thread
                     let mut yx_scanner = scanner.lock().expect("failed to lock yara scanner");
                     let sr = yx_scanner.scan_file(pb).map_err(namespace::Error::other)?;
-                    // we extend the list of signatures
-                    sigs.extend(sr.matching_rules().map(|m| m.identifier().to_string()));
+                    let sigs: Arc<[String]> = sr
+                        .matching_rules()
+                        .map(|m| m.identifier().to_string())
+                        .collect();
                     // we update our cache
-                    self.signatures.insert(key.clone(), sigs.clone());
+                    self.signatures.insert(key.clone(), Arc::clone(&sigs));
                     sigs
                 }
             };
