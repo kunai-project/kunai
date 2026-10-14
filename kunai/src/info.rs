@@ -64,13 +64,22 @@ impl TryFrom<&procfs::process::Process> for ProcKey {
 }
 
 /// Same idea as [ProcKey] but identifies an individual task (thread) rather
-/// than a thread group, so it survives pid reuse: a dead thread's pid being
+/// than a process, so it survives pid reuse: a dead thread's pid being
 /// recycled by an unrelated task will not collide with a stale entry, since
 /// the recycled task has a different start time.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TaskKey {
     start_time_sec: u64,
     pid: i32,
+}
+
+impl From<ProcKey> for TaskKey {
+    fn from(value: ProcKey) -> Self {
+        Self {
+            start_time_sec: value.start_time_sec,
+            pid: value.pid as i32,
+        }
+    }
 }
 
 impl From<&TaskInfo> for TaskKey {

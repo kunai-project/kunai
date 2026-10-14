@@ -95,14 +95,14 @@ const MAX_ANCESTORS: usize = 1024;
 // largest event seen in real logs is ~1.8 KiB
 const JSON_BUF_MAX_CAP: usize = 4 * 1024;
 
-/// Per thread group state, what userland calls a process.
+/// Per-process state (a thread group in kernel terms).
 #[derive(Debug, Clone)]
-struct TaskGroup {
+struct Process {
     image: PathBuf,
     command_line: String,
     pid: i32,
     leader: TaskKey,
-    // PF_KTHREAD is uniform across a thread group
+    // PF_KTHREAD is uniform across a process
     kthread: bool,
     resolved: HashMap<IpAddr, String>,
     container: Option<Container>,
@@ -111,7 +111,7 @@ struct TaskGroup {
     real_parent_key: Option<ProcKey>,
     // children processes
     children: HashSet<ProcKey>,
-    // keys of the threads of this thread group
+    // keys of the threads of this process
     threads: HashSet<TaskKey>,
     // ebpf task info of the leader, used to fix up re-parented processes
     leader_task_info: Option<TaskInfo>,
@@ -122,15 +122,15 @@ struct TaskGroup {
     reparented: bool,
 }
 
-impl TaskGroup {
-    // A thread group is alive as long as one of its tasks is, the leader
+impl Process {
+    // A process is alive as long as one of its tasks is, the leader
     // exiting alone does not kill the process.
     #[inline(always)]
     fn is_alive(&self) -> bool {
         !self.threads.is_empty()
     }
 
-    // run when the last task of the group exits
+    // run when the last task of the process exits
     fn on_exit(&mut self) {
         // this does not allocate the new map
         self.resolved.clear();
@@ -138,7 +138,7 @@ impl TaskGroup {
     }
 }
 
-/// Per-task (as opposed to per-thread-group) state.
+/// Per-task (as opposed to per-process) state.
 #[derive(Debug, Clone)]
 struct Task {
     proc_key: ProcKey,
@@ -158,10 +158,10 @@ struct Task {
 /// Process table, kept apart from [`EventConsumer`] so that events can
 /// borrow from it while [`EventSink`] is mutably borrowed.
 #[derive(Default)]
-struct Processes(HashMap<ProcKey, TaskGroup>);
+struct Processes(HashMap<ProcKey, Process>);
 
 impl Deref for Processes {
-    type Target = HashMap<ProcKey, TaskGroup>;
+    type Target = HashMap<ProcKey, Process>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -1000,6 +1000,74 @@ fn creds_diverged(
     !last_reported.is_some_and(|reported| reported == current)
 }
 
+fn track_task(processes: &mut Processes, tasks: &mut HashMap<TaskKey, Task>, ti: &TaskInfo) {
+    let tk = TaskKey::from(ti);
+    let pk = ProcKey::from(ti.tg_uuid);
+    let process = processes.get_mut(&pk);
+    if !tasks.contains_key(&tk) {
+        let leader = process.as_ref().and_then(|p| tasks.get(&p.leader));
+        let task = Task {
+            proc_key: pk,
+            tgid: ti.tgid,
+            pid: ti.pid,
+            cgroups: leader.map(|l| Arc::clone(&l.cgroups)).unwrap_or_default(),
+            nodename: leader.and_then(|l| l.nodename.clone()),
+            expected_creds: ti.creds,
+            reported_creds: None,
+        };
+        tasks.insert(tk, task);
+    }
+    if let Some(p) = process {
+        p.threads.insert(tk);
+    }
+}
+
+/// Returns true if the whole process exited.
+fn untrack_task(
+    processes: &mut Processes,
+    tasks: &mut HashMap<TaskKey, Task>,
+    ti: &TaskInfo,
+    pk: ProcKey,
+    exit_group: bool,
+) -> bool {
+    let tk = TaskKey::from(ti);
+    tasks.remove(&tk);
+
+    match processes.get_mut(&pk) {
+        Some(p) => {
+            p.threads.remove(&tk);
+            if exit_group {
+                for t in p.threads.drain() {
+                    tasks.remove(&t);
+                }
+            }
+            !p.is_alive()
+        }
+        // unknown process, we can only rely on what the event tells us
+        None => exit_group || ti.is_thread_leader(),
+    }
+}
+
+/// Removes the process `pk` from `processes` after a successful execve and
+/// drops the [`Task`]s of all its threads but the one that exec'd.
+///
+/// Mirrors the kernel's `de_thread()`: other threads are killed and the
+/// exec'ing one takes over the leader identity, i.e. `TaskKey::from(pk)`.
+///
+/// Returns the removed [`Process`], if it was tracked.
+fn untrack_exec_proc(
+    processes: &mut Processes,
+    tasks: &mut HashMap<TaskKey, Task>,
+    pk: ProcKey,
+) -> Option<Process> {
+    processes.remove(&pk).inspect(|p| {
+        let tk = TaskKey::from(pk);
+        for t in p.threads.iter().filter(|&&t| t != tk) {
+            tasks.remove(t);
+        }
+    })
+}
+
 impl EventSink<'_> {
     fn get_hashes_in_ns(&mut self, ns: Option<Mnt>, p: &cache::Path) -> Arc<Hashes> {
         if let Some(ns) = ns {
@@ -1668,7 +1736,7 @@ impl EventConsumer<'_> {
             .map(|cg| cg.pathname)
             .collect::<Arc<[String]>>();
 
-        // a group must own its leader task, otherwise it is never alive
+        // a process must own its leader task, otherwise it is never alive
         let status = p.status()?;
         let leader = TaskKey::try_from(p)?;
         self.tasks.insert(
@@ -1696,7 +1764,7 @@ impl EventConsumer<'_> {
             },
         );
 
-        let task = TaskGroup {
+        let task = Process {
             image,
             command_line: p
                 .cmdline()
@@ -1790,27 +1858,16 @@ impl EventConsumer<'_> {
     }
 
     fn exit_cleanup(&mut self, info: &StdEventInfo) {
-        let tk = TaskKey::from(info.task_info());
         let pk = info.process_key();
-        let exit_group = matches!(info.bpf.etype, Type::ExitGroup);
+        let process_exited = untrack_task(
+            &mut self.processes,
+            &mut self.tasks,
+            info.task_info(),
+            pk,
+            matches!(info.bpf.etype, Type::ExitGroup),
+        );
 
-        self.tasks.remove(&tk);
-
-        let group_exited = match self.processes.get_mut(&pk) {
-            Some(g) => {
-                g.threads.remove(&tk);
-                if exit_group {
-                    for t in g.threads.drain() {
-                        self.tasks.remove(&t);
-                    }
-                }
-                !g.is_alive()
-            }
-            // unknown group, we can only rely on what the event tells us
-            None => exit_group || info.task_info().is_thread_leader(),
-        };
-
-        if group_exited {
+        if process_exited {
             self.sink.caches.untrack_mnt_ns(&pk);
 
             if let Some(t) = self.processes.get(&pk) {
@@ -1880,7 +1937,7 @@ impl EventConsumer<'_> {
         UserEvent::new(LossData::from(&bpf_data), info)
     }
 
-    // Lost exit events would otherwise keep tasks, and thus their group, alive
+    // Lost exit events would otherwise keep tasks, and thus their process, alive
     // forever. Comparing keys also catches a PID reused by another task.
     fn sweep_stale_tasks(&mut self) {
         let stale = self
@@ -1898,9 +1955,9 @@ impl EventConsumer<'_> {
 
         for tk in stale {
             if let Some(t) = self.tasks.remove(&tk)
-                && let Some(g) = self.processes.get_mut(&t.proc_key)
+                && let Some(p) = self.processes.get_mut(&t.proc_key)
             {
-                g.threads.remove(&tk);
+                p.threads.remove(&tk);
             }
         }
     }
@@ -1971,15 +2028,12 @@ impl EventConsumer<'_> {
 
         // Execve must remove any previous task (i.e. coming from
         // clone or tasksched for instance)
-        if execve_flag && let Some(p) = self.processes.remove(&pk) {
-            if let Some(rpk) = p.real_parent_key {
-                // we keep track of real parent_key in case of zombie task
-                parent_key = rpk;
-            }
-            // de_thread() killed every other thread of the group
-            for t in p.threads.iter().filter(|&&t| t != tk) {
-                self.tasks.remove(t);
-            }
+        if execve_flag
+            && let Some(p) = untrack_exec_proc(&mut self.processes, &mut self.tasks, pk)
+            && let Some(rpk) = p.real_parent_key
+        {
+            // we keep track of real parent_key in case of zombie task
+            parent_key = rpk;
         }
 
         let cgroup = bpf_data.cgroup;
@@ -2038,7 +2092,7 @@ impl EventConsumer<'_> {
         task.cgroups = shared_cgroups;
         task.nodename = shared_nodename;
 
-        // early return if the group exists, it only gains a thread
+        // early return if the process exists, it only gains a thread
         if let Some(p) = self.processes.get_mut(&pk) {
             p.threads.insert(tk);
             return;
@@ -2078,7 +2132,7 @@ impl EventConsumer<'_> {
         // we insert only if not existing
         self.processes.insert(
             pk,
-            TaskGroup {
+            Process {
                 image,
                 command_line: command_line.join(" "),
                 pid: info.task_info().tgid,
@@ -2183,31 +2237,12 @@ impl EventConsumer<'_> {
 
     // Create tasks lazily, some never go through clone
     // correlation (kernel threads, lost events). Exiting tasks must not be
-    // resurrected, it would keep their group alive.
+    // resurrected, it would keep their process alive.
     fn track_task(&mut self, i: &bpf_events::EventInfo) {
         if matches!(i.etype, Type::Exit | Type::ExitGroup) {
             return;
         }
-
-        let tk = TaskKey::from(&i.process);
-        let pk = ProcKey::from(i.process.tg_uuid);
-        let group = self.processes.get_mut(&pk);
-        if !self.tasks.contains_key(&tk) {
-            let leader = group.as_ref().and_then(|g| self.tasks.get(&g.leader));
-            let task = Task {
-                proc_key: pk,
-                tgid: i.process.tgid,
-                pid: i.process.pid,
-                cgroups: leader.map(|l| Arc::clone(&l.cgroups)).unwrap_or_default(),
-                nodename: leader.and_then(|l| l.nodename.clone()),
-                expected_creds: i.process.creds,
-                reported_creds: None,
-            };
-            self.tasks.insert(tk, task);
-        }
-        if let Some(g) = group {
-            g.threads.insert(tk);
-        }
+        track_task(&mut self.processes, &mut self.tasks, &i.process);
     }
 
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
@@ -4494,13 +4529,13 @@ mod tests {
         .into()
     }
 
-    fn process(pid: i32, image: &str, parent: Option<u32>) -> TaskGroup {
+    fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {
         let leader = TaskKey::from(&TaskInfo {
             pid,
             tgid: pid,
             ..Default::default()
         });
-        TaskGroup {
+        Process {
             image: image.into(),
             command_line: String::new(),
             pid,
@@ -4515,6 +4550,104 @@ mod tests {
             procfs: false,
             reparented: false,
         }
+    }
+
+    fn thread(tgid: i32, pid: i32) -> TaskInfo {
+        TaskInfo {
+            pid,
+            tgid,
+            tg_uuid: kunai_common::uuid::ProcUuid {
+                leader_start_time_ns: 0,
+                random: 0,
+                tgid: tgid as u32,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// process 100 with threads 100 (leader), 101 and 102
+    fn threaded() -> (Processes, HashMap<TaskKey, Task>) {
+        let mut p = Processes::default();
+        let mut t = HashMap::new();
+        p.insert(pkey(100), process(100, "/bin/app", None));
+        for pid in [100, 101, 102] {
+            track_task(&mut p, &mut t, &thread(100, pid));
+        }
+        (p, t)
+    }
+
+    fn exit((p, t): &mut (Processes, HashMap<TaskKey, Task>), pid: i32, exit_group: bool) -> bool {
+        untrack_task(p, t, &thread(100, pid), pkey(100), exit_group)
+    }
+
+    #[test]
+    fn track_task_registers_threads() {
+        let (p, t) = threaded();
+        assert_eq!(t.len(), 3);
+        assert_eq!(p[&pkey(100)].threads.len(), 3);
+    }
+
+    #[test]
+    fn leader_exit_with_live_sibling_keeps_group() {
+        let mut s = threaded();
+        assert!(!exit(&mut s, 100, false));
+        assert!(s.0[&pkey(100)].is_alive());
+        assert!(!s.1.contains_key(&TaskKey::from(&thread(100, 100))));
+        assert_eq!(s.1.len(), 2);
+    }
+
+    #[test]
+    fn sibling_exit_keeps_group() {
+        let mut s = threaded();
+        assert!(!exit(&mut s, 101, false));
+        assert_eq!(s.0[&pkey(100)].threads.len(), 2);
+    }
+
+    #[test]
+    fn last_thread_exit_ends_group() {
+        let mut s = threaded();
+        assert!(!exit(&mut s, 100, false));
+        assert!(!exit(&mut s, 101, false));
+        assert!(exit(&mut s, 102, false));
+        assert!(!s.0[&pkey(100)].is_alive());
+        assert!(s.1.is_empty());
+    }
+
+    #[test]
+    fn exit_group_drains_all_threads() {
+        let mut s = threaded();
+        assert!(exit(&mut s, 101, true));
+        assert!(!s.0[&pkey(100)].is_alive());
+        assert!(s.1.is_empty());
+    }
+
+    #[test]
+    fn unknown_group_exit() {
+        let mut p = Processes::default();
+        let mut t = HashMap::new();
+        let mut untrack = |pid, eg| untrack_task(&mut p, &mut t, &thread(7, pid), pkey(7), eg);
+        assert!(!untrack(8, false));
+        assert!(untrack(8, true));
+        assert!(untrack(7, false));
+    }
+
+    #[test]
+    fn exit_events_do_not_resurrect_tasks() {
+        let mut s = threaded();
+        assert!(exit(&mut s, 101, true));
+        // a late exit from an already drained thread
+        assert!(exit(&mut s, 102, false));
+        assert!(s.1.is_empty());
+    }
+
+    #[test]
+    fn execve_from_non_leader_keeps_only_exec_task() {
+        let (mut p, mut t) = threaded();
+        // the execing thread takes over the leader pid and start_time
+        let tk = TaskKey::from(&thread(100, 100));
+        assert!(untrack_exec_proc(&mut p, &mut t, pkey(100)).is_some());
+        assert!(!p.contains_key(&pkey(100)));
+        assert_eq!(t.keys().collect::<Vec<_>>(), [&tk]);
     }
 
     /// init(1) -> bash(10) -> ls(20)
