@@ -225,6 +225,11 @@ impl TaskInfo {
     }
 
     #[inline(always)]
+    pub fn is_thread_leader(&self) -> bool {
+        self.pid == self.tgid
+    }
+
+    #[inline(always)]
     pub fn is_kernel_thread(&self) -> bool {
         test_flag!(self.flags, 0x00200000)
     }

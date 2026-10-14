@@ -96,6 +96,18 @@ impl TryFrom<&procfs::process::Process> for TaskKey {
     }
 }
 
+impl TryFrom<&procfs::process::Task> for TaskKey {
+    type Error = KeyError;
+    fn try_from(t: &procfs::process::Task) -> Result<Self, Self::Error> {
+        let stat = t.stat()?;
+
+        Ok(Self {
+            start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
+            pid: t.tid,
+        })
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct HostInfo {
     pub name: String,
