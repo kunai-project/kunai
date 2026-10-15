@@ -23,8 +23,6 @@ mod fs;
 pub use fs::*;
 mod bpf;
 pub use bpf::*;
-mod schedule;
-pub use schedule::*;
 mod mount;
 pub use mount::*;
 mod prctl;
@@ -48,11 +46,11 @@ pub use status::*;
 mod io_uring;
 pub use io_uring::*;
 
-// prevent using correlation event in bpf code
+// prevent using hash event in bpf code
 #[cfg(feature = "user")]
-mod correlation;
+mod hash;
 #[cfg(feature = "user")]
-pub use correlation::*;
+pub use hash::*;
 
 // used to pipe events to userland
 mod perfs;
@@ -103,7 +101,6 @@ const fn max_bpf_event_size() -> usize {
             // these are event types only used in user land
             Type::Unknown
             | Type::EndConfigurable
-            | Type::Correlation
             | Type::CacheHash
             | Type::Max
             | Type::FileScan

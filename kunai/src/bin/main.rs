@@ -113,8 +113,9 @@ struct Process {
     children: HashSet<ProcKey>,
     // keys of the threads of this process
     threads: HashSet<TaskKey>,
-    // ebpf task info of the leader, used to fix up re-parented processes
-    leader_task_info: Option<TaskInfo>,
+    // last parent task info seen before a re-parenting, reported in place of
+    // the new parent once re-parented
+    parent_task_info: Option<TaskInfo>,
     // flag telling if this process comes from procfs
     // parsing at kunai start
     procfs: bool,
@@ -153,6 +154,49 @@ struct Task {
     // Credentials of the last creds_tampered event reported, used not to
     // re-fire on every subsequent event while a divergence lasts.
     reported_creds: Option<creds::Creds>,
+}
+
+/// What execve and clone events carry to build a [`Process`] and its [`Task`].
+struct ProcSeed<'a> {
+    exe: &'a kunai_common::path::Path,
+    argv: &'a kunai_common::buffer::Buffer<{ bpf_events::MAX_ARGV_SIZE }>,
+    cgroup: &'a kunai_common::cgroup::Cgroup,
+    nodename: Option<&'a bpf_events::Nodename>,
+}
+
+impl ProcSeed<'_> {
+    fn nodename(&self) -> Option<String> {
+        let nn = self.nodename?;
+        Some(
+            core::ffi::CStr::from_bytes_until_nul(nn.as_slice())
+                .ok()?
+                .to_string_lossy()
+                .to_string(),
+        )
+    }
+}
+
+impl<'a> From<&'a bpf_events::ExecveData> for ProcSeed<'a> {
+    fn from(d: &'a bpf_events::ExecveData) -> Self {
+        Self {
+            exe: &d.executable,
+            argv: &d.argv,
+            cgroup: &d.cgroup,
+            nodename: Some(&d.nodename),
+        }
+    }
+}
+
+impl<'a> From<&'a bpf_events::CloneData> for ProcSeed<'a> {
+    fn from(d: &'a bpf_events::CloneData) -> Self {
+        Self {
+            exe: &d.executable,
+            argv: &d.argv,
+            cgroup: &d.cgroup,
+            // nodename resolution might fail in clone
+            nodename: (!d.nodename.is_empty()).then_some(&d.nodename),
+        }
+    }
 }
 
 /// Process table, kept apart from [`EventConsumer`] so that events can
@@ -1795,7 +1839,7 @@ impl EventConsumer<'_> {
             real_parent_key: parent_key,
             children: HashSet::new(),
             threads,
-            leader_task_info: None,
+            parent_task_info: None,
             procfs: true,
             reparented: false,
         };
@@ -2033,35 +2077,52 @@ impl EventConsumer<'_> {
         false
     }
 
-    fn handle_correlation_event(
-        &mut self,
-        info: StdEventInfo,
-        bpf_data: bpf_events::CorrelationData,
-    ) {
-        let pk = info.process_key();
-        let tk = TaskKey::from(info.task_info());
-        let mut parent_key = info.parent_key();
-        let execve_flag = matches!(bpf_data.origin, Type::Execve | Type::ExecveScript);
+    // Takes the raw event info so that tables are updated before the
+    // StdEventInfo of the event is built from them.
+    fn on_execve(&mut self, i: &bpf_events::EventInfo, data: &bpf_events::ExecveData) {
+        let seed = ProcSeed::from(data);
+        let cgroups = self.update_task_cgroups_nodename(&i.process, &seed);
 
-        // Execve must remove any previous task (i.e. coming from
-        // clone or tasksched for instance)
-        if execve_flag
-            && let Some(p) = untrack_exec_proc(&mut self.processes, &mut self.tasks, pk)
-            && let Some(rpk) = p.real_parent_key
-        {
-            // we keep track of real parent_key in case of zombie task
-            parent_key = rpk;
+        // the process gets a new image, we start from scratch but
+        // keep track of the real parent in case of zombie task
+        let pk = ProcKey::from(&i.process);
+        let old = untrack_exec_proc(&mut self.processes, &mut self.tasks, pk);
+        let parent_key = old
+            .as_ref()
+            .and_then(|p| p.real_parent_key)
+            .unwrap_or_else(|| ProcKey::from(&i.parent));
+        let parent_task_info = old.and_then(|p| p.parent_task_info).unwrap_or(i.parent);
+        self.new_process(&i.process, &seed, &cgroups, parent_key, parent_task_info);
+    }
+
+    // Same as on_execve regarding raw event info.
+    fn on_clone(&mut self, i: &bpf_events::EventInfo, data: &bpf_events::CloneData) {
+        let seed = ProcSeed::from(data);
+        let cgroups = self.update_task_cgroups_nodename(&i.process, &seed);
+
+        // a new thread of a known process, track_task already registered it
+        if self.processes.contains_key(&ProcKey::from(&i.process)) {
+            return;
         }
+        // a fork, or a thread whose process we missed (lost events)
+        self.new_process(
+            &i.process,
+            &seed,
+            &cgroups,
+            ProcKey::from(&i.parent),
+            i.parent,
+        );
+    }
 
-        let cgroup = bpf_data.cgroup;
+    fn resolve_cgroups(ti: &TaskInfo, seed: &ProcSeed) -> Vec<String> {
+        let cgroup = seed.cgroup;
 
         // we encountered some cgroup parsing error in eBPF
         // so we need to resolve cgroup in userland
-        let cgroups = match cgroup.error {
+        match cgroup.error {
             BpfOption::None => vec![cgroup.to_string()],
             BpfOption::Some(_) => {
-                if let Ok(cgroups) =
-                    procfs::process::Process::new(info.task_info().pid).and_then(|p| p.cgroups())
+                if let Ok(cgroups) = procfs::process::Process::new(ti.pid).and_then(|p| p.cgroups())
                 {
                     // we return cgroup from procfs
                     cgroups
@@ -2073,49 +2134,57 @@ impl EventConsumer<'_> {
                     // we report an error
                     warn!(
                         "failed to resolve cgroup for pid={} guuid={}",
-                        info.task_info().pid,
-                        info.task_info().tg_uuid.into_uuid().hyphenated()
+                        ti.pid,
+                        ti.tg_uuid.into_uuid().hyphenated()
                     );
                     // still get a chance to do something with cgroup
                     vec![cgroup.to_string()]
                 }
             }
-        };
+        }
+    }
+
+    /// Sets cgroups and nodename of the emitting [`Task`] and returns its cgroups.
+    fn update_task_cgroups_nodename(&mut self, ti: &TaskInfo, seed: &ProcSeed) -> Arc<[String]> {
+        let tk = TaskKey::from(ti);
+        let cgroups = Self::resolve_cgroups(ti, seed);
 
         // threads mostly share the leader's values, so we share its Arcs
         let leader = self
             .processes
-            .get(&pk)
+            .get(&ProcKey::from(ti))
             .and_then(|p| self.tasks.get(&p.leader));
         let shared_cgroups = match leader {
             Some(l) if *l.cgroups == *cgroups => Arc::clone(&l.cgroups),
-            _ => Arc::from(cgroups.as_slice()),
+            _ => Arc::from(cgroups),
         };
-        let nodename = bpf_data.nodename();
+        let nodename = seed.nodename();
         let shared_nodename = match leader.and_then(|l| l.nodename.as_ref()) {
             Some(n) if Some(n.as_ref()) == nodename.as_deref() => Some(Arc::clone(n)),
             _ => nodename.map(Arc::from),
         };
 
-        let task = self.tasks.entry(tk).or_insert_with(|| Task {
-            proc_key: pk,
-            tgid: info.task_info().tgid,
-            pid: info.task_info().pid,
-            cgroups: Arc::clone(&shared_cgroups),
-            nodename: shared_nodename.clone(),
-            expected_creds: info.task_info().creds,
-            reported_creds: None,
-        });
-        task.cgroups = shared_cgroups;
-        task.nodename = shared_nodename;
-
-        // early return if the process exists, it only gains a thread
-        if let Some(p) = self.processes.get_mut(&pk) {
-            p.threads.insert(tk);
-            return;
+        let task = self.tasks.get_mut(&tk);
+        debug_assert!(task.is_some(), "task must be tracked");
+        if let Some(task) = task {
+            task.cgroups = Arc::clone(&shared_cgroups);
+            task.nodename = shared_nodename;
         }
+        shared_cgroups
+    }
 
-        let mut container_type = Container::from_cgroups(&cgroups);
+    fn new_process(
+        &mut self,
+        ti: &TaskInfo,
+        seed: &ProcSeed,
+        cgroups: &[String],
+        parent_key: ProcKey,
+        parent_task_info: TaskInfo,
+    ) {
+        let pk = ProcKey::from(ti);
+        let tk = TaskKey::from(ti);
+
+        let mut container_type = Container::from_cgroups(cgroups);
 
         if container_type.is_none() {
             container_type =
@@ -2123,44 +2192,44 @@ impl EventConsumer<'_> {
         }
 
         let image = {
-            if info.task_info().is_kernel_thread() {
+            if ti.is_kernel_thread() {
                 KERNEL_IMAGE.into()
             } else {
-                bpf_data.exe.to_path_buf()
+                seed.exe.to_path_buf()
             }
         };
 
         // we update parent's information
         // we track children processes, not tasks
         self.processes.entry(parent_key).and_modify(|e| {
-            e.children.insert(info.process_key());
+            e.children.insert(pk);
         });
 
-        let (command_line, opt_err) = bpf_data.argv.to_argv();
+        let (command_line, opt_err) = seed.argv.to_argv();
         opt_err.inspect(|e| {
             error!(
                 "utf8 decoding error while parsing argv for comm={} pid={} task={}: {e}",
-                info.task_info().comm_string(),
-                info.task_info().tgid,
-                info.task_info().tg_uuid.into_uuid()
+                ti.comm_string(),
+                ti.tgid,
+                ti.tg_uuid.into_uuid()
             )
         });
 
-        // we insert only if not existing
         self.processes.insert(
             pk,
             Process {
                 image,
                 command_line: command_line.join(" "),
-                pid: info.task_info().tgid,
-                leader: tk,
-                kthread: info.task_info().is_kernel_thread(),
+                pid: ti.tgid,
+                // the process may first be seen from a non-leader thread
+                leader: pk.to_thread_leader_key(),
+                kthread: ti.is_kernel_thread(),
                 resolved: HashMap::new(),
                 container: container_type,
                 real_parent_key: Some(parent_key),
                 children: HashSet::new(),
                 threads: HashSet::from([tk]),
-                leader_task_info: Some(*info.task_info()),
+                parent_task_info: Some(parent_task_info),
                 procfs: false,
                 reparented: false,
             },
@@ -2176,30 +2245,19 @@ impl EventConsumer<'_> {
     fn track_zombie_task(&mut self, std_info: &mut StdEventInfo) {
         // we need to find if task is a zombie and replace
         // its parent with the real one if needed
-        if let Some(kti) = self
-            .processes
-            .get_mut(&std_info.process_key())
-            .and_then(|t| {
-                if t.reparented
-                    || (t.real_parent_key.is_some()
-                        && t.real_parent_key != Some(std_info.parent_key()))
-                {
-                    t.reparented = true;
-                    // we must continue with the real parent task key
-                    t.real_parent_key
-                } else {
-                    None
-                }
-            })
-            // we get real parent
-            .and_then(|tk| self.processes.get(&tk))
-            // we get real parent's TaskInfo
-            .and_then(|t| t.leader_task_info)
+        if let Some(p) = self.processes.get_mut(&std_info.process_key())
+            && let Some(rpk) = p.real_parent_key
         {
-            // if we arrive here, this means the task is a zombie
-            // and we need to replace its parent by the real one
-            std_info.bpf.parent = kti;
-            std_info.bpf.process.zombie = true
+            if !p.reparented && rpk == std_info.parent_key() {
+                // keep the last parent state seen before a re-parenting
+                p.parent_task_info = Some(std_info.bpf.parent);
+            } else {
+                p.reparented = true;
+                if let Some(pti) = p.parent_task_info {
+                    std_info.bpf.parent = pti;
+                    std_info.bpf.process.zombie = true
+                }
+            }
         }
 
         // we must set the zombie flag of the parent if needed
@@ -2252,8 +2310,8 @@ impl EventConsumer<'_> {
         TaskAdditionalInfo { users, groups }
     }
 
-    // Create tasks lazily, some never go through clone
-    // correlation (kernel threads, lost events). Exiting tasks must not be
+    // Create tasks lazily, some never go through a clone
+    // event (kernel threads, lost events). Exiting tasks must not be
     // resurrected, it would keep their process alive.
     fn track_task(&mut self, i: &bpf_events::EventInfo) {
         if matches!(i.etype, Type::Exit | Type::ExitGroup) {
@@ -2394,14 +2452,10 @@ impl EventConsumer<'_> {
 
         match evt {
             EbpfEvent::Execve(e) => {
-                let std_info = self.build_std_event_info(e.info);
-                let correlation_event = bpf_events::CorrelationEvent::from(e.as_ref());
-                self.handle_correlation_event(std_info.clone(), correlation_event.data);
+                self.on_execve(&e.info, &e.data);
 
-                if self.filter.is_enabled(std_info.bpf.etype) {
-                    // we have to rebuild std_info as it has it is uses correlation
-                    // information
-                    let std_info = self.build_std_event_info(std_info.bpf);
+                if self.filter.is_enabled(e.info.etype) {
+                    let std_info = self.build_std_event_info(e.info);
                     let mut e = self
                         .processes
                         .execve_event(&mut self.sink, &std_info, &e.data);
@@ -2411,17 +2465,10 @@ impl EventConsumer<'_> {
             }
 
             EbpfEvent::Clone(e) => {
-                let std_info = self.build_std_event_info(e.info);
-                // this event is used for correlation but cannot be processed
-                // asynchronously so we have to handle correlation here
-                let correlation_event = bpf_events::CorrelationEvent::from(e.as_ref());
-                self.handle_correlation_event(std_info.clone(), correlation_event.data);
+                self.on_clone(&e.info, &e.data);
 
-                // we let clone event go in EventProducer not to break correlation
                 if self.filter.is_enabled(Type::Clone) {
-                    // we have to rebuild std_info as it has it is uses correlation
-                    // information
-                    let std_info = self.build_std_event_info(std_info.bpf);
+                    let std_info = self.build_std_event_info(e.info);
                     let mut e = self.processes.clone_event(&std_info, e.data);
                     self.sink.scan_and_print(&mut e);
                 }
@@ -2570,11 +2617,6 @@ impl EventConsumer<'_> {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self.processes.error_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
-            }
-
-            EbpfEvent::Correlation(e) => {
-                let std_info = self.build_std_event_info(e.info);
-                self.handle_correlation_event(std_info, e.data);
             }
 
             EbpfEvent::Hash(e) => {
@@ -3676,7 +3718,6 @@ impl TryFrom<serde_json::Value> for ReplayEvent {
             // internal types
             Type::Unknown
             | Type::CacheHash
-            | Type::Correlation
             | Type::Log
             | Type::EndConfigurable
             | Type::SyscoreResume
@@ -4554,7 +4595,7 @@ mod tests {
             real_parent_key: parent.map(pkey),
             children: HashSet::new(),
             threads: HashSet::from([leader]),
-            leader_task_info: None,
+            parent_task_info: None,
             procfs: false,
             reparented: false,
         }
