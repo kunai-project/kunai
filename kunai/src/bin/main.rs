@@ -1066,7 +1066,8 @@ fn track_task(processes: &mut Processes, tasks: &mut HashMap<TaskKey, Task>, ti:
     }
 }
 
-/// Returns true if the whole process exited.
+/// Returns true if this exit ended the whole process, false for
+/// late exits of an already exited process.
 fn untrack_task(
     processes: &mut Processes,
     tasks: &mut HashMap<TaskKey, Task>,
@@ -1079,6 +1080,9 @@ fn untrack_task(
 
     match processes.get_mut(&pk) {
         Some(p) => {
+            if !p.is_alive() {
+                return false;
+            }
             p.threads.remove(&tk);
             if exit_group {
                 for t in p.threads.drain() {
@@ -4686,7 +4690,7 @@ mod tests {
         let mut s = threaded();
         assert!(exit(&mut s, 101, true));
         // a late exit from an already drained thread
-        assert!(exit(&mut s, 102, false));
+        assert!(!exit(&mut s, 102, false));
         assert!(s.1.is_empty());
     }
 
