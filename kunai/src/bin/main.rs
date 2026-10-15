@@ -1736,33 +1736,50 @@ impl EventConsumer<'_> {
             .map(|cg| cg.pathname)
             .collect::<Arc<[String]>>();
 
-        // a process must own its leader task, otherwise it is never alive
-        let status = p.status()?;
         let leader = TaskKey::try_from(p)?;
-        self.tasks.insert(
-            leader,
-            Task {
-                proc_key: tk,
-                tgid: p.pid,
-                pid: p.pid,
-                cgroups,
-                nodename: None,
-                expected_creds: creds::Creds {
-                    uid: status.ruid,
-                    gid: status.rgid,
-                    euid: status.euid,
-                    egid: status.egid,
-                    suid: status.suid,
-                    sgid: status.sgid,
-                    fsuid: status.fuid,
-                    fsgid: status.fgid,
-                    cap_effective: status.capeff,
-                    cap_permitted: status.capprm,
-                    cap_inheritable: status.capinh,
+        let mut threads = HashSet::new();
+
+        // all threads must be registered, otherwise a leader exiting before
+        // its siblings emit any event would leave the process seen as dead
+        for t in p.tasks()?.flatten() {
+            // threads may exit while we iterate
+            let (Ok(stat), Ok(status), Ok(key)) = (t.stat(), t.status(), TaskKey::try_from(&t))
+            else {
+                continue;
+            };
+
+            // only the leader can be a zombie (other threads are reaped at once):
+            // it exited before its siblings and we will never see its exit, so it
+            // must not keep the process alive.
+            if stat.state != 'Z' {
+                threads.insert(key);
+            }
+
+            self.tasks.insert(
+                key,
+                Task {
+                    proc_key: tk,
+                    tgid: p.pid,
+                    pid: t.tid,
+                    cgroups: Arc::clone(&cgroups),
+                    nodename: None,
+                    expected_creds: creds::Creds {
+                        uid: status.ruid,
+                        gid: status.rgid,
+                        euid: status.euid,
+                        egid: status.egid,
+                        suid: status.suid,
+                        sgid: status.sgid,
+                        fsuid: status.fuid,
+                        fsgid: status.fgid,
+                        cap_effective: status.capeff,
+                        cap_permitted: status.capprm,
+                        cap_inheritable: status.capinh,
+                    },
+                    reported_creds: None,
                 },
-                reported_creds: None,
-            },
-        );
+            );
+        }
 
         let task = Process {
             image,
@@ -1777,7 +1794,7 @@ impl EventConsumer<'_> {
             container: None,
             real_parent_key: parent_key,
             children: HashSet::new(),
-            threads: HashSet::from([leader]),
+            threads,
             leader_task_info: None,
             procfs: true,
             reparented: false,
