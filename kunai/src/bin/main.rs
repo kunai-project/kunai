@@ -621,7 +621,7 @@ impl Processes {
         target.set_uuid_random(random);
 
         // get the command line
-        let tk = ProcKey::from(target.tg_uuid);
+        let tk = ProcKey::from(&target);
 
         let data = KillData {
             ancestors: self.get_task_ancestors(info),
@@ -652,7 +652,7 @@ impl Processes {
         target.set_uuid_random(random);
 
         // get the command line
-        let tk = ProcKey::from(target.tg_uuid);
+        let tk = ProcKey::from(&target);
 
         let data = PtraceData {
             ancestors: self.get_task_ancestors(info),
@@ -1002,7 +1002,7 @@ fn creds_diverged(
 
 fn track_task(processes: &mut Processes, tasks: &mut HashMap<TaskKey, Task>, ti: &TaskInfo) {
     let tk = TaskKey::from(ti);
-    let pk = ProcKey::from(ti.tg_uuid);
+    let pk = ProcKey::from(ti);
     let process = processes.get_mut(&pk);
     if !tasks.contains_key(&tk) {
         let leader = process.as_ref().and_then(|p| tasks.get(&p.leader));
@@ -1052,7 +1052,7 @@ fn untrack_task(
 /// drops the [`Task`]s of all its threads but the one that exec'd.
 ///
 /// Mirrors the kernel's `de_thread()`: other threads are killed and the
-/// exec'ing one takes over the leader identity, i.e. `TaskKey::from(pk)`.
+/// exec'ing one takes over the leader identity, i.e. `pk.to_thread_leader_key()`.
 ///
 /// Returns the removed [`Process`], if it was tracked.
 fn untrack_exec_proc(
@@ -1061,7 +1061,7 @@ fn untrack_exec_proc(
     pk: ProcKey,
 ) -> Option<Process> {
     processes.remove(&pk).inspect(|p| {
-        let tk = TaskKey::from(pk);
+        let tk = pk.to_thread_leader_key();
         for t in p.threads.iter().filter(|&&t| t != tk) {
             tasks.remove(t);
         }
@@ -2299,7 +2299,7 @@ impl EventConsumer<'_> {
             let pid = i.process.pid;
             // threads exiting after exit_group would track a dead process again
             let track = (!matches!(i.etype, Type::Exit | Type::ExitGroup))
-                .then(|| ProcKey::from(i.process.tg_uuid));
+                .then(|| ProcKey::from(&i.process));
             if let Err(e) = self.sink.caches.cache_mnt_ns(pid, t_mnt_ns, track) {
                 debug!("failed to cache namespace pid={pid} ns={t_mnt_ns}: {e}");
             }
@@ -2307,7 +2307,7 @@ impl EventConsumer<'_> {
 
         if let Some(p_mnt_ns) = Self::parent_mnt_ns(i) {
             let pid = i.parent.pid;
-            let pk = ProcKey::from(i.parent.tg_uuid);
+            let pk = ProcKey::from(&i.parent);
             // an already exited parent would never be untracked again and
             // would pin its namespace, the LRU takes care of those
             let track = self
@@ -4521,12 +4521,11 @@ mod tests {
     }
 
     fn pkey(pid: u32) -> ProcKey {
-        kunai_common::uuid::ProcUuid {
+        ProcKey::from_proc_uuid(kunai_common::uuid::ProcUuid {
             leader_start_time_ns: 0,
             random: 0,
             tgid: pid,
-        }
-        .into()
+        })
     }
 
     fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {

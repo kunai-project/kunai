@@ -23,14 +23,29 @@ pub struct ProcKey {
     pid: u32,
 }
 
-impl From<ProcUuid> for ProcKey {
-    fn from(value: ProcUuid) -> Self {
+impl ProcKey {
+    /// Key of the process leader (tid == tgid), which may have exited while
+    /// the process lives on.
+    pub fn to_thread_leader_key(self) -> TaskKey {
+        TaskKey {
+            start_time_sec: self.start_time_sec,
+            pid: self.pid,
+        }
+    }
+
+    pub fn from_proc_uuid(value: ProcUuid) -> Self {
         // in task_struct start_time has a higher resolution so we need to scale it
         // down in order to have a comparable value with the procfs one
         Self {
             start_time_sec: value.leader_start_time_ns / 1_000_000_000,
             pid: value.tgid,
         }
+    }
+}
+
+impl From<&TaskInfo> for ProcKey {
+    fn from(ti: &TaskInfo) -> Self {
+        Self::from_proc_uuid(ti.tg_uuid)
     }
 }
 
@@ -70,16 +85,7 @@ impl TryFrom<&procfs::process::Process> for ProcKey {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TaskKey {
     start_time_sec: u64,
-    pid: i32,
-}
-
-impl From<ProcKey> for TaskKey {
-    fn from(value: ProcKey) -> Self {
-        Self {
-            start_time_sec: value.start_time_sec,
-            pid: value.pid as i32,
-        }
-    }
+    pid: u32,
 }
 
 impl From<&TaskInfo> for TaskKey {
@@ -88,7 +94,7 @@ impl From<&TaskInfo> for TaskKey {
         // resolution than procfs, scale it down to be comparable
         Self {
             start_time_sec: ti.start_time / 1_000_000_000,
-            pid: ti.pid,
+            pid: ti.pid as u32,
         }
     }
 }
@@ -100,7 +106,7 @@ impl TryFrom<&procfs::process::Process> for TaskKey {
 
         Ok(Self {
             start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
-            pid: p.pid,
+            pid: p.pid as u32,
         })
     }
 }
@@ -112,7 +118,7 @@ impl TryFrom<&procfs::process::Task> for TaskKey {
 
         Ok(Self {
             start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
-            pid: t.tid,
+            pid: t.tid as u32,
         })
     }
 }
@@ -163,11 +169,11 @@ impl StdEventInfo {
     }
 
     pub fn process_key(&self) -> ProcKey {
-        ProcKey::from(self.task_info().tg_uuid)
+        ProcKey::from(self.task_info())
     }
 
     pub fn parent_key(&self) -> ProcKey {
-        ProcKey::from(self.parent_info().tg_uuid)
+        ProcKey::from(self.parent_info())
     }
 
     #[inline]
