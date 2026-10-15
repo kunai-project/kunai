@@ -2417,14 +2417,6 @@ impl EventConsumer<'_> {
                 let correlation_event = bpf_events::CorrelationEvent::from(e.as_ref());
                 self.handle_correlation_event(std_info.clone(), correlation_event.data);
 
-                // commit_creds() is never called on fork/clone (copy_creds() assigns
-                // cred directly), so seed the baseline here instead.
-                // Always Some: track_task created the task.
-                if let Some(t) = self.tasks.get_mut(&TaskKey::from(&e.info.process)) {
-                    t.expected_creds = e.info.process.creds;
-                    t.reported_creds = None;
-                }
-
                 // we let clone event go in EventProducer not to break correlation
                 if self.filter.is_enabled(Type::Clone) {
                     // we have to rebuild std_info as it has it is uses correlation
