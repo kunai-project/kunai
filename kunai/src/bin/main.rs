@@ -21,7 +21,7 @@ use kunai::events::{
     SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData, UserEvent, agent::AgentEventInfo,
 };
 use kunai::events::{IoUringOp, IoUringSqeData, StartData};
-use kunai::info::{AdditionalInfo, KeyError, ProcKey, StdEventInfo, TaskAdditionalInfo, TaskKey};
+use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo, TaskKey};
 use kunai::ioc::IoC;
 use kunai::kallsyms::KernelSymbols;
 use kunai::util::uname::Utsname;
@@ -61,7 +61,6 @@ use std::ffi::OsStr;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
-use std::ops::{Deref, DerefMut};
 
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -89,72 +88,13 @@ use kunai::util::namespace::unshare;
 
 use communityid::{Flow, Protocol};
 
+mod process_table;
+use process_table::{Process, ProcessTable, Processes, Task, task_is_stale};
+
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
-const MAX_ANCESTORS: usize = 1024;
 // largest event seen in real logs is ~1.8 KiB
 const JSON_BUF_MAX_CAP: usize = 4 * 1024;
-
-/// Per-process state (a thread group in kernel terms).
-#[derive(Debug, Clone)]
-struct Process {
-    image: PathBuf,
-    command_line: String,
-    pid: i32,
-    leader: TaskKey,
-    // PF_KTHREAD is uniform across a process
-    kthread: bool,
-    resolved: HashMap<IpAddr, String>,
-    container: Option<Container>,
-    // ProcKey rather than TaskKey because the kernel silently re-parents
-    // children to a sibling thread when the parent thread exits.
-    real_parent_key: Option<ProcKey>,
-    // children processes
-    children: HashSet<ProcKey>,
-    // keys of the threads of this process
-    threads: HashSet<TaskKey>,
-    // last parent task info seen before a re-parenting, reported in place of
-    // the new parent once re-parented
-    parent_task_info: Option<TaskInfo>,
-    // flag telling if this process comes from procfs
-    // parsing at kunai start
-    procfs: bool,
-    // set when the stored parent differs from the one seen in events
-    reparented: bool,
-}
-
-impl Process {
-    // A process is alive as long as one of its tasks is, the leader
-    // exiting alone does not kill the process.
-    #[inline(always)]
-    fn is_alive(&self) -> bool {
-        !self.threads.is_empty()
-    }
-
-    // run when the last task of the process exits
-    fn on_exit(&mut self) {
-        // this does not allocate the new map
-        self.resolved.clear();
-        self.resolved.shrink_to_fit();
-    }
-}
-
-/// Per-task (as opposed to per-process) state.
-#[derive(Debug, Clone)]
-struct Task {
-    proc_key: ProcKey,
-    tgid: i32,
-    pid: i32,
-    // shared with the leader task when equal, replaced wholesale on change
-    cgroups: Arc<[String]>,
-    nodename: Option<Arc<str>>,
-    // Baseline credentials used to detect out-of-band tampering. Only ever set
-    // from what commit_creds() installs, it is our ground truth.
-    expected_creds: creds::Creds,
-    // Credentials of the last creds_tampered event reported, used not to
-    // re-fire on every subsequent event while a divergence lasts.
-    reported_creds: Option<creds::Creds>,
-}
 
 /// What execve and clone events carry to build a [`Process`] and its [`Task`].
 struct ProcSeed<'a> {
@@ -199,30 +139,7 @@ impl<'a> From<&'a bpf_events::CloneData> for ProcSeed<'a> {
     }
 }
 
-/// Process table, kept apart from [`EventConsumer`] so that events can
-/// borrow from it while [`EventSink`] is mutably borrowed.
-#[derive(Default)]
-struct Processes(HashMap<ProcKey, Process>);
-
-impl Deref for Processes {
-    type Target = HashMap<ProcKey, Process>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Processes {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 impl Processes {
-    fn with_capacity(cap: usize) -> Self {
-        Self(HashMap::with_capacity(cap))
-    }
-
     fn get_exe(&self, key: ProcKey) -> &Path {
         self.get(&key)
             .map(|t| t.image.as_path())
@@ -238,47 +155,6 @@ impl Processes {
     fn get_exe_and_command_line(&self, i: &StdEventInfo) -> (&Path, Cow<'_, str>) {
         let ck = i.process_key();
         (self.get_exe(ck), self.get_command_line(ck))
-    }
-
-    /// get the list of ancestors given a [ProcKey]. If skip is 0 the last
-    /// item is the image of the task referenced by `k`. One can skip ancestors
-    /// by setting `skip` > 0.
-    fn get_all_ancestors(&self, mut k: ProcKey, mut skip: u16) -> Vec<Cow<'_, str>> {
-        let mut ancestors = vec![];
-        let mut last = None;
-
-        while let Some(task) = self.get(&k) {
-            last = Some(task);
-            if skip == 0 {
-                ancestors.push(task.image.to_string_lossy());
-            } else {
-                skip -= 1;
-            }
-
-            if ancestors.len() >= MAX_ANCESTORS - 1 {
-                break;
-            }
-
-            k = match task.real_parent_key {
-                Some(v) => v,
-                None => {
-                    break;
-                }
-            };
-        }
-
-        if ancestors.len() >= MAX_ANCESTORS - 1 {
-            ancestors.push("(truncated)".into());
-        } else if let Some(last) = last
-            && last.pid != 1
-            && !last.kthread
-            && skip == 0
-        {
-            ancestors.push("?".into());
-        }
-
-        ancestors.reverse();
-        ancestors
     }
 
     fn get_task_ancestors(&self, i: &StdEventInfo) -> Vec<Cow<'_, str>> {
@@ -1024,8 +900,7 @@ struct EventConsumer<'s> {
     system_info: SystemInfo,
     filter: Filter,
     random: u32,
-    processes: Processes,
-    tasks: HashMap<TaskKey, Task>,
+    table: ProcessTable,
     resolved: HashMap<IpAddr, String>,
     exited_tasks: u64,
     sink: EventSink<'s>,
@@ -1042,78 +917,6 @@ fn creds_diverged(
         return false;
     }
     !last_reported.is_some_and(|reported| reported == current)
-}
-
-fn track_task(processes: &mut Processes, tasks: &mut HashMap<TaskKey, Task>, ti: &TaskInfo) {
-    let tk = TaskKey::from(ti);
-    let pk = ProcKey::from(ti);
-    let process = processes.get_mut(&pk);
-    if !tasks.contains_key(&tk) {
-        let leader = process.as_ref().and_then(|p| tasks.get(&p.leader));
-        let task = Task {
-            proc_key: pk,
-            tgid: ti.tgid,
-            pid: ti.pid,
-            cgroups: leader.map(|l| Arc::clone(&l.cgroups)).unwrap_or_default(),
-            nodename: leader.and_then(|l| l.nodename.clone()),
-            expected_creds: ti.creds,
-            reported_creds: None,
-        };
-        tasks.insert(tk, task);
-    }
-    if let Some(p) = process {
-        p.threads.insert(tk);
-    }
-}
-
-/// Returns true if this exit ended the whole process, false for
-/// late exits of an already exited process.
-fn untrack_task(
-    processes: &mut Processes,
-    tasks: &mut HashMap<TaskKey, Task>,
-    ti: &TaskInfo,
-    pk: ProcKey,
-    exit_group: bool,
-) -> bool {
-    let tk = TaskKey::from(ti);
-    tasks.remove(&tk);
-
-    match processes.get_mut(&pk) {
-        Some(p) => {
-            if !p.is_alive() {
-                return false;
-            }
-            p.threads.remove(&tk);
-            if exit_group {
-                for t in p.threads.drain() {
-                    tasks.remove(&t);
-                }
-            }
-            !p.is_alive()
-        }
-        // unknown process, we can only rely on what the event tells us
-        None => exit_group || ti.is_thread_leader(),
-    }
-}
-
-/// Removes the process `pk` from `processes` after a successful execve and
-/// drops the [`Task`]s of all its threads but the one that exec'd.
-///
-/// Mirrors the kernel's `de_thread()`: other threads are killed and the
-/// exec'ing one takes over the leader identity, i.e. `pk.to_thread_leader_key()`.
-///
-/// Returns the removed [`Process`], if it was tracked.
-fn untrack_exec_proc(
-    processes: &mut Processes,
-    tasks: &mut HashMap<TaskKey, Task>,
-    pk: ProcKey,
-) -> Option<Process> {
-    processes.remove(&pk).inspect(|p| {
-        let tk = pk.to_thread_leader_key();
-        for t in p.threads.iter().filter(|&&t| t != tk) {
-            tasks.remove(t);
-        }
-    })
 }
 
 impl EventSink<'_> {
@@ -1428,8 +1231,7 @@ impl EventConsumer<'_> {
             system_info,
             filter,
             random: util::getrandom::<u32>()?,
-            processes: Processes::with_capacity(512),
-            tasks: HashMap::with_capacity(512),
+            table: ProcessTable::with_capacity(512),
             exited_tasks: 0,
             resolved: HashMap::new(),
             sink: EventSink {
@@ -1716,15 +1518,17 @@ impl EventConsumer<'_> {
 
         // we try to resolve containers from tasks found in procfs
         for (tk, pk) in self
+            .table
             .processes
             .iter()
             .map(|(&k, v)| (k, v.real_parent_key))
             .collect::<Vec<(ProcKey, Option<ProcKey>)>>()
         {
             if let Some(parent) = pk {
-                if let Some(t) = self.processes.get_mut(&tk) {
+                if let Some(t) = self.table.processes.get_mut(&tk) {
                     // trying to find container type in cgroups
                     t.container = self
+                        .table
                         .tasks
                         .get(&t.leader)
                         .and_then(|l| Container::from_cgroups(&l.cgroups));
@@ -1737,9 +1541,10 @@ impl EventConsumer<'_> {
                 // lookup in ancestors
                 // the borrow of processes must end before we update it
                 let container =
-                    Container::from_ancestors(&self.processes.get_all_ancestors(parent, 0));
+                    Container::from_ancestors(&self.table.processes.get_all_ancestors(parent, 0));
                 if let Some(c) = container {
-                    self.processes
+                    self.table
+                        .processes
                         .entry(tk)
                         .and_modify(|task| task.container = Some(c));
                 }
@@ -1764,7 +1569,7 @@ impl EventConsumer<'_> {
 
         let tk = ProcKey::try_from(p)?;
 
-        if self.processes.contains_key(&tk) {
+        if self.table.processes.contains_key(&tk) {
             return Ok(());
         }
 
@@ -1796,15 +1601,11 @@ impl EventConsumer<'_> {
                 continue;
             };
 
-            // only the leader can be a zombie (other threads are reaped at once):
-            // it exited before its siblings and we will never see its exit, so it
-            // must not keep the process alive.
-            if stat.state != 'Z' {
-                threads.insert(key);
-            }
-
-            self.tasks.insert(
+            // only the leader can be a zombie (other threads are reaped at once)
+            self.table.track_procfs_task(
+                &mut threads,
                 key,
+                stat.state,
                 Task {
                     proc_key: tk,
                     tgid: p.pid,
@@ -1848,7 +1649,7 @@ impl EventConsumer<'_> {
             reparented: false,
         };
 
-        self.processes.insert(tk, task);
+        self.table.processes.insert(tk, task);
 
         Ok(())
     }
@@ -1862,7 +1663,7 @@ impl EventConsumer<'_> {
         let ck = i.process_key();
 
         // update local resolve table
-        self.processes.get_mut(&ck).map(|c| {
+        self.table.processes.get_mut(&ck).map(|c| {
             c.resolved
                 .entry(ip)
                 .and_modify(|r| *r = resolved.to_owned())
@@ -1924,9 +1725,7 @@ impl EventConsumer<'_> {
 
     fn exit_cleanup(&mut self, info: &StdEventInfo) {
         let pk = info.process_key();
-        let process_exited = untrack_task(
-            &mut self.processes,
-            &mut self.tasks,
+        let process_exited = self.table.untrack_task(
             info.task_info(),
             pk,
             matches!(info.bpf.etype, Type::ExitGroup),
@@ -1940,9 +1739,11 @@ impl EventConsumer<'_> {
                 self.sweep_stale_tasks();
                 let shadow_proc = self.find_shadow_procs();
                 // we remove shadow processes
-                self.processes.retain(|pk, _| !shadow_proc.contains(pk));
+                self.table
+                    .processes
+                    .retain(|pk, _| !shadow_proc.contains(pk));
                 // shrinking processes HashMap
-                self.processes.shrink_to_fit();
+                self.table.processes.shrink_to_fit();
             }
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
@@ -1952,16 +1753,16 @@ impl EventConsumer<'_> {
     fn on_process_exit(&mut self, pk: &ProcKey) {
         self.sink.caches.untrack_mnt_ns(pk);
 
-        if let Some(t) = self.processes.get(pk) {
+        if let Some(t) = self.table.processes.get(pk) {
             if !self.proc_has_running_descendent(pk) && !t.procfs {
                 // if the task has no descendent and is not coming from procfs
                 // we can remove it from the table.
-                self.processes.remove(pk);
+                self.table.processes.remove(pk);
             } else {
                 // the process has some running descendent, thus it needs to be
                 // kept in the table to construct a sound ancestors list for descendent(s).
                 // However we can free up some memory and tag the task as exited
-                self.processes.entry(*pk).and_modify(|t| t.on_exit());
+                self.table.processes.entry(*pk).and_modify(|t| t.on_exit());
             }
         }
     }
@@ -2009,32 +1810,8 @@ impl EventConsumer<'_> {
     // Lost exit events would otherwise keep tasks, and thus their process, alive
     // forever. Comparing keys also catches a PID reused by another task.
     fn sweep_stale_tasks(&mut self) {
-        let stale = self
-            .tasks
-            .iter()
-            // transient procfs errors keep the task, only a vanished or reused tid is stale
-            .filter(|&(tk, t)| {
-                match procfs::process::Process::new(t.tgid)
-                    .and_then(|p| p.task_from_tid(t.pid))
-                    .map_err(KeyError::from)
-                    .and_then(|pt| TaskKey::try_from(&pt))
-                {
-                    Ok(k) => k != *tk,
-                    Err(KeyError::ProcFs(procfs::ProcError::NotFound(_))) => true,
-                    Err(_) => false,
-                }
-            })
-            .map(|(k, _)| *k)
-            .collect::<Vec<TaskKey>>();
-
-        for tk in stale {
-            if let Some(t) = self.tasks.remove(&tk)
-                && let Some(p) = self.processes.get_mut(&t.proc_key)
-                && p.threads.remove(&tk)
-                && !p.is_alive()
-            {
-                self.on_process_exit(&t.proc_key);
-            }
+        for pk in self.table.sweep_stale_tasks(task_is_stale) {
+            self.on_process_exit(&pk);
         }
     }
 
@@ -2042,9 +1819,10 @@ impl EventConsumer<'_> {
     // have all descendents exited. They are not useful anymore because they are not needed
     // to reconstruct ancestors.
     fn find_shadow_procs(&self) -> HashSet<ProcKey> {
-        let mut no_running_desc = HashSet::with_capacity(self.processes.len());
+        let mut no_running_desc = HashSet::with_capacity(self.table.processes.len());
 
         for pk in self
+            .table
             .processes
             .iter()
             // we don't process collected from procfs
@@ -2055,6 +1833,7 @@ impl EventConsumer<'_> {
         {
             // if our parent has no running descendent we know we do too
             if let Some(rpk) = self
+                .table
                 .processes
                 .get(&pk)
                 .and_then(|p| p.real_parent_key)
@@ -2074,9 +1853,9 @@ impl EventConsumer<'_> {
     }
 
     fn proc_has_running_descendent(&self, pk: &ProcKey) -> bool {
-        if let Some(p) = self.processes.get(pk) {
+        if let Some(p) = self.table.processes.get(pk) {
             for ck in p.children.iter() {
-                if let Some(child) = self.processes.get(ck) {
+                if let Some(child) = self.table.processes.get(ck) {
                     // if we have one child that didn't exit
                     if child.is_alive() {
                         return true;
@@ -2101,7 +1880,7 @@ impl EventConsumer<'_> {
         // the process gets a new image, we start from scratch but
         // keep track of the real parent in case of zombie task
         let pk = ProcKey::from(&i.process);
-        let old = untrack_exec_proc(&mut self.processes, &mut self.tasks, pk);
+        let old = self.table.untrack_exec_proc(pk);
         let parent_key = old
             .as_ref()
             .and_then(|p| p.real_parent_key)
@@ -2116,7 +1895,11 @@ impl EventConsumer<'_> {
         let cgroups = self.update_task_cgroups_nodename(&i.process, &seed);
 
         // a new thread of a known process, track_task already registered it
-        if self.processes.contains_key(&ProcKey::from(&i.process)) {
+        if self
+            .table
+            .processes
+            .contains_key(&ProcKey::from(&i.process))
+        {
             return;
         }
         // a fork, or a thread whose process we missed (lost events)
@@ -2166,9 +1949,10 @@ impl EventConsumer<'_> {
 
         // threads mostly share the leader's values, so we share its Arcs
         let leader = self
+            .table
             .processes
             .get(&ProcKey::from(ti))
-            .and_then(|p| self.tasks.get(&p.leader));
+            .and_then(|p| self.table.tasks.get(&p.leader));
         let shared_cgroups = match leader {
             Some(l) if *l.cgroups == *cgroups => Arc::clone(&l.cgroups),
             _ => Arc::from(cgroups),
@@ -2179,7 +1963,7 @@ impl EventConsumer<'_> {
             _ => nodename.map(Arc::from),
         };
 
-        let task = self.tasks.get_mut(&tk);
+        let task = self.table.tasks.get_mut(&tk);
         debug_assert!(task.is_some(), "task must be tracked");
         if let Some(task) = task {
             task.cgroups = Arc::clone(&shared_cgroups);
@@ -2196,16 +1980,6 @@ impl EventConsumer<'_> {
         parent_key: ProcKey,
         parent_task_info: TaskInfo,
     ) {
-        let pk = ProcKey::from(ti);
-        let tk = TaskKey::from(ti);
-
-        let mut container_type = Container::from_cgroups(cgroups);
-
-        if container_type.is_none() {
-            container_type =
-                Container::from_ancestors(&self.processes.get_all_ancestors(parent_key, 0));
-        }
-
         let image = {
             if ti.is_kernel_thread() {
                 KERNEL_IMAGE.into()
@@ -2213,12 +1987,6 @@ impl EventConsumer<'_> {
                 seed.exe.to_path_buf()
             }
         };
-
-        // we update parent's information
-        // we track children processes, not tasks
-        self.processes.entry(parent_key).and_modify(|e| {
-            e.children.insert(pk);
-        });
 
         let (command_line, opt_err) = seed.argv.to_argv();
         opt_err.inspect(|e| {
@@ -2230,24 +1998,13 @@ impl EventConsumer<'_> {
             )
         });
 
-        self.processes.insert(
-            pk,
-            Process {
-                image,
-                command_line: command_line.join(" "),
-                pid: ti.tgid,
-                // the process may first be seen from a non-leader thread
-                leader: pk.to_thread_leader_key(),
-                kthread: ti.is_kernel_thread(),
-                resolved: HashMap::new(),
-                container: container_type,
-                real_parent_key: Some(parent_key),
-                children: HashSet::new(),
-                threads: HashSet::from([tk]),
-                parent_task_info: Some(parent_task_info),
-                procfs: false,
-                reparented: false,
-            },
+        self.table.insert_process(
+            ti,
+            image,
+            command_line.join(" "),
+            cgroups,
+            parent_key,
+            parent_task_info,
         );
     }
 
@@ -2255,35 +2012,6 @@ impl EventConsumer<'_> {
         let opt_mnt_ns = Self::task_mnt_ns(&info.bpf);
         self.sink
             .get_hashes_in_ns(opt_mnt_ns, &cache::Path::from(&bpf_data.path));
-    }
-
-    fn track_zombie_task(&mut self, std_info: &mut StdEventInfo) {
-        // we need to find if task is a zombie and replace
-        // its parent with the real one if needed
-        if let Some(p) = self.processes.get_mut(&std_info.process_key())
-            && let Some(rpk) = p.real_parent_key
-        {
-            if !p.reparented && rpk == std_info.parent_key() {
-                // keep the last parent state seen before a re-parenting
-                p.parent_task_info = Some(std_info.bpf.parent);
-            } else {
-                p.reparented = true;
-                if let Some(pti) = p.parent_task_info {
-                    std_info.bpf.parent = pti;
-                    std_info.bpf.process.zombie = true
-                }
-            }
-        }
-
-        // we must set the zombie flag of the parent if needed
-        if self
-            .processes
-            .get(&std_info.parent_key())
-            .map(|t| t.reparented)
-            .unwrap_or_default()
-        {
-            std_info.bpf.parent.zombie = true
-        }
     }
 
     fn build_task_additional_info(
@@ -2332,7 +2060,7 @@ impl EventConsumer<'_> {
         if matches!(i.etype, Type::Exit | Type::ExitGroup) {
             return;
         }
-        track_task(&mut self.processes, &mut self.tasks, &i.process);
+        self.table.track_task(&i.process);
     }
 
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
@@ -2353,9 +2081,10 @@ impl EventConsumer<'_> {
 
         if let Some(mnt_ns) = opt_mnt_ns {
             if mnt_ns != self.system_info.mount_ns {
-                let t = self.processes.get(&std_info.process_key());
+                let t = self.table.processes.get(&std_info.process_key());
                 container = Some(kunai::info::ContainerInfo {
                     name: self
+                        .table
                         .tasks
                         .get(&tk)
                         .and_then(|t| t.nodename.as_deref())
@@ -2369,7 +2098,7 @@ impl EventConsumer<'_> {
         }
 
         // parent info must be derived after a possible re-parenting fix-up
-        self.track_zombie_task(&mut std_info);
+        self.table.fixup_real_parent(&mut std_info);
 
         // getting user and group information for parent task
         if let Some(parent_ns) = Self::parent_mnt_ns(&std_info.bpf) {
@@ -2402,6 +2131,7 @@ impl EventConsumer<'_> {
             // an already exited parent would never be untracked again and
             // would pin its namespace, the LRU takes care of those
             let track = self
+                .table
                 .processes
                 .get(&pk)
                 .is_some_and(|p| p.is_alive())
@@ -2419,7 +2149,7 @@ impl EventConsumer<'_> {
         let info = evt.info();
         let tk = TaskKey::from(&info.process);
         // If we don't have a Task entry yet — silently no-op.
-        let Some(task) = self.tasks.get(&tk) else {
+        let Some(task) = self.table.tasks.get(&tk) else {
             return;
         };
         let baseline = task.expected_creds;
@@ -2430,14 +2160,17 @@ impl EventConsumer<'_> {
         }
 
         let std_info = self.build_std_event_info(*info);
-        let mut tampered = self.processes.creds_tampered_event(&std_info, baseline);
+        let mut tampered = self
+            .table
+            .processes
+            .creds_tampered_event(&std_info, baseline);
         self.sink.scan_and_print(&mut tampered);
 
         // we only keep track of what we reported so that we don't re-fire on
         // every subsequent event. The baseline is left untouched on purpose,
         // it must keep holding what commit_creds() last installed, otherwise
         // a single divergence poisons it and cascades into further events.
-        if let Some(t) = self.tasks.get_mut(&tk) {
+        if let Some(t) = self.table.tasks.get_mut(&tk) {
             t.reported_creds = Some(current);
         }
     }
@@ -2472,9 +2205,10 @@ impl EventConsumer<'_> {
 
                 if self.filter.is_enabled(e.info.etype) {
                     let std_info = self.build_std_event_info(e.info);
-                    let mut e = self
-                        .processes
-                        .execve_event(&mut self.sink, &std_info, &e.data);
+                    let mut e =
+                        self.table
+                            .processes
+                            .execve_event(&mut self.sink, &std_info, &e.data);
 
                     self.sink.scan_and_print(&mut e);
                 }
@@ -2485,14 +2219,14 @@ impl EventConsumer<'_> {
 
                 if self.filter.is_enabled(Type::Clone) {
                     let std_info = self.build_std_event_info(e.info);
-                    let mut e = self.processes.clone_event(&std_info, e.data);
+                    let mut e = self.table.processes.clone_event(&std_info, e.data);
                     self.sink.scan_and_print(&mut e);
                 }
             }
 
             EbpfEvent::Prctl(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.prctl_event(&std_info, e.data);
+                let mut e = self.table.processes.prctl_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2501,9 +2235,10 @@ impl EventConsumer<'_> {
                 let target_tai = Self::mnt_ns_from_task(&e.data.target)
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
-                let mut e = self
-                    .processes
-                    .kill_event(&std_info, e.data, self.random, &target_tai);
+                let mut e =
+                    self.table
+                        .processes
+                        .kill_event(&std_info, e.data, self.random, &target_tai);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2513,7 +2248,8 @@ impl EventConsumer<'_> {
                     .map(|ns| self.build_task_additional_info(ns, &e.data.target))
                     .unwrap_or_default();
                 let mut e =
-                    self.processes
+                    self.table
+                        .processes
                         .ptrace_event(&std_info, e.data, self.random, &target_tai);
                 self.sink.scan_and_print(&mut e);
             }
@@ -2523,17 +2259,18 @@ impl EventConsumer<'_> {
                 // update the creds baseline of the task that committed them, so
                 // its next event doesn't incorrectly fire a creds_tampered event.
                 // Always Some: track_task created the task.
-                if let Some(t) = self.tasks.get_mut(&TaskKey::from(&e.info.process)) {
+                if let Some(t) = self.table.tasks.get_mut(&TaskKey::from(&e.info.process)) {
                     t.expected_creds = e.data.new;
                     t.reported_creds = None;
                 }
-                let mut e = self.processes.commit_creds_event(&std_info, e.data);
+                let mut e = self.table.processes.commit_creds_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::MmapExec(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self
+                    .table
                     .processes
                     .mmap_exec_event(&std_info, e.data, &mut self.sink);
                 self.sink.scan_and_print(&mut e);
@@ -2541,13 +2278,14 @@ impl EventConsumer<'_> {
 
             EbpfEvent::Mprotect(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.mprotect_event(&std_info, e.data);
+                let mut e = self.table.processes.mprotect_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Connect(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self
+                    .table
                     .processes
                     .connect_event(&std_info, e.data, &self.resolved);
                 self.sink.scan_and_print(&mut e);
@@ -2559,6 +2297,7 @@ impl EventConsumer<'_> {
                 let responses: Vec<DomainResponse> = e.data.domain_responses().unwrap_or_default();
                 self.update_dns_resolved(&std_info, &responses);
                 for e in self
+                    .table
                     .processes
                     .dns_query_events(&std_info, e.data, responses)
                     .iter_mut()
@@ -2570,6 +2309,7 @@ impl EventConsumer<'_> {
             EbpfEvent::SendEntropy(e) => {
                 let std_info = self.build_std_event_info(e.info);
                 let mut e = self
+                    .table
                     .processes
                     .send_data_event(&std_info, e.data, &self.resolved);
                 self.sink.scan_and_print(&mut e);
@@ -2577,37 +2317,40 @@ impl EventConsumer<'_> {
 
             EbpfEvent::InitModule(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.init_module_event(&std_info, &e.data);
+                let mut e = self.table.processes.init_module_event(&std_info, &e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::File(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.file_event(&std_info, e.data);
+                let mut e = self.table.processes.file_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Unlink(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.unlink_event(&std_info, e.data);
+                let mut e = self.table.processes.unlink_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::FileRename(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.file_rename_event(&std_info, e.data);
+                let mut e = self.table.processes.file_rename_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfProgLoad(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.bpf_prog_load_event(&std_info, e.data);
+                let mut e = self.table.processes.bpf_prog_load_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::BpfSocketFilter(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.bpf_socket_filter_event(&std_info, e.data);
+                let mut e = self
+                    .table
+                    .processes
+                    .bpf_socket_filter_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2617,7 +2360,7 @@ impl EventConsumer<'_> {
                 // to clean up the processes HashMap. So we need to check if we want
                 // to display those only now.
                 if self.filter.is_enabled(std_info.bpf.etype) {
-                    let mut e = self.processes.exit_event(&std_info, e.data);
+                    let mut e = self.table.processes.exit_event(&std_info, e.data);
                     self.sink.scan_and_print(&mut e);
                 }
                 self.exit_cleanup(&std_info);
@@ -2625,13 +2368,13 @@ impl EventConsumer<'_> {
 
             EbpfEvent::IoUringSqe(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.io_uring_sqe_event(&std_info, e.data);
+                let mut e = self.table.processes.io_uring_sqe_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
             EbpfEvent::Error(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self.processes.error_event(&std_info, e.data);
+                let mut e = self.table.processes.error_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -4584,201 +4327,6 @@ mod tests {
             uid,
             ..Default::default()
         }
-    }
-
-    fn pkey(pid: u32) -> ProcKey {
-        ProcKey::from_proc_uuid(kunai_common::uuid::ProcUuid {
-            leader_start_time_ns: 0,
-            random: 0,
-            tgid: pid,
-        })
-    }
-
-    fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {
-        let leader = TaskKey::from(&TaskInfo {
-            pid,
-            tgid: pid,
-            ..Default::default()
-        });
-        Process {
-            image: image.into(),
-            command_line: String::new(),
-            pid,
-            leader,
-            kthread: false,
-            resolved: HashMap::new(),
-            container: None,
-            real_parent_key: parent.map(pkey),
-            children: HashSet::new(),
-            threads: HashSet::from([leader]),
-            parent_task_info: None,
-            procfs: false,
-            reparented: false,
-        }
-    }
-
-    fn thread(tgid: i32, pid: i32) -> TaskInfo {
-        TaskInfo {
-            pid,
-            tgid,
-            tg_uuid: kunai_common::uuid::ProcUuid {
-                leader_start_time_ns: 0,
-                random: 0,
-                tgid: tgid as u32,
-            },
-            ..Default::default()
-        }
-    }
-
-    /// process 100 with threads 100 (leader), 101 and 102
-    fn threaded() -> (Processes, HashMap<TaskKey, Task>) {
-        let mut p = Processes::default();
-        let mut t = HashMap::new();
-        p.insert(pkey(100), process(100, "/bin/app", None));
-        for pid in [100, 101, 102] {
-            track_task(&mut p, &mut t, &thread(100, pid));
-        }
-        (p, t)
-    }
-
-    fn exit((p, t): &mut (Processes, HashMap<TaskKey, Task>), pid: i32, exit_group: bool) -> bool {
-        untrack_task(p, t, &thread(100, pid), pkey(100), exit_group)
-    }
-
-    #[test]
-    fn track_task_registers_threads() {
-        let (p, t) = threaded();
-        assert_eq!(t.len(), 3);
-        assert_eq!(p[&pkey(100)].threads.len(), 3);
-    }
-
-    #[test]
-    fn leader_exit_with_live_sibling_keeps_group() {
-        let mut s = threaded();
-        assert!(!exit(&mut s, 100, false));
-        assert!(s.0[&pkey(100)].is_alive());
-        assert!(!s.1.contains_key(&TaskKey::from(&thread(100, 100))));
-        assert_eq!(s.1.len(), 2);
-    }
-
-    #[test]
-    fn sibling_exit_keeps_group() {
-        let mut s = threaded();
-        assert!(!exit(&mut s, 101, false));
-        assert_eq!(s.0[&pkey(100)].threads.len(), 2);
-    }
-
-    #[test]
-    fn last_thread_exit_ends_group() {
-        let mut s = threaded();
-        assert!(!exit(&mut s, 100, false));
-        assert!(!exit(&mut s, 101, false));
-        assert!(exit(&mut s, 102, false));
-        assert!(!s.0[&pkey(100)].is_alive());
-        assert!(s.1.is_empty());
-    }
-
-    #[test]
-    fn exit_group_drains_all_threads() {
-        let mut s = threaded();
-        assert!(exit(&mut s, 101, true));
-        assert!(!s.0[&pkey(100)].is_alive());
-        assert!(s.1.is_empty());
-    }
-
-    #[test]
-    fn unknown_group_exit() {
-        let mut p = Processes::default();
-        let mut t = HashMap::new();
-        let mut untrack = |pid, eg| untrack_task(&mut p, &mut t, &thread(7, pid), pkey(7), eg);
-        assert!(!untrack(8, false));
-        assert!(untrack(8, true));
-        assert!(untrack(7, false));
-    }
-
-    #[test]
-    fn exit_events_do_not_resurrect_tasks() {
-        let mut s = threaded();
-        assert!(exit(&mut s, 101, true));
-        // a late exit from an already drained thread
-        assert!(!exit(&mut s, 102, false));
-        assert!(s.1.is_empty());
-    }
-
-    #[test]
-    fn execve_from_non_leader_keeps_only_exec_task() {
-        let (mut p, mut t) = threaded();
-        // the execing thread takes over the leader pid and start_time
-        let tk = TaskKey::from(&thread(100, 100));
-        assert!(untrack_exec_proc(&mut p, &mut t, pkey(100)).is_some());
-        assert!(!p.contains_key(&pkey(100)));
-        assert_eq!(t.keys().collect::<Vec<_>>(), [&tk]);
-    }
-
-    /// init(1) -> bash(10) -> ls(20)
-    fn rooted_chain() -> Processes {
-        let mut p = Processes::default();
-        p.insert(pkey(1), process(1, "/sbin/init", None));
-        p.insert(pkey(10), process(10, "/bin/bash", Some(1)));
-        p.insert(pkey(20), process(20, "/bin/ls", Some(10)));
-        p
-    }
-
-    #[test]
-    fn ancestors_rooted_at_init() {
-        let p = rooted_chain();
-        assert_eq!(
-            p.get_all_ancestors(pkey(20), 0),
-            ["/sbin/init", "/bin/bash", "/bin/ls"]
-        );
-    }
-
-    #[test]
-    fn ancestors_skip() {
-        let p = rooted_chain();
-        assert_eq!(
-            p.get_all_ancestors(pkey(20), 1),
-            ["/sbin/init", "/bin/bash"]
-        );
-        // skipping past the root leaves nothing, and no "?" marker
-        assert!(p.get_all_ancestors(pkey(20), 5).is_empty());
-    }
-
-    #[test]
-    fn ancestors_unknown_key() {
-        assert!(rooted_chain().get_all_ancestors(pkey(99), 0).is_empty());
-    }
-
-    #[test]
-    fn ancestors_broken_chain() {
-        let mut p = Processes::default();
-        p.insert(pkey(42), process(42, "/usr/bin/sshd", None));
-        p.insert(pkey(43), process(43, "/bin/sh", Some(42)));
-        assert_eq!(
-            p.get_all_ancestors(pkey(43), 0),
-            ["?", "/usr/bin/sshd", "/bin/sh"]
-        );
-    }
-
-    #[test]
-    fn ancestors_kthread_root() {
-        let mut kthreadd = process(2, "kthreadd", None);
-        kthreadd.kthread = true;
-        let mut p = Processes::default();
-        p.insert(pkey(2), kthreadd);
-        p.insert(pkey(50), process(50, "/bin/sh", Some(2)));
-        assert_eq!(p.get_all_ancestors(pkey(50), 0), ["kthreadd", "/bin/sh"]);
-    }
-
-    #[test]
-    fn ancestors_cycle_is_truncated() {
-        let mut p = Processes::default();
-        p.insert(pkey(100), process(100, "/a", Some(101)));
-        p.insert(pkey(101), process(101, "/b", Some(100)));
-        let a = p.get_all_ancestors(pkey(100), 0);
-        assert_eq!(a.len(), MAX_ANCESTORS);
-        assert_eq!(a[0], "(truncated)");
-        assert_eq!(a[MAX_ANCESTORS - 1], "/a");
     }
 
     #[test]
