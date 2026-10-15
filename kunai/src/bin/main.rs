@@ -21,7 +21,7 @@ use kunai::events::{
     SockAddr, SocketInfo, TargetTask, TaskSection, UnlinkData, UserEvent, agent::AgentEventInfo,
 };
 use kunai::events::{IoUringOp, IoUringSqeData, StartData};
-use kunai::info::{AdditionalInfo, ProcKey, StdEventInfo, TaskAdditionalInfo, TaskKey};
+use kunai::info::{AdditionalInfo, KeyError, ProcKey, StdEventInfo, TaskAdditionalInfo, TaskKey};
 use kunai::ioc::IoC;
 use kunai::kallsyms::KernelSymbols;
 use kunai::util::uname::Utsname;
@@ -2012,12 +2012,17 @@ impl EventConsumer<'_> {
         let stale = self
             .tasks
             .iter()
+            // transient procfs errors keep the task, only a vanished or reused tid is stale
             .filter(|&(tk, t)| {
-                !procfs::process::Process::new(t.tgid)
+                match procfs::process::Process::new(t.tgid)
                     .and_then(|p| p.task_from_tid(t.pid))
-                    .ok()
-                    .and_then(|pt| TaskKey::try_from(&pt).ok())
-                    .is_some_and(|k| k == *tk)
+                    .map_err(KeyError::from)
+                    .and_then(|pt| TaskKey::try_from(&pt))
+                {
+                    Ok(k) => k != *tk,
+                    Err(KeyError::ProcFs(procfs::ProcError::NotFound(_))) => true,
+                    Err(_) => false,
+                }
             })
             .map(|(k, _)| *k)
             .collect::<Vec<TaskKey>>();
