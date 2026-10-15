@@ -2322,7 +2322,6 @@ impl EventConsumer<'_> {
 
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
         let opt_mnt_ns = Self::task_mnt_ns(&i);
-        let opt_parent_ns = Self::parent_mnt_ns(&i);
 
         let mut std_info = StdEventInfo::from_bpf(i, self.random);
 
@@ -2354,12 +2353,14 @@ impl EventConsumer<'_> {
             task = Some(self.build_task_additional_info(mnt_ns, &i.process));
         }
 
-        // getting user and group information for parent task
-        if let Some(parent_ns) = opt_parent_ns {
-            parent = Some(self.build_task_additional_info(parent_ns, &i.parent));
-        }
-
+        // parent info must be derived after a possible re-parenting fix-up
         self.track_zombie_task(&mut std_info);
+
+        // getting user and group information for parent task
+        if let Some(parent_ns) = Self::parent_mnt_ns(&std_info.bpf) {
+            let pti = std_info.bpf.parent;
+            parent = Some(self.build_task_additional_info(parent_ns, &pti));
+        }
 
         std_info.with_additional_info(AdditionalInfo {
             host,
