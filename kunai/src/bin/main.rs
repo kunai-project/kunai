@@ -1933,20 +1933,7 @@ impl EventConsumer<'_> {
         );
 
         if process_exited {
-            self.sink.caches.untrack_mnt_ns(&pk);
-
-            if let Some(t) = self.processes.get(&pk) {
-                if !self.proc_has_running_descendent(&pk) && !t.procfs {
-                    // if the task has no descendent and is not coming from procfs
-                    // we can remove it from the table.
-                    self.processes.remove(&pk);
-                } else {
-                    // the process has some running descendent, thus it needs to be
-                    // kept in the table to construct a sound ancestors list for descendent(s).
-                    // However we can free up some memory and tag the task as exited
-                    self.processes.entry(pk).and_modify(|t| t.on_exit());
-                }
-            }
+            self.on_process_exit(&pk);
 
             // we trigger some very specific cleanup
             if self.exited_tasks.is_multiple_of(1000) {
@@ -1959,6 +1946,23 @@ impl EventConsumer<'_> {
             }
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
+        }
+    }
+
+    fn on_process_exit(&mut self, pk: &ProcKey) {
+        self.sink.caches.untrack_mnt_ns(pk);
+
+        if let Some(t) = self.processes.get(pk) {
+            if !self.proc_has_running_descendent(pk) && !t.procfs {
+                // if the task has no descendent and is not coming from procfs
+                // we can remove it from the table.
+                self.processes.remove(pk);
+            } else {
+                // the process has some running descendent, thus it needs to be
+                // kept in the table to construct a sound ancestors list for descendent(s).
+                // However we can free up some memory and tag the task as exited
+                self.processes.entry(*pk).and_modify(|t| t.on_exit());
+            }
         }
     }
 
@@ -2021,8 +2025,10 @@ impl EventConsumer<'_> {
         for tk in stale {
             if let Some(t) = self.tasks.remove(&tk)
                 && let Some(p) = self.processes.get_mut(&t.proc_key)
+                && p.threads.remove(&tk)
+                && !p.is_alive()
             {
-                p.threads.remove(&tk);
+                self.on_process_exit(&t.proc_key);
             }
         }
     }
