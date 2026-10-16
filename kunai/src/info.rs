@@ -33,9 +33,12 @@ impl ProcKey {
         }
     }
 
+    /// Builds the key of the process identified by `value`.
+    ///
+    /// The leader start time is truncated from nanoseconds to seconds, so
+    /// the key compares equal to one built from procfs, whose start time
+    /// is in `CLK_TCK` ticks.
     pub fn from_proc_uuid(value: ProcUuid) -> Self {
-        // in task_struct start_time has a higher resolution so we need to scale it
-        // down in order to have a comparable value with the procfs one
         Self {
             start_time_sec: value.leader_start_time_ns / 1_000_000_000,
             pid: value.tgid,
