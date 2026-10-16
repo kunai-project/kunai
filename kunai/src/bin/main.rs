@@ -2705,6 +2705,10 @@ impl EventProducer {
                 let timeout = time::Duration::from_millis(10);
                 // serves as error display decision
                 let mut last_lost_cnt = 0;
+                // the barrier keeps readers in lockstep so this local counter
+                // is the global round, unlike ep.batch which the leader may
+                // not have updated yet when other readers start a new round
+                let mut round = 0u64;
 
                 loop {
                     let mut read_count = 0u64;
@@ -2789,7 +2793,9 @@ impl EventProducer {
                                     })
                                 {
                                     // we pipe data loss event
-                                    ep.pipe_event(loss_evt.into());
+                                    let mut loss_evt = EbpfEvent::from(loss_evt);
+                                    loss_evt.set_batch(round);
+                                    ep.pipe.push_back(loss_evt);
                                 }
 
                                 // update last_lost for future error display decision
@@ -2803,7 +2809,7 @@ impl EventProducer {
                         let mut ep = event_producer.lock().await;
 
                         // we set the proper batch number
-                        evt.set_batch(ep.batch);
+                        evt.set_batch(round);
 
                         // verify that we filter properly kunai events in eBPF
                         // eBPF logs are not filtered and may come from kunai
@@ -2850,10 +2856,11 @@ impl EventProducer {
 
                     // all threads wait here after some events have been collected
                     bar.wait().await;
+                    round += 1;
 
-                    // we increase batch number in one task only
+                    // publishing completed rounds for the flush task, lagging is harmless
                     if cpu_id == leader_cpu_id {
-                        event_producer.lock().await.batch += 1;
+                        event_producer.lock().await.batch = round;
                     }
 
                     // we break the loop if processor is stopped
