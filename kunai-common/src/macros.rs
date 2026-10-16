@@ -12,7 +12,7 @@ macro_rules! inspect_err {
 }
 
 macro_rules! test_flag {
-    ($test:expr, $flag:literal) => {
+    ($test:expr, $flag:expr) => {
         $test & $flag == $flag
     };
 }

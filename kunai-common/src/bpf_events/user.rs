@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use thiserror::Error;
 
-use crate::bpf_events::{CorrelationEvent, HashEvent};
+use crate::bpf_events::HashEvent;
 
 use super::{
     BpfProgLoadEvent, BpfSocketFilterEvent, CloneEvent, CommitCredsEvent, ConnectEvent,
@@ -77,7 +77,6 @@ pub enum EbpfEvent {
     Loss(Box<LossEvent>),
     // specific events
     Start(Box<Event<()>>),
-    Correlation(Box<CorrelationEvent>),
     Hash(Box<HashEvent>),
     Log(Box<LogEvent>),
     SysCoreResume(Box<SysCoreResumeEvent>),
@@ -192,7 +191,6 @@ impl EbpfEvent {
             Type::FileUnlink => Ok(Self::Unlink(Box::new(decode!(UnlinkEvent)))),
             Type::IoUringSqe => Ok(Self::IoUringSqe(Box::new(decode!(IoUringSqeEvent)))),
             // not configurable events
-            Type::Correlation => Ok(Self::Correlation(Box::new(decode!(CorrelationEvent)))),
             Type::CacheHash => Ok(Self::Hash(Box::new(decode!(HashEvent)))),
             Type::Log => Ok(Self::Log(Box::new(decode!(LogEvent)))),
             Type::Loss => Ok(Self::Loss(Box::new(decode!(LossEvent)))),
@@ -237,7 +235,6 @@ impl EbpfEvent {
             Self::Error(e) => &e.info,
             Self::Loss(e) => &e.info,
             Self::Start(e) => &e.info,
-            Self::Correlation(e) => &e.info,
             Self::Hash(e) => &e.info,
             Self::Log(e) => &e.info,
             Self::SysCoreResume(e) => &e.info,
@@ -269,7 +266,6 @@ impl EbpfEvent {
             Self::Error(e) => &mut e.info,
             Self::Loss(e) => &mut e.info,
             Self::Start(e) => &mut e.info,
-            Self::Correlation(e) => &mut e.info,
             Self::Hash(e) => &mut e.info,
             Self::Log(e) => &mut e.info,
             Self::SysCoreResume(e) => &mut e.info,

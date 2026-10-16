@@ -65,7 +65,7 @@ impl AgentEventInfo {
                 cap_permitted: status.capprm,
                 cap_inheritable: status.capinh,
             },
-            tg_uuid: ProcUuid::new(start_time, 0, status.tgid as u32),
+            tg_uuid: ProcUuid::new(start_time, 0, status.tgid),
             namespaces: BpfOption::Some(bpf_events::Namespaces {
                 mnt: mnt.identifier as u32,
             }),

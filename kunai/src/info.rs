@@ -20,17 +20,35 @@ pub struct ProcKey {
     start_time_sec: u64,
     // this is the userland process ID in kernel
     // it corresponds to the task's tgid (task group id)
-    pid: u32,
+    pid: i32,
 }
 
-impl From<ProcUuid> for ProcKey {
-    fn from(value: ProcUuid) -> Self {
-        // in task_struct start_time has a higher resolution so we need to scale it
-        // down in order to have a comparable value with the procfs one
+impl ProcKey {
+    /// Key of the process leader (tid == tgid), which may have exited while
+    /// the process lives on.
+    pub fn to_thread_leader_key(self) -> TaskKey {
+        TaskKey {
+            start_time_sec: self.start_time_sec,
+            pid: self.pid,
+        }
+    }
+
+    /// Builds the key of the process identified by `value`.
+    ///
+    /// The leader start time is truncated from nanoseconds to seconds, so
+    /// the key compares equal to one built from procfs, whose start time
+    /// is in `CLK_TCK` ticks.
+    pub fn from_proc_uuid(value: ProcUuid) -> Self {
         Self {
             start_time_sec: value.leader_start_time_ns / 1_000_000_000,
             pid: value.tgid,
         }
+    }
+}
+
+impl From<&TaskInfo> for ProcKey {
+    fn from(ti: &TaskInfo) -> Self {
+        Self::from_proc_uuid(ti.tg_uuid)
     }
 }
 
@@ -58,19 +76,25 @@ impl TryFrom<&procfs::process::Process> for ProcKey {
 
         Ok(Self {
             start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
-            pid: p.pid as u32,
+            pid: p.pid,
         })
     }
 }
 
 /// Same idea as [ProcKey] but identifies an individual task (thread) rather
-/// than a thread group, so it survives pid reuse: a dead thread's pid being
+/// than a process, so it survives pid reuse: a dead thread's pid being
 /// recycled by an unrelated task will not collide with a stale entry, since
 /// the recycled task has a different start time.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TaskKey {
     start_time_sec: u64,
     pid: i32,
+}
+
+impl TaskKey {
+    pub fn start_time_sec(&self) -> u64 {
+        self.start_time_sec
+    }
 }
 
 impl From<&TaskInfo> for TaskKey {
@@ -92,6 +116,18 @@ impl TryFrom<&procfs::process::Process> for TaskKey {
         Ok(Self {
             start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
             pid: p.pid,
+        })
+    }
+}
+
+impl TryFrom<&procfs::process::Task> for TaskKey {
+    type Error = KeyError;
+    fn try_from(t: &procfs::process::Task) -> Result<Self, Self::Error> {
+        let stat = t.stat()?;
+
+        Ok(Self {
+            start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
+            pid: t.tid,
         })
     }
 }
@@ -142,11 +178,11 @@ impl StdEventInfo {
     }
 
     pub fn process_key(&self) -> ProcKey {
-        ProcKey::from(self.task_info().tg_uuid)
+        ProcKey::from(self.task_info())
     }
 
     pub fn parent_key(&self) -> ProcKey {
-        ProcKey::from(self.parent_info().tg_uuid)
+        ProcKey::from(self.parent_info())
     }
 
     #[inline]

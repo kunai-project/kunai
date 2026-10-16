@@ -6,6 +6,8 @@ description = "Kunai userland crate"
 repository.workspace = true
 license.workspace = true
 publish = false
+# src/bin holds modules of the kunai binary, not other binaries
+autobins = false
 
 [[bin]]
 name = "kunai"
