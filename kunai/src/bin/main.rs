@@ -2260,8 +2260,10 @@ impl EventConsumer<'_> {
                 let std_info = self.build_std_event_info(e.info);
                 // update the creds baseline of the task that committed them, so
                 // its next event doesn't incorrectly fire a creds_tampered event.
-                // Always Some: track_task created the task.
-                if let Some(t) = self.table.tasks.get_mut(&TaskKey::from(&e.info.process)) {
+                // track_task created the task, so None is a bug.
+                let t = self.table.tasks.get_mut(&TaskKey::from(&e.info.process));
+                debug_assert!(t.is_some(), "commit_creds on untracked task");
+                if let Some(t) = t {
                     t.expected_creds = e.data.new;
                     t.reported_creds = None;
                 }
