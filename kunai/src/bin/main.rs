@@ -37,6 +37,7 @@ use kunai_common::bpf_events::{
     self, DomainResponse, EbpfEvent, MAX_BPF_EVENT_SIZE, PrctlOption, Signal, TaskInfo, Type,
 };
 use kunai_common::config::Filter;
+use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
 use kunai_common::{creds, inspect_err, kernel};
@@ -1639,7 +1640,7 @@ impl EventConsumer<'_> {
                 .unwrap_or_else(|_| "?".into()),
             pid: p.pid,
             leader,
-            kthread: stat.flags & 0x00200000 == 0x00200000,
+            kthread: stat.flags & PF_KTHREAD == PF_KTHREAD,
             resolved: HashMap::new(),
             container: None,
             real_parent_key: parent_key,

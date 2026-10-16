@@ -14,6 +14,10 @@ pub const PROT_WRITE: u32 = 2;
 pub const PROT_EXEC: u32 = 4;
 pub const PROT_NONE: u32 = 0;
 
+/// Set in `task_struct::flags` for kernel threads
+/// ref: <https://elixir.bootlin.com/linux/v6.12/source/include/linux/sched.h>
+pub const PF_KTHREAD: u32 = 0x00200000;
+
 /// Linux capability values as defined in include/uapi/linux/capability.h
 ///
 /// These constants represent the capabilities that can be used to control

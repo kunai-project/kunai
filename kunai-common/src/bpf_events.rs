@@ -1,4 +1,5 @@
 use crate::buffer::Buffer;
+use crate::consts::PF_KTHREAD;
 use crate::creds::Creds;
 use crate::errors::ProbeError;
 use crate::macros::test_flag;
@@ -229,7 +230,7 @@ impl TaskInfo {
 
     #[inline(always)]
     pub fn is_kernel_thread(&self) -> bool {
-        test_flag!(self.flags, 0x00200000)
+        test_flag!(self.flags, PF_KTHREAD)
     }
 
     #[inline(always)]
