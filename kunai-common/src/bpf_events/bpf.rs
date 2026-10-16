@@ -71,7 +71,7 @@ impl TaskInfo {
             // file -> this way we can also compute unique ID from procfs
             self.tg_uuid.init(
                 leader.start_boottime().ok_or(Error::BootTimeMissing)?,
-                self.tgid as u32,
+                self.tgid,
             );
 
             // copy comm

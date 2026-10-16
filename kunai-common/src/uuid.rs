@@ -17,11 +17,11 @@ pub struct ProcUuid {
     // a random part to make this unique across machines
     pub random: u32,
     // task group id in kernel or PID in userland
-    pub tgid: u32,
+    pub tgid: i32,
 }
 
 impl ProcUuid {
-    pub fn new(leader_start_time_ns: u64, random: u32, tgid: u32) -> Self {
+    pub fn new(leader_start_time_ns: u64, random: u32, tgid: i32) -> Self {
         ProcUuid {
             leader_start_time_ns,
             random,
@@ -30,7 +30,7 @@ impl ProcUuid {
     }
 
     #[allow(dead_code)]
-    pub fn init(&mut self, start_time_ns: u64, tgid: u32) {
+    pub fn init(&mut self, start_time_ns: u64, tgid: i32) {
         self.leader_start_time_ns = start_time_ns;
         self.tgid = tgid;
     }
@@ -40,7 +40,8 @@ impl From<ProcUuid> for u128 {
     fn from(value: ProcUuid) -> Self {
         (value.leader_start_time_ns as u128) << 64
             | (value.random as u128) << 32
-            | value.tgid as u128
+            // through u32 so a negative tgid isn't sign-extended into random
+            | value.tgid as u32 as u128
     }
 }
 
@@ -49,7 +50,7 @@ impl From<u128> for ProcUuid {
         Self {
             leader_start_time_ns: (value >> 64) as u64,
             random: (value >> 32) as u32,
-            tgid: value as u32,
+            tgid: value as i32,
         }
     }
 }

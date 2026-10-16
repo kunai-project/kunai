@@ -625,7 +625,7 @@ mod tests {
     use super::*;
     use crate::util::namespace::Namespace;
 
-    fn pkey(pid: u32) -> ProcKey {
+    fn pkey(pid: i32) -> ProcKey {
         ProcKey::from_proc_uuid(kunai_common::uuid::ProcUuid {
             leader_start_time_ns: 0,
             random: 0,

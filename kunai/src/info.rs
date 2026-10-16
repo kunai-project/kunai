@@ -20,7 +20,7 @@ pub struct ProcKey {
     start_time_sec: u64,
     // this is the userland process ID in kernel
     // it corresponds to the task's tgid (task group id)
-    pid: u32,
+    pid: i32,
 }
 
 impl ProcKey {
@@ -73,7 +73,7 @@ impl TryFrom<&procfs::process::Process> for ProcKey {
 
         Ok(Self {
             start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
-            pid: p.pid as u32,
+            pid: p.pid,
         })
     }
 }
@@ -85,7 +85,7 @@ impl TryFrom<&procfs::process::Process> for ProcKey {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TaskKey {
     start_time_sec: u64,
-    pid: u32,
+    pid: i32,
 }
 
 impl TaskKey {
@@ -100,7 +100,7 @@ impl From<&TaskInfo> for TaskKey {
         // resolution than procfs, scale it down to be comparable
         Self {
             start_time_sec: ti.start_time / 1_000_000_000,
-            pid: ti.pid as u32,
+            pid: ti.pid,
         }
     }
 }
@@ -112,7 +112,7 @@ impl TryFrom<&procfs::process::Process> for TaskKey {
 
         Ok(Self {
             start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
-            pid: p.pid as u32,
+            pid: p.pid,
         })
     }
 }
@@ -124,7 +124,7 @@ impl TryFrom<&procfs::process::Task> for TaskKey {
 
         Ok(Self {
             start_time_sec: start_time_sec_from_ticks(stat.starttime)?,
-            pid: t.tid as u32,
+            pid: t.tid,
         })
     }
 }

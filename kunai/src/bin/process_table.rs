@@ -378,7 +378,7 @@ mod tests {
     use super::*;
     use kunai_common::bpf_events;
 
-    fn pkey(pid: u32) -> ProcKey {
+    fn pkey(pid: i32) -> ProcKey {
         ProcKey::from_proc_uuid(kunai_common::uuid::ProcUuid {
             leader_start_time_ns: 0,
             random: 0,
@@ -386,7 +386,7 @@ mod tests {
         })
     }
 
-    fn process(pid: i32, image: &str, parent: Option<u32>) -> Process {
+    fn process(pid: i32, image: &str, parent: Option<i32>) -> Process {
         let leader = TaskKey::from(&TaskInfo {
             pid,
             tgid: pid,
@@ -416,7 +416,7 @@ mod tests {
             tg_uuid: kunai_common::uuid::ProcUuid {
                 leader_start_time_ns: 0,
                 random: 0,
-                tgid: tgid as u32,
+                tgid,
             },
             ..Default::default()
         }
