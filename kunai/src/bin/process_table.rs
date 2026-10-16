@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kunai::containers::Container;
-use kunai::info::{KeyError, ProcKey, StdEventInfo, TaskKey};
+use kunai::info::{ProcKey, StdEventInfo, TaskKey};
+use kunai::util::tgkill;
 use kunai_common::bpf_events::TaskInfo;
 use kunai_common::creds;
 
@@ -71,6 +72,9 @@ pub(crate) struct Task {
     // Credentials of the last creds_tampered event reported, used not to
     // re-fire on every subsequent event while a divergence lasts.
     pub(crate) reported_creds: Option<creds::Creds>,
+    // Timestamp (ns since boot) the task was last known alive, from its last
+    // event or the sweep's liveness check. The sweep skips recent ones.
+    pub(crate) last_seen_alive: u64,
 }
 
 /// Process map, kept apart from [`crate::EventConsumer`] so that events can
@@ -135,17 +139,10 @@ impl Processes {
     }
 }
 
-/// Transient procfs errors keep the task, only a vanished or reused tid is stale.
-pub(crate) fn task_is_stale(tk: &TaskKey, t: &Task) -> bool {
-    match procfs::process::Process::new(t.tgid)
-        .and_then(|p| p.task_from_tid(t.pid))
-        .map_err(KeyError::from)
-        .and_then(|pt| TaskKey::try_from(&pt))
-    {
-        Ok(k) => k != *tk,
-        Err(KeyError::ProcFs(procfs::ProcError::NotFound(_))) => true,
-        Err(_) => false,
-    }
+/// True if no thread `t.pid` exists in process `t.tgid`. Any other error
+/// keeps the task.
+pub(crate) fn task_is_dead(t: &Task) -> bool {
+    matches!(tgkill(t.tgid, t.pid, 0), Err(e) if e.raw_os_error() == Some(libc::ESRCH))
 }
 
 /// Processes and their tasks, kept consistent with each other.
@@ -155,6 +152,12 @@ pub(crate) struct ProcessTable {
     pub(crate) tasks: HashMap<TaskKey, Task>,
 }
 
+/// Time (ns) a task must go unseen before the sweep checks it is alive.
+const RECHECK_AFTER: u64 = 60_000_000_000;
+/// Live tasks are rechecked in this many groups, spread over [`RECHECK_AFTER`],
+/// so that tasks checked together don't all come due on the same sweep.
+const RECHECK_GROUPS: u64 = 8;
+
 impl ProcessTable {
     pub(crate) fn with_capacity(cap: usize) -> Self {
         Self {
@@ -163,11 +166,14 @@ impl ProcessTable {
         }
     }
 
-    pub(crate) fn track_task(&mut self, ti: &TaskInfo) {
+    /// `timestamp` is the event's, in ns since boot.
+    pub(crate) fn track_task(&mut self, ti: &TaskInfo, timestamp: u64) {
         let tk = TaskKey::from(ti);
         let pk = ProcKey::from(ti);
         let process = self.processes.get_mut(&pk);
-        if !self.tasks.contains_key(&tk) {
+        if let Some(t) = self.tasks.get_mut(&tk) {
+            t.last_seen_alive = timestamp;
+        } else {
             let leader = process.as_ref().and_then(|p| self.tasks.get(&p.leader));
             let task = Task {
                 proc_key: pk,
@@ -177,6 +183,7 @@ impl ProcessTable {
                 nodename: leader.and_then(|l| l.nodename.clone()),
                 expected_creds: ti.creds,
                 reported_creds: None,
+                last_seen_alive: timestamp,
             };
             self.tasks.insert(tk, task);
         }
@@ -225,18 +232,44 @@ impl ProcessTable {
         })
     }
 
-    /// Drops the tasks `is_stale` reports and returns the processes it left
-    /// without threads.
+    /// Drops stale tasks and returns the processes it left without threads.
+    /// `now` is in ns since boot.
+    ///
+    /// A task is stale if a newer task has its pid (the pid was reused) or if
+    /// `is_dead` says so. Only tasks unseen for [`RECHECK_AFTER`] are passed
+    /// to `is_dead`, and being found alive counts as being seen.
     pub(crate) fn sweep_stale_tasks(
         &mut self,
-        is_stale: impl Fn(&TaskKey, &Task) -> bool,
+        now: u64,
+        is_dead: impl Fn(&Task) -> bool,
     ) -> Vec<ProcKey> {
-        let stale = self
-            .tasks
-            .iter()
-            .filter(|&(tk, t)| is_stale(tk, t))
-            .map(|(k, _)| *k)
-            .collect::<Vec<TaskKey>>();
+        let mut newest: HashMap<i32, TaskKey> = HashMap::with_capacity(self.tasks.len());
+        for (tk, t) in self.tasks.iter() {
+            newest
+                .entry(t.pid)
+                .and_modify(|n| {
+                    if tk.start_time_sec() > n.start_time_sec() {
+                        *n = *tk
+                    }
+                })
+                .or_insert(*tk);
+        }
+
+        let mut stale = vec![];
+        for (tk, t) in self.tasks.iter_mut() {
+            if newest[&t.pid] != *tk {
+                stale.push(*tk);
+            } else if now.saturating_sub(t.last_seen_alive) < RECHECK_AFTER {
+                continue;
+            } else if is_dead(t) {
+                stale.push(*tk);
+            } else {
+                // backdate by a pid-based share of RECHECK_AFTER so tasks
+                // found alive together don't all come due on the same sweep
+                let group = t.pid as u64 % RECHECK_GROUPS;
+                t.last_seen_alive = now.saturating_sub(group * RECHECK_AFTER / RECHECK_GROUPS);
+            }
+        }
 
         let mut exited = vec![];
         for tk in stale {
@@ -395,7 +428,7 @@ mod tests {
         t.processes
             .insert(pkey(100), process(100, "/bin/app", None));
         for pid in [100, 101, 102] {
-            t.track_task(&thread(100, pid));
+            t.track_task(&thread(100, pid), 0);
         }
         t
     }
@@ -469,7 +502,9 @@ mod tests {
         let app = pkey(100);
         let stale = TaskKey::from(&thread(100, 101));
 
-        assert!(t.sweep_stale_tasks(|tk, _| *tk == stale).is_empty());
+        let now = RECHECK_AFTER;
+
+        assert!(t.sweep_stale_tasks(now, |t| t.pid == 101).is_empty());
         assert!(!t.tasks.contains_key(&stale));
         assert!(!t.processes[&app].threads.contains(&stale));
         assert!(t.processes[&app].is_alive());
@@ -480,9 +515,69 @@ mod tests {
         let mut t = threaded();
         let app = pkey(100);
 
-        assert_eq!(t.sweep_stale_tasks(|_, _| true), [app]);
+        assert_eq!(t.sweep_stale_tasks(RECHECK_AFTER, |_| true), [app]);
         assert!(t.tasks.is_empty());
         assert!(!t.processes[&app].is_alive());
+    }
+
+    #[test]
+    fn sweep_skips_recently_seen_tasks() {
+        let mut t = threaded();
+        let app = pkey(100);
+        let busy = thread(100, 101);
+        let busy_key = TaskKey::from(&busy);
+
+        let seen = RECHECK_AFTER;
+        let due = seen + RECHECK_AFTER;
+
+        t.track_task(&busy, seen);
+        assert!(t.sweep_stale_tasks(seen, |_| true).is_empty());
+        assert_eq!(t.processes[&app].threads, HashSet::from([busy_key]));
+
+        assert!(t.sweep_stale_tasks(due - 1, |_| true).is_empty());
+        assert_eq!(t.sweep_stale_tasks(due, |_| true), [app]);
+    }
+
+    /// Sweeps at `now`, finding every task alive, and returns the pids checked.
+    fn checked_pids(t: &mut ProcessTable, now: u64) -> Vec<i32> {
+        let checked = std::cell::RefCell::new(vec![]);
+        t.sweep_stale_tasks(now, |t| {
+            checked.borrow_mut().push(t.pid);
+            false
+        });
+        let mut checked = checked.into_inner();
+        checked.sort();
+        checked
+    }
+
+    #[test]
+    fn sweep_spreads_rechecks_of_live_tasks() {
+        let mut t = threaded();
+        let step = RECHECK_AFTER / RECHECK_GROUPS;
+
+        assert_eq!(checked_pids(&mut t, RECHECK_AFTER), [100, 101, 102]);
+        // groups are pid % 8: 102 is in group 6, 101 in 5, 100 in 4
+        assert_eq!(checked_pids(&mut t, RECHECK_AFTER + 2 * step), [102]);
+        assert_eq!(checked_pids(&mut t, RECHECK_AFTER + 3 * step), [101]);
+    }
+
+    #[test]
+    fn sweep_drops_task_whose_pid_was_reused() {
+        let mut t = threaded();
+        let app = pkey(100);
+        let old = TaskKey::from(&thread(100, 101));
+        // pid 101 recycled by a thread of another process, 5s later
+        let reuser = TaskInfo {
+            start_time: 5_000_000_000,
+            ..thread(200, 101)
+        };
+        let reuser_key = TaskKey::from(&reuser);
+        t.track_task(&reuser, 0);
+
+        assert!(t.sweep_stale_tasks(1, |_| false).is_empty());
+        assert!(!t.tasks.contains_key(&old));
+        assert!(!t.processes[&app].threads.contains(&old));
+        assert!(t.tasks.contains_key(&reuser_key));
     }
 
     #[test]
@@ -503,6 +598,7 @@ mod tests {
                 nodename: None,
                 expected_creds: creds::Creds::default(),
                 reported_creds: None,
+                last_seen_alive: 0,
             };
             t.track_procfs_task(&mut proc.threads, TaskKey::from(&ti), state, task);
         }

@@ -116,6 +116,13 @@ pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
     Ok(())
 }
 
+pub fn tgkill(tgid: i32, tid: i32, sig: i32) -> Result<(), io::Error> {
+    if unsafe { libc::syscall(libc::SYS_tgkill, tgid, tid, sig) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 pub fn getrlimit(resource: rlimit_resource_t) -> Result<rlimit, io::Error> {
     let mut rlim: rlimit = rlimit {
         rlim_cur: 0, // Set the soft limit to 0 initially

@@ -88,6 +88,12 @@ pub struct TaskKey {
     pid: u32,
 }
 
+impl TaskKey {
+    pub fn start_time_sec(&self) -> u64 {
+        self.start_time_sec
+    }
+}
+
 impl From<&TaskInfo> for TaskKey {
     fn from(ti: &TaskInfo) -> Self {
         // same reasoning as ProcKey: task_struct start_time has a higher

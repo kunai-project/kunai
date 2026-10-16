@@ -89,7 +89,7 @@ use kunai::util::namespace::unshare;
 use communityid::{Flow, Protocol};
 
 mod process_table;
-use process_table::{Process, ProcessTable, Processes, Task, task_is_stale};
+use process_table::{Process, ProcessTable, Processes, Task, task_is_dead};
 
 const PAGE_SIZE: usize = 4096;
 const KERNEL_IMAGE: &str = "kernel";
@@ -1626,6 +1626,7 @@ impl EventConsumer<'_> {
                         cap_inheritable: status.capinh,
                     },
                     reported_creds: None,
+                    last_seen_alive: 0,
                 },
             );
         }
@@ -1736,7 +1737,7 @@ impl EventConsumer<'_> {
 
             // we trigger some very specific cleanup
             if self.exited_tasks.is_multiple_of(1000) {
-                self.sweep_stale_tasks();
+                self.sweep_stale_tasks(info.bpf.timestamp);
                 let shadow_proc = self.find_shadow_procs();
                 // we remove shadow processes
                 self.table
@@ -1808,9 +1809,9 @@ impl EventConsumer<'_> {
     }
 
     // Lost exit events would otherwise keep tasks, and thus their process, alive
-    // forever. Comparing keys also catches a PID reused by another task.
-    fn sweep_stale_tasks(&mut self) {
-        for pk in self.table.sweep_stale_tasks(task_is_stale) {
+    // forever.
+    fn sweep_stale_tasks(&mut self, now: u64) {
+        for pk in self.table.sweep_stale_tasks(now, task_is_dead) {
             self.on_process_exit(&pk);
         }
     }
@@ -2060,7 +2061,7 @@ impl EventConsumer<'_> {
         if matches!(i.etype, Type::Exit | Type::ExitGroup) {
             return;
         }
-        self.table.track_task(&i.process);
+        self.table.track_task(&i.process, i.timestamp);
     }
 
     fn build_std_event_info(&mut self, i: bpf_events::EventInfo) -> StdEventInfo {
