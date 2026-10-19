@@ -42,3 +42,5 @@ pub mod io_uring;
 pub mod option;
 
 pub mod creds;
+
+pub mod user_ns;

@@ -90,6 +90,8 @@ impl TaskInfo {
                     self.namespaces = BpfOption::Some(Namespaces {
                         mnt: core_read_kernel!(nsproxy, mnt_ns, ns, inum)
                             .ok_or(Error::MntNamespaceFailure)?,
+                        user: core_read_kernel!(cred, user_ns, ns, inum)
+                            .ok_or(Error::UserNamespaceFailure)?,
                     });
                 }
             }

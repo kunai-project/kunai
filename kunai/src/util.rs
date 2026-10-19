@@ -8,6 +8,7 @@ use std::{
     fs,
     io::{self, Write},
     net::IpAddr,
+    sync::OnceLock,
 };
 use thiserror::Error;
 
@@ -94,6 +95,22 @@ pub enum RandError {
 
 pub fn get_current_uid() -> libc::uid_t {
     unsafe { libc::getuid() }
+}
+
+/// Kernel overflow uid and gid: what an id without mapping reads as from
+/// inside a user namespace. Read once, they are tunable through sysctl.
+pub fn overflow_ids() -> (u32, u32) {
+    static IDS: OnceLock<(u32, u32)> = OnceLock::new();
+    *IDS.get_or_init(|| {
+        let read = |name: &str| {
+            fs::read_to_string(format!("/proc/sys/kernel/{name}"))
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                // kernel default
+                .unwrap_or(65534)
+        };
+        (read("overflowuid"), read("overflowgid"))
+    })
 }
 
 pub fn getrandom<T: Sized>() -> Result<T, RandError> {

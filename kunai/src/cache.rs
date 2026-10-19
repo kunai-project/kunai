@@ -487,9 +487,6 @@ impl Caches {
             .do_in_namespace(|| {
                 let user_path = PathBuf::from(Users::sys_path());
 
-                // we must explicitely return a bare io::Error here (keeping the original
-                // io::ErrorKind) as the caller downcasts it to detect a missing file and
-                // fallback on the host namespace
                 let umeta = user_path.metadata().map_err(|e| {
                     namespace::Error::other(io::Error::new(
                         e.kind(),

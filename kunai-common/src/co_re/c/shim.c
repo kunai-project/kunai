@@ -186,8 +186,49 @@ struct kernel_cap_t
 // was struct kernel_cap_struct before 6.3), so there is no named struct CO-RE
 // could anchor a relocation on.
 
+struct uid_gid_extent
+{
+	__u32 first;
+	__u32 lower_first;
+	__u32 count;
+} __attribute__((preserve_access_index));
+
+// only the inline extents are declared: beyond UID_GID_MAP_MAX_BASE_EXTENTS
+// the kernel moves them to sorted arrays behind pointers
+#define UID_GID_MAP_MAX_BASE_EXTENTS 5
+
+struct uid_gid_map
+{
+	__u32 nr_extents;
+	union {
+		struct uid_gid_extent extent[UID_GID_MAP_MAX_BASE_EXTENTS];
+	};
+} __attribute__((preserve_access_index));
+
+SHIM(uid_gid_map, nr_extents);
+ARRAY_SHIM(uid_gid_map, extent);
+
+struct ns_common
+{
+	unsigned int inum;
+} __attribute__((preserve_access_index));
+
+SHIM(ns_common, inum);
+
+struct user_namespace
+{
+	struct uid_gid_map uid_map;
+	struct uid_gid_map gid_map;
+	struct ns_common ns;
+} __attribute__((preserve_access_index));
+
+SHIM_REF(user_namespace, ns);
+SHIM_REF(user_namespace, uid_map);
+SHIM_REF(user_namespace, gid_map);
+
 struct cred
 {
+	struct user_namespace *user_ns;
 	struct kuid_t uid;
 	struct kgid_t gid;
 	struct kuid_t suid;
@@ -201,6 +242,7 @@ struct cred
 	struct kernel_cap_t cap_effective;
 } __attribute__((preserve_access_index));
 
+SHIM(cred, user_ns);
 SHIM_WITH_NAME(cred, uid.val,    uid);
 SHIM_WITH_NAME(cred, gid.val,    gid);
 SHIM_WITH_NAME(cred, euid.val,   euid);
@@ -407,13 +449,6 @@ SHIM(mm_struct, exe_file);
 // Defining shim for task_struct
 // We just need to define the fields we need to access
 #define COMM_LEN 16
-
-struct ns_common
-{
-	unsigned int inum;
-} __attribute__((preserve_access_index));
-
-SHIM(ns_common, inum);
 
 struct mnt_namespace
 {

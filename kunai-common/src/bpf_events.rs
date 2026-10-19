@@ -49,6 +49,8 @@ pub enum Error {
     CommMissing,
     #[error("failed to get mnt_namespace")]
     MntNamespaceFailure,
+    #[error("failed to get user_namespace")]
+    UserNamespaceFailure,
 }
 
 impl From<Error> for ProbeError {
@@ -192,6 +194,8 @@ impl Type {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Namespaces {
     pub mnt: u32,
+    // inode of the creds' user namespace
+    pub user: u32,
 }
 
 #[repr(C)]

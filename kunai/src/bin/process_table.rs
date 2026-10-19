@@ -10,6 +10,7 @@ use kunai::info::{ProcKey, StdEventInfo, TaskKey};
 use kunai::util::tgkill;
 use kunai_common::bpf_events::TaskInfo;
 use kunai_common::creds;
+use kunai_common::user_ns::UserNs;
 
 const MAX_ANCESTORS: usize = 1024;
 
@@ -66,6 +67,9 @@ pub(crate) struct Task {
     // shared with the leader task when equal, replaced wholesale on change
     pub(crate) cgroups: Arc<[String]>,
     pub(crate) nodename: Option<Arc<str>>,
+    // set on execve and clone only, so it may be stale after unshare/setns:
+    // users check its inode against the event's
+    pub(crate) user_ns: Option<Arc<UserNs>>,
     // Baseline credentials used to detect out-of-band tampering. Only ever set
     // from what commit_creds() installs, it is our ground truth.
     pub(crate) expected_creds: creds::Creds,
@@ -181,6 +185,7 @@ impl ProcessTable {
                 pid: ti.pid,
                 cgroups: leader.map(|l| Arc::clone(&l.cgroups)).unwrap_or_default(),
                 nodename: leader.and_then(|l| l.nodename.clone()),
+                user_ns: leader.and_then(|l| l.user_ns.clone()),
                 expected_creds: ti.creds,
                 reported_creds: None,
                 last_seen_alive: timestamp,
@@ -596,6 +601,7 @@ mod tests {
                 pid: ti.pid,
                 cgroups: Arc::from([]),
                 nodename: None,
+                user_ns: None,
                 expected_creds: creds::Creds::default(),
                 reported_creds: None,
                 last_seen_alive: 0,

@@ -40,6 +40,7 @@ use kunai_common::config::Filter;
 use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
+use kunai_common::user_ns::{IdExtent, IdMap, UserNs};
 use kunai_common::{creds, inspect_err, kernel};
 
 use kunai::util::namespace::{Mnt, Namespace};
@@ -103,6 +104,7 @@ struct ProcSeed<'a> {
     argv: &'a kunai_common::buffer::Buffer<{ bpf_events::MAX_ARGV_SIZE }>,
     cgroup: &'a kunai_common::cgroup::Cgroup,
     nodename: Option<&'a bpf_events::Nodename>,
+    user_ns: &'a UserNs,
 }
 
 impl ProcSeed<'_> {
@@ -124,6 +126,7 @@ impl<'a> From<&'a bpf_events::ExecveData> for ProcSeed<'a> {
             argv: &d.argv,
             cgroup: &d.cgroup,
             nodename: Some(&d.nodename),
+            user_ns: &d.user_ns,
         }
     }
 }
@@ -136,6 +139,7 @@ impl<'a> From<&'a bpf_events::CloneData> for ProcSeed<'a> {
             cgroup: &d.cgroup,
             // nodename resolution might fail in clone
             nodename: (!d.nodename.is_empty()).then_some(&d.nodename),
+            user_ns: &d.user_ns,
         }
     }
 }
@@ -1555,6 +1559,42 @@ impl EventConsumer<'_> {
         Ok(())
     }
 
+    /// Same as what eBPF reads on execve and clone. The maps list kernel ids
+    /// as we read them from the initial user namespace.
+    fn user_ns_from_procfs(p: &procfs::process::Process) -> Option<UserNs> {
+        let id_map = |file: &str| -> Option<IdMap> {
+            let mut map = IdMap::default();
+            for line in fs::read_to_string(format!("/proc/{}/{file}", p.pid))
+                .ok()?
+                .lines()
+            {
+                let mut fields = line.split_whitespace().map(|f| f.parse::<u32>());
+                let (Some(Ok(first)), Some(Ok(lower_first)), Some(Ok(count))) =
+                    (fields.next(), fields.next(), fields.next())
+                else {
+                    return None;
+                };
+                // past the inline extents the map is unsupported, we only count
+                if let Some(e) = map.extents.get_mut(map.nr_extents as usize) {
+                    *e = IdExtent {
+                        first,
+                        lower_first,
+                        count,
+                    };
+                }
+                map.nr_extents += 1;
+            }
+            Some(map)
+        };
+
+        let inum = p.namespaces().ok()?.0.get(OsStr::new("user"))?.identifier;
+        Some(UserNs {
+            inum: inum as u32,
+            uid_map: id_map("uid_map")?,
+            gid_map: id_map("gid_map")?,
+        })
+    }
+
     fn set_task_from_procfs(&mut self, p: &procfs::process::Process) -> anyhow::Result<()> {
         let stat = p.stat()?;
 
@@ -1590,6 +1630,10 @@ impl EventConsumer<'_> {
             .map(|cg| cg.pathname)
             .collect::<Arc<[String]>>();
 
+        let user_ns = Self::user_ns_from_procfs(p)
+            .filter(UserNs::is_valid)
+            .map(Arc::new);
+
         let leader = TaskKey::try_from(p)?;
         let mut threads = HashSet::new();
 
@@ -1613,6 +1657,7 @@ impl EventConsumer<'_> {
                     pid: t.tid,
                     cgroups: Arc::clone(&cgroups),
                     nodename: None,
+                    user_ns: user_ns.clone(),
                     expected_creds: creds::Creds {
                         uid: status.ruid,
                         gid: status.rgid,
@@ -1877,7 +1922,7 @@ impl EventConsumer<'_> {
     // StdEventInfo of the event is built from them.
     fn on_execve(&mut self, i: &bpf_events::EventInfo, data: &bpf_events::ExecveData) {
         let seed = ProcSeed::from(data);
-        let cgroups = self.update_task_cgroups_nodename(&i.process, &seed);
+        let cgroups = self.update_task_from_seed(&i.process, &seed);
 
         // the process gets a new image, we start from scratch but
         // keep track of the real parent in case of zombie task
@@ -1894,7 +1939,7 @@ impl EventConsumer<'_> {
     // Same as on_execve regarding raw event info.
     fn on_clone(&mut self, i: &bpf_events::EventInfo, data: &bpf_events::CloneData) {
         let seed = ProcSeed::from(data);
-        let cgroups = self.update_task_cgroups_nodename(&i.process, &seed);
+        let cgroups = self.update_task_from_seed(&i.process, &seed);
 
         // a new thread of a known process, track_task already registered it
         if self
@@ -1944,8 +1989,9 @@ impl EventConsumer<'_> {
         }
     }
 
-    /// Sets cgroups and nodename of the emitting [`Task`] and returns its cgroups.
-    fn update_task_cgroups_nodename(&mut self, ti: &TaskInfo, seed: &ProcSeed) -> Arc<[String]> {
+    /// Sets cgroups, nodename and user namespace of the emitting [`Task`] and
+    /// returns its cgroups.
+    fn update_task_from_seed(&mut self, ti: &TaskInfo, seed: &ProcSeed) -> Arc<[String]> {
         let tk = TaskKey::from(ti);
         let cgroups = Self::resolve_cgroups(ti, seed);
 
@@ -1964,12 +2010,20 @@ impl EventConsumer<'_> {
             Some(n) if Some(n.as_ref()) == nodename.as_deref() => Some(Arc::clone(n)),
             _ => nodename.map(Arc::from),
         };
+        let user_ns = seed.user_ns.is_valid().then_some(seed.user_ns);
+        let shared_user_ns = match leader.and_then(|l| l.user_ns.as_ref()) {
+            Some(leader_user_ns) if Some(leader_user_ns.as_ref()) == user_ns => {
+                Some(Arc::clone(leader_user_ns))
+            }
+            _ => user_ns.map(|u| Arc::new(*u)),
+        };
 
         let task = self.table.tasks.get_mut(&tk);
         debug_assert!(task.is_some(), "task must be tracked");
         if let Some(task) = task {
             task.cgroups = Arc::clone(&shared_cgroups);
             task.nodename = shared_nodename;
+            task.user_ns = shared_user_ns;
         }
         shared_cgroups
     }
@@ -2021,38 +2075,48 @@ impl EventConsumer<'_> {
         mnt_ns: Mnt,
         ti: &bpf_events::TaskInfo,
     ) -> TaskAdditionalInfo {
-        let res = match self.sink.caches.get_user_group_in_ns(mnt_ns) {
-            Ok(o) => Ok(o),
-            Err(e) => match e {
-                Error::Namespace(ns) => {
-                    if ns.is_other_and_io_kind(io::ErrorKind::NotFound) {
-                        self.sink
-                            .caches
-                            .get_user_group_in_ns(self.system_info.mount_ns)
-                    } else {
-                        Err(ns.into())
-                    }
-                }
-                _ => Err(e),
-            },
+        let host_ns = self.system_info.mount_ns;
+        let mut tables = |ns: Mnt| {
+            self.sink
+                .caches
+                .get_user_group_in_ns(ns)
+                .inspect_err(|e| {
+                    let mut ti = *ti;
+                    // fixes the random part to have a searchable uuid for error investigation
+                    ti.set_uuid_random(self.random);
+                    // make this debug as it can be quite verbose in some cases
+                    debug!(
+                        "failed to get task guuid={} user/group in mnt_ns={}: {e}",
+                        ti.tg_uuid.into_uuid(),
+                        ns.inum
+                    )
+                })
+                .ok()
+                .unzip()
         };
 
-        // getting user and group information for task
-        let (users, groups) = res
-            .inspect_err(|e| {
-                let mut ti = *ti;
-                // fixes the random part to have a searchable uuid for error investigation
-                ti.set_uuid_random(self.random);
-                // make this debug as it can be quite verbose in some cases
-                debug!(
-                    "failed to get task guuid={} user/group: {e}",
-                    ti.tg_uuid.into_uuid()
-                )
-            })
-            .ok()
-            .unzip();
+        let (users, groups) = tables(mnt_ns);
+        let (host_users, host_groups) = if mnt_ns == host_ns {
+            (users.clone(), groups.clone())
+        } else {
+            tables(host_ns)
+        };
 
-        TaskAdditionalInfo { users, groups }
+        // the task may have changed user namespace since its last execve or clone
+        let user_ns = self
+            .table
+            .tasks
+            .get(&TaskKey::from(ti))
+            .and_then(|t| t.user_ns.clone())
+            .filter(|ns| Some(ns.inum) == ti.namespaces.into_opt().map(|n| n.user));
+
+        TaskAdditionalInfo {
+            users,
+            groups,
+            host_users,
+            host_groups,
+            user_ns,
+        }
     }
 
     // Create tasks lazily, some never go through a clone

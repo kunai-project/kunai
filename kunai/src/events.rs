@@ -22,6 +22,10 @@ use crate::{
     cache::{FileMeta, Hashes},
     containers::Container,
     info::{ContainerInfo, StdEventInfo, TaskAdditionalInfo},
+    util::{
+        account::{Groups, Users},
+        overflow_ids,
+    },
 };
 
 pub mod agent;
@@ -97,11 +101,15 @@ impl From<&StdEventInfo> for EventSection {
 #[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct NamespaceInfo {
     pub mnt: u32,
+    pub user: u32,
 }
 
 impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
     fn from(value: kunai_common::bpf_events::Namespaces) -> Self {
-        Self { mnt: value.mnt }
+        Self {
+            mnt: value.mnt,
+            user: value.user,
+        }
     }
 }
 
@@ -688,7 +696,23 @@ pub struct Caps {
 }
 
 #[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
+/// Host ids, named from the host's user and group tables.
 pub struct Identity<'src> {
+    pub uid: u32,
+    pub user: Cow<'src, str>,
+    pub gid: u32,
+    pub group: Cow<'src, str>,
+    /// absent if equal to the host identity or if the task's user namespace
+    /// maps are unknown (lost events, unsupported maps, namespace changed
+    /// since the last execve or clone)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<NsIdentity<'src>>,
+}
+
+/// Ids seen from the task's user namespace, named from the user and group
+/// tables of its mount namespace.
+#[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct NsIdentity<'src> {
     pub uid: u32,
     pub user: Cow<'src, str>,
     pub gid: u32,
@@ -714,45 +738,68 @@ impl<'src> Creds<'src> {
         ai: &'src TaskAdditionalInfo,
         light: bool,
     ) -> Self {
-        macro_rules! identity {
-            ($uid:expr, $gid:expr) => {
-                Identity {
-                    uid: $uid,
-                    user: ai
-                        .users
-                        .as_ref()
-                        .and_then(|users| users.get_by_uid($uid))
-                        .map(|u| Cow::Borrowed(u.name.as_str()))
-                        .unwrap_or("?".into()),
-                    gid: $gid,
-                    group: ai
-                        .groups
-                        .as_ref()
-                        .and_then(|groups| groups.get_by_gid($gid))
-                        .map(|g| Cow::Borrowed(g.name.as_str()))
-                        .unwrap_or("?".into()),
-                }
+        let user = |users: &'src Option<Arc<Users>>, uid| -> Cow<'src, str> {
+            users
+                .as_ref()
+                .and_then(|u| u.get_by_uid(uid))
+                .map_or(Cow::Borrowed("?"), |u| Cow::Borrowed(u.name.as_str()))
+        };
+        let group = |groups: &'src Option<Arc<Groups>>, gid| -> Cow<'src, str> {
+            groups
+                .as_ref()
+                .and_then(|g| g.get_by_gid(gid))
+                .map_or(Cow::Borrowed("?"), |g| Cow::Borrowed(g.name.as_str()))
+        };
+
+        // each id is only meaningful in its own namespace, so is looked up in
+        // that namespace's tables
+        let identity = |uid: u32, gid: u32| -> Identity<'src> {
+            let mut id = Identity {
+                uid,
+                user: user(&ai.host_users, uid),
+                gid,
+                group: group(&ai.host_groups, gid),
+                namespace: None,
             };
-        }
+            id.namespace = ai
+                .user_ns
+                .as_ref()
+                .map(|ns| {
+                    let (overflow_uid, overflow_gid) = overflow_ids();
+                    let ns_uid = ns.uid_map.map_id_up(uid).unwrap_or(overflow_uid);
+                    let ns_gid = ns.gid_map.map_id_up(gid).unwrap_or(overflow_gid);
+                    NsIdentity {
+                        uid: ns_uid,
+                        user: user(&ai.users, ns_uid),
+                        gid: ns_gid,
+                        group: group(&ai.groups, ns_gid),
+                    }
+                })
+                // host processes and namespaces sharing the host's tables
+                .filter(|ns| {
+                    (ns.uid, &ns.user, ns.gid, &ns.group) != (uid, &id.user, gid, &id.group)
+                });
+            id
+        };
 
         Self {
             real: {
                 if light {
                     None
                 } else {
-                    Some(identity!(s.uid, s.gid))
+                    Some(identity(s.uid, s.gid))
                 }
             },
-            effective: identity!(s.euid, s.egid),
+            effective: identity(s.euid, s.egid),
             saved: if light {
                 None
             } else {
-                Some(identity!(s.suid, s.sgid))
+                Some(identity(s.suid, s.sgid))
             },
             fs: if light {
                 None
             } else {
-                Some(identity!(s.fsuid, s.fsgid))
+                Some(identity(s.fsuid, s.fsgid))
             },
             caps: if light {
                 None

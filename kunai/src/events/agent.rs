@@ -1,7 +1,10 @@
 use std::{ffi::OsString, io};
 
 use kunai_common::{
-    bpf_events::{self, COMM_SIZE, TaskInfo, Type}, creds::Creds, option::BpfOption, uuid::ProcUuid,
+    bpf_events::{self, COMM_SIZE, TaskInfo, Type},
+    creds::Creds,
+    option::BpfOption,
+    uuid::ProcUuid,
 };
 use thiserror::Error;
 
@@ -11,6 +14,8 @@ use crate::util::{get_clk_tck, ktime_get_ns};
 pub enum Error {
     #[error("procfs lacks mnt namespace")]
     NoMntNamespace,
+    #[error("procfs lacks user namespace")]
+    NoUserNamespace,
     #[error("procfs: {0}")]
     Procfs(#[from] procfs::ProcError),
     #[error("io: {0}")]
@@ -36,6 +41,11 @@ impl AgentEventInfo {
             .0
             .get(&OsString::from("mnt"))
             .ok_or(Error::NoMntNamespace)?;
+
+        let user = namespaces
+            .0
+            .get(&OsString::from("user"))
+            .ok_or(Error::NoUserNamespace)?;
 
         let comm_bytes = stat.comm.as_bytes();
         let mut comm = [0; COMM_SIZE];
@@ -68,6 +78,7 @@ impl AgentEventInfo {
             tg_uuid: ProcUuid::new(start_time, 0, status.tgid),
             namespaces: BpfOption::Some(bpf_events::Namespaces {
                 mnt: mnt.identifier as u32,
+                user: user.identifier as u32,
             }),
             comm,
             zombie: false,
