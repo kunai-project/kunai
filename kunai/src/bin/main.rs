@@ -104,7 +104,9 @@ struct ProcSeed<'a> {
     argv: &'a kunai_common::buffer::Buffer<{ bpf_events::MAX_ARGV_SIZE }>,
     cgroup: &'a kunai_common::cgroup::Cgroup,
     nodename: Option<&'a bpf_events::Nodename>,
-    user_ns: &'a UserNs,
+    // clone does not carry it: the child inherits its parent's namespace, or
+    // a new one whose maps are not written yet
+    user_ns: Option<&'a UserNs>,
 }
 
 impl ProcSeed<'_> {
@@ -126,7 +128,7 @@ impl<'a> From<&'a bpf_events::ExecveData> for ProcSeed<'a> {
             argv: &d.argv,
             cgroup: &d.cgroup,
             nodename: Some(&d.nodename),
-            user_ns: &d.user_ns,
+            user_ns: Some(&d.user_ns),
         }
     }
 }
@@ -139,7 +141,7 @@ impl<'a> From<&'a bpf_events::CloneData> for ProcSeed<'a> {
             cgroup: &d.cgroup,
             // nodename resolution might fail in clone
             nodename: (!d.nodename.is_empty()).then_some(&d.nodename),
-            user_ns: &d.user_ns,
+            user_ns: None,
         }
     }
 }
@@ -2009,14 +2011,17 @@ impl EventConsumer<'_> {
             Some(n) if Some(n.as_ref()) == nodename.as_deref() => Some(Arc::clone(n)),
             _ => nodename.map(Arc::from),
         };
-        let shared_user_ns = self.sink.caches.cache_user_ns(seed.user_ns);
+        let shared_user_ns = seed.user_ns.map(|ns| self.sink.caches.cache_user_ns(ns));
 
         let task = self.table.tasks.get_mut(&tk);
         debug_assert!(task.is_some(), "task must be tracked");
         if let Some(task) = task {
             task.cgroups = Arc::clone(&shared_cgroups);
             task.nodename = shared_nodename;
-            task.user_ns = shared_user_ns;
+            // otherwise the inherited one is kept, see build_task_additional_info
+            if let Some(user_ns) = shared_user_ns {
+                task.user_ns = user_ns;
+            }
         }
         shared_cgroups
     }

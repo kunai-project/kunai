@@ -3,7 +3,6 @@ use crate::{
     buffer::Buffer,
     cgroup::Cgroup,
     path::Path,
-    user_ns::UserNs,
 };
 
 use super::MAX_ARGV_SIZE;
@@ -17,5 +16,4 @@ pub struct CloneData {
     pub argv: Buffer<MAX_ARGV_SIZE>,
     pub cgroup: Cgroup,
     pub nodename: Nodename,
-    pub user_ns: UserNs,
 }

@@ -67,10 +67,6 @@ unsafe fn try_enter_wake_up_new_task(ctx: &ProbeContext) -> ProbeResult<()> {
                 ));
             }
 
-            if let Ok(ns) = core_read_kernel!(new_task, cred, user_ns) {
-                event.data.user_ns.from_user_namespace(ns);
-            }
-
             // initializing task
             event.init_from_task(Type::Clone, new_task)?;
 
