@@ -1,4 +1,4 @@
-use aya_ebpf::programs::ProbeContext;
+use aya_ebpf::programs::RetProbeContext;
 
 use super::*;
 
@@ -9,8 +9,8 @@ use super::*;
 ///
 /// match-proto:v5.0:drivers/base/syscore.c:void syscore_resume(void)
 /// match-proto:latest:drivers/base/syscore.c:void syscore_resume(void)
-#[kprobe(function = "syscore_resume")]
-pub fn enter_syscore_resume(ctx: ProbeContext) -> u32 {
+#[kretprobe(function = "syscore_resume")]
+pub fn exit_syscore_resume(ctx: RetProbeContext) -> u32 {
     match unsafe { try_syscore_resume(&ctx) } {
         Ok(_) => errors::BPF_PROG_SUCCESS,
         Err(s) => {
@@ -20,7 +20,7 @@ pub fn enter_syscore_resume(ctx: ProbeContext) -> u32 {
     }
 }
 
-unsafe fn try_syscore_resume(ctx: &ProbeContext) -> ProbeResult<()> {
+unsafe fn try_syscore_resume(ctx: &RetProbeContext) -> ProbeResult<()> {
     unsafe {
         let evt = alloc::alloc_zero::<SysCoreResumeEvent>()?;
 
