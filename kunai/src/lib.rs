@@ -89,14 +89,14 @@ fn configure_probes(
         .expect_mut("io_uring_enter_io_poll_issue")
         .min_kernel(kernel!(6, 15));
 
-    // syscore_resume may be missing if kernel is compiled without CONFIG_PM_SLEEP
-    // see: https://github.com/kunai-project/kunai/issues/105
+    // syscore_resume may be missing if kernel is compiled without CONFIG_PM_SLEEP
+    // see: https://github.com/kunai-project/kunai/issues/105
     if !symbols.contains_text_symbol("syscore_resume") {
-        programs.expect_mut("enter_syscore_resume").disable();
-        // the risk is we disable a probe that changed name (not desired)
-        // we know that until v6.12 the function is there so print warning
-        // only if kernel is more recent.
-        if target > kernel!(6, 12) {
+        programs.expect_mut("exit_syscore_resume").disable();
+        // A missing symbol may also mean the function was renamed, which would
+        // silently disable the probe. It exists up to v7.2, so only warn on
+        // newer kernels.
+        if target > kernel!(7, 2) {
             warn!(
                 "syscore_resume probe has been disabled: make sure your kernel has been built \
                  without CONFIG_PM_SLEEP"
