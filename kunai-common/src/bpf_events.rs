@@ -174,6 +174,8 @@ pub enum Type {
     Log,
     #[str("syscore_resume")]
     SyscoreResume,
+    #[str("user_ns_map")]
+    UserNsMap,
 
     // !!! all new event types must be put before max
     #[str("max")]

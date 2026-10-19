@@ -1630,9 +1630,8 @@ impl EventConsumer<'_> {
             .map(|cg| cg.pathname)
             .collect::<Arc<[String]>>();
 
-        let user_ns = Self::user_ns_from_procfs(p)
-            .filter(UserNs::is_valid)
-            .map(Arc::new);
+        let user_ns =
+            Self::user_ns_from_procfs(p).and_then(|ns| self.sink.caches.cache_user_ns(&ns));
 
         let leader = TaskKey::try_from(p)?;
         let mut threads = HashSet::new();
@@ -2010,13 +2009,7 @@ impl EventConsumer<'_> {
             Some(n) if Some(n.as_ref()) == nodename.as_deref() => Some(Arc::clone(n)),
             _ => nodename.map(Arc::from),
         };
-        let user_ns = seed.user_ns.is_valid().then_some(seed.user_ns);
-        let shared_user_ns = match leader.and_then(|l| l.user_ns.as_ref()) {
-            Some(leader_user_ns) if Some(leader_user_ns.as_ref()) == user_ns => {
-                Some(Arc::clone(leader_user_ns))
-            }
-            _ => user_ns.map(|u| Arc::new(*u)),
-        };
+        let shared_user_ns = self.sink.caches.cache_user_ns(seed.user_ns);
 
         let task = self.table.tasks.get_mut(&tk);
         debug_assert!(task.is_some(), "task must be tracked");
@@ -2103,12 +2096,11 @@ impl EventConsumer<'_> {
         };
 
         // the task may have changed user namespace since its last execve or clone
-        let user_ns = self
-            .table
-            .tasks
-            .get(&TaskKey::from(ti))
-            .and_then(|t| t.user_ns.clone())
-            .filter(|ns| Some(ns.inum) == ti.namespaces.into_opt().map(|n| n.user));
+        let user_ns = ti.namespaces.into_opt().and_then(|n| {
+            let caches = &mut self.sink.caches;
+            self.table
+                .task_user_ns(&TaskKey::from(ti), n.user, |inum| caches.get_user_ns(inum))
+        });
 
         TaskAdditionalInfo {
             users,
@@ -2470,6 +2462,10 @@ impl EventConsumer<'_> {
             }
 
             EbpfEvent::SysCoreResume(_) => { /*  just ignore it */ }
+
+            EbpfEvent::UserNsMap(e) => {
+                self.sink.caches.cache_user_ns(&e.data.user_ns);
+            }
         }
     }
 }
@@ -3555,6 +3551,7 @@ impl TryFrom<serde_json::Value> for ReplayEvent {
             | Type::Log
             | Type::EndConfigurable
             | Type::SyscoreResume
+            | Type::UserNsMap
             | Type::Max => Err(anyhow!("event type={t} not handled")),
         }
     }

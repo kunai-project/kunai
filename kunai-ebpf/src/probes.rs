@@ -35,6 +35,7 @@ mod prctl;
 mod ptrace;
 mod send_data;
 mod syscore_resume;
+mod user_ns;
 
 /// macro to track ignored results
 macro_rules! ignore_result {

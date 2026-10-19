@@ -856,6 +856,20 @@ unsafe extern "C" {
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct seq_file {
+    pub private: *mut ::core::ffi::c_void,
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private(seq_file: *mut seq_file) -> *mut ::core::ffi::c_void;
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private_user(seq_file: *mut seq_file) -> *mut ::core::ffi::c_void;
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private_exists(seq_file: *mut seq_file) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct fd {
     pub file: *mut file,
     pub flags: ::core::ffi::c_uint,

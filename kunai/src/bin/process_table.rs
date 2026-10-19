@@ -170,6 +170,28 @@ impl ProcessTable {
         }
     }
 
+    /// Returns the user namespace `inum` of task `tk`, fixing up the task's
+    /// one with `lookup` if it changed namespace (unshare/setns) since we
+    /// last set it.
+    pub(crate) fn task_user_ns(
+        &mut self,
+        tk: &TaskKey,
+        inum: u32,
+        lookup: impl FnOnce(u32) -> Option<Arc<UserNs>>,
+    ) -> Option<Arc<UserNs>> {
+        let task = self.tasks.get_mut(tk);
+        if let Some(ns) = task.as_ref().and_then(|t| t.user_ns.as_ref())
+            && ns.inum == inum
+        {
+            return Some(Arc::clone(ns));
+        }
+        let ns = lookup(inum);
+        if let Some(t) = task {
+            t.user_ns = ns.clone();
+        }
+        ns
+    }
+
     /// `timestamp` is the event's, in ns since boot.
     pub(crate) fn track_task(&mut self, ti: &TaskInfo, timestamp: u64) {
         let tk = TaskKey::from(ti);
@@ -286,6 +308,7 @@ impl ProcessTable {
                 exited.push(t.proc_key);
             }
         }
+
         exited
     }
 
@@ -564,6 +587,29 @@ mod tests {
         // groups are pid % 8: 102 is in group 6, 101 in 5, 100 in 4
         assert_eq!(checked_pids(&mut t, RECHECK_AFTER + 2 * step), [102]);
         assert_eq!(checked_pids(&mut t, RECHECK_AFTER + 3 * step), [101]);
+    }
+
+    #[test]
+    fn task_user_ns_follows_namespace_changes() {
+        let mut t = threaded();
+        let tk = TaskKey::from(&thread(100, 101));
+        let ns = Arc::new(UserNs {
+            inum: 42,
+            ..Default::default()
+        });
+        let known = |inum| (inum == 42).then(|| Arc::clone(&ns));
+
+        // the task is seen in a namespace before its maps get written
+        assert!(t.task_user_ns(&tk, 42, |_| None).is_none());
+
+        assert!(Arc::ptr_eq(&t.task_user_ns(&tk, 42, known).unwrap(), &ns));
+        assert!(Arc::ptr_eq(t.tasks[&tk].user_ns.as_ref().unwrap(), &ns));
+        // the task's one is used without lookup
+        assert!(t.task_user_ns(&tk, 42, |_| unreachable!()).is_some());
+
+        // unshare to an unknown namespace drops the stale one
+        assert!(t.task_user_ns(&tk, 43, known).is_none());
+        assert!(t.tasks[&tk].user_ns.is_none());
     }
 
     #[test]

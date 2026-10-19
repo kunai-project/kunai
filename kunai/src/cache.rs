@@ -4,6 +4,7 @@ use gene_derive::FieldGetter;
 
 use huby::ByteSize;
 use kunai_common::time::Time;
+use kunai_common::user_ns::UserNs;
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};
 use pure_magic::{readers::DataRead, DataReader, MagicDb};
@@ -440,6 +441,8 @@ pub struct Caches {
     hashes: LruHashMap<Key, Arc<Hashes>>,
     users: LruHashMap<Key, Arc<Users>>,
     groups: LruHashMap<Key, Arc<Groups>>,
+    // valid user namespaces by inode, tasks keep theirs alive past eviction
+    user_namespaces: LruHashMap<u32, Arc<UserNs>>,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -456,9 +459,30 @@ impl Caches {
             mnt_namespaces: MntNsCache::with_max_entries(NS_CACHE_SIZE),
             users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            user_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
+    }
+
+    /// Returns the shared instance of `ns`, or `None` if it is not valid.
+    pub fn cache_user_ns(&mut self, ns: &UserNs) -> Option<Arc<UserNs>> {
+        if !ns.is_valid() {
+            return None;
+        }
+        // maps are written once, a difference means the inode was reused
+        if let Some(cached) = self.user_namespaces.get(&ns.inum)
+            && **cached == *ns
+        {
+            return Some(Arc::clone(cached));
+        }
+        let ns = Arc::new(*ns);
+        self.user_namespaces.insert(ns.inum, Arc::clone(&ns));
+        Some(ns)
+    }
+
+    pub fn get_user_ns(&mut self, inum: u32) -> Option<Arc<UserNs>> {
+        self.user_namespaces.get(&inum).cloned()
     }
 
     /// Caches mount namespace `ns` of process `pid`. If `track` is set, the
@@ -628,6 +652,40 @@ mod tests {
             random: 0,
             tgid: pid,
         })
+    }
+
+    fn user_ns(inum: u32, lower_first: u32) -> UserNs {
+        let mut map = kunai_common::user_ns::IdMap {
+            nr_extents: 1,
+            ..Default::default()
+        };
+        map.extents[0] = kunai_common::user_ns::IdExtent {
+            first: 0,
+            lower_first,
+            count: 1,
+        };
+        UserNs {
+            inum,
+            uid_map: map,
+            gid_map: map,
+        }
+    }
+
+    #[test]
+    fn cache_user_ns_shares_instances() {
+        let mut c = Caches::with_max_entries(1);
+        assert!(c.cache_user_ns(&UserNs::default()).is_none());
+
+        let a = c.cache_user_ns(&user_ns(42, 1000)).unwrap();
+        let b = c.cache_user_ns(&user_ns(42, 1000)).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert!(Arc::ptr_eq(&c.get_user_ns(42).unwrap(), &a));
+
+        // inode reused by another namespace
+        let r = c.cache_user_ns(&user_ns(42, 2000)).unwrap();
+        assert_eq!(r.uid_map.extents[0].lower_first, 2000);
+        assert!(Arc::ptr_eq(&c.get_user_ns(42).unwrap(), &r));
+        assert!(c.get_user_ns(43).is_none());
     }
 
     #[test]

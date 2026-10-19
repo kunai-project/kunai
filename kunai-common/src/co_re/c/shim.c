@@ -426,6 +426,13 @@ SHIM(file, private_data);
 SHIM(file, f_flags);
 SHIM(file, f_mode);
 
+struct seq_file
+{
+	void *private;
+} __attribute__((preserve_access_index));
+
+SHIM(seq_file, private);
+
 struct fd
 {
 	struct file *file;
