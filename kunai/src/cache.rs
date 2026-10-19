@@ -443,6 +443,8 @@ pub struct Caches {
     groups: LruHashMap<Key, Arc<Groups>>,
     // valid user namespaces by inode, tasks keep theirs alive past eviction
     user_namespaces: LruHashMap<u32, Arc<UserNs>>,
+    // warn once that eviction started, users may want a bigger cache
+    user_ns_evicting: bool,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -460,6 +462,7 @@ impl Caches {
             users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             user_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            user_ns_evicting: false,
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
@@ -470,11 +473,21 @@ impl Caches {
         if !ns.is_valid() {
             return None;
         }
-        // maps are written once, a difference means the inode was reused
-        if let Some(cached) = self.user_namespaces.get(&ns.inum)
-            && **cached == *ns
-        {
-            return Some(Arc::clone(cached));
+        match self.user_namespaces.get(&ns.inum) {
+            // maps are written once, a difference means the inode was reused
+            Some(cached) if **cached == *ns => return Some(Arc::clone(cached)),
+            Some(_) => {}
+            None => {
+                if !self.user_ns_evicting
+                    && self.user_namespaces.len() >= self.user_namespaces.cap()
+                {
+                    self.user_ns_evicting = true;
+                    log::warn!(
+                        "user namespace cache is full ({} entries), evicted namespaces may be reported without in-namespace identity",
+                        self.user_namespaces.cap()
+                    );
+                }
+            }
         }
         let ns = Arc::new(*ns);
         self.user_namespaces.insert(ns.inum, Arc::clone(&ns));
