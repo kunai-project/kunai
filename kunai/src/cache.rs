@@ -7,7 +7,7 @@ use kunai_common::time::Time;
 use kunai_common::user_ns::UserNs;
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};
-use pure_magic::{readers::DataRead, DataReader, MagicDb};
+use pure_magic::{DataReader, MagicDb, readers::DataRead};
 
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
@@ -443,8 +443,8 @@ pub struct Caches {
     groups: LruHashMap<Key, Arc<Groups>>,
     // valid user namespaces by inode, tasks keep theirs alive past eviction
     user_namespaces: LruHashMap<u32, Arc<UserNs>>,
-    // warn once that eviction started, users may want a bigger cache
-    user_ns_evicting: bool,
+    // warn only once, users may want a bigger cache
+    user_ns_evicted_in_use: bool,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -462,7 +462,7 @@ impl Caches {
             users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             user_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
-            user_ns_evicting: false,
+            user_ns_evicted_in_use: false,
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
@@ -473,24 +473,25 @@ impl Caches {
         if !ns.is_valid() {
             return None;
         }
-        match self.user_namespaces.get(&ns.inum) {
-            // maps are written once, a difference means the inode was reused
-            Some(cached) if **cached == *ns => return Some(Arc::clone(cached)),
-            Some(_) => {}
-            None => {
-                if !self.user_ns_evicting
-                    && self.user_namespaces.len() >= self.user_namespaces.cap()
-                {
-                    self.user_ns_evicting = true;
-                    log::warn!(
-                        "user namespace cache is full ({} entries), evicted namespaces may be reported without in-namespace identity",
-                        self.user_namespaces.cap()
-                    );
-                }
-            }
+        // maps are written once, a difference means the inode was reused
+        if let Some(cached) = self.user_namespaces.get(&ns.inum)
+            && **cached == *ns
+        {
+            return Some(Arc::clone(cached));
         }
         let ns = Arc::new(*ns);
-        self.user_namespaces.insert(ns.inum, Arc::clone(&ns));
+        // evicting namespaces no task holds is the LRU's normal life, only
+        // evicting one still in use loses identities (e.g. of new forks)
+        if let Some((_, evicted)) = self.user_namespaces.insert(ns.inum, Arc::clone(&ns))
+            && Arc::strong_count(&evicted) > 1
+            && !self.user_ns_evicted_in_use
+        {
+            log::warn!(
+                "user namespace cache is too small ({} entries): namespaces in use get evicted, some events may miss their in-namespace identity",
+                self.user_namespaces.cap()
+            );
+            self.user_ns_evicted_in_use = true;
+        }
         Some(ns)
     }
 
@@ -699,6 +700,21 @@ mod tests {
         assert_eq!(r.uid_map.extents[0].lower_first, 2000);
         assert!(Arc::ptr_eq(&c.get_user_ns(42).unwrap(), &r));
         assert!(c.get_user_ns(43).is_none());
+    }
+
+    #[test]
+    fn cache_user_ns_flags_only_in_use_evictions() {
+        let mut c = Caches::with_max_entries(1);
+        c.user_namespaces = LruHashMap::with_max_entries(1);
+
+        // nothing holds the evicted one
+        c.cache_user_ns(&user_ns(1, 1000));
+        c.cache_user_ns(&user_ns(2, 1000));
+        assert!(!c.user_ns_evicted_in_use);
+
+        let _held = c.get_user_ns(2);
+        c.cache_user_ns(&user_ns(3, 1000));
+        assert!(c.user_ns_evicted_in_use);
     }
 
     #[test]

@@ -35,7 +35,7 @@ kunai-common = { path = "kunai-common" }
 kunai-macros = { path = "kunai-common/src/kunai-macros" }
 libc = "0.2"
 log = "0.4"
-lru-st = "0.2"
+lru-st = "0.4"
 magic-db = "0.6"
 object = "0.34.0"
 paste = "1.0"
