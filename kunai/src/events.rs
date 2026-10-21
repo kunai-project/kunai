@@ -98,17 +98,17 @@ impl From<&StdEventInfo> for EventSection {
     }
 }
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct NamespaceInfo {
-    pub mnt: u32,
-    pub user: u32,
+    pub mnt: Option<u32>,
+    pub user: Option<u32>,
 }
 
 impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
     fn from(value: kunai_common::bpf_events::Namespaces) -> Self {
         Self {
-            mnt: value.mnt,
-            user: value.user,
+            mnt: value.mnt.into_opt(),
+            user: value.user.into_opt(),
         }
     }
 }
@@ -120,7 +120,7 @@ pub struct TaskSection<'src> {
     pub tgid: i32,
     pub guuid: Uuid,
     pub creds: Creds<'src>,
-    pub namespaces: Option<NamespaceInfo>,
+    pub namespaces: NamespaceInfo,
     #[serde(with = "u32_hex")]
     pub flags: u32,
     pub zombie: bool,
@@ -134,7 +134,7 @@ impl<'src> TaskSection<'src> {
             tgid: ti.tgid,
             guuid: ti.tg_uuid.into_uuid(),
             creds: Creds::from_bpf_and_additions(ti.creds, add, true),
-            namespaces: ti.namespaces.map(|ns| ns.into()).into(),
+            namespaces: ti.namespaces.into(),
             flags: ti.flags,
             zombie: ti.zombie,
         }

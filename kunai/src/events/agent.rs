@@ -3,7 +3,6 @@ use std::{ffi::OsString, io};
 use kunai_common::{
     bpf_events::{self, COMM_SIZE, TaskInfo, Type},
     creds::Creds,
-    option::BpfOption,
     uuid::ProcUuid,
 };
 use thiserror::Error;
@@ -12,10 +11,6 @@ use crate::util::{get_clk_tck, ktime_get_ns};
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("procfs lacks mnt namespace")]
-    NoMntNamespace,
-    #[error("procfs lacks user namespace")]
-    NoUserNamespace,
     #[error("procfs: {0}")]
     Procfs(#[from] procfs::ProcError),
     #[error("io: {0}")]
@@ -37,15 +32,14 @@ impl AgentEventInfo {
         let namespaces = p.namespaces()?;
         let clk_tck = get_clk_tck()? as u64;
 
-        let mnt = namespaces
-            .0
-            .get(&OsString::from("mnt"))
-            .ok_or(Error::NoMntNamespace)?;
-
-        let user = namespaces
-            .0
-            .get(&OsString::from("user"))
-            .ok_or(Error::NoUserNamespace)?;
+        // user is missing without CONFIG_USER_NS
+        let inum = |name: &str| {
+            namespaces
+                .0
+                .get(&OsString::from(name))
+                .map(|ns| ns.identifier as u32)
+                .into()
+        };
 
         let comm_bytes = stat.comm.as_bytes();
         let mut comm = [0; COMM_SIZE];
@@ -76,10 +70,10 @@ impl AgentEventInfo {
                 cap_inheritable: status.capinh,
             },
             tg_uuid: ProcUuid::new(start_time, 0, status.tgid),
-            namespaces: BpfOption::Some(bpf_events::Namespaces {
-                mnt: mnt.identifier as u32,
-                user: user.identifier as u32,
-            }),
+            namespaces: bpf_events::Namespaces {
+                mnt: inum("mnt"),
+                user: inum("user"),
+            },
             comm,
             zombie: false,
             start_time,

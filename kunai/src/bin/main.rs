@@ -1068,8 +1068,8 @@ impl EventSink<'_> {
             return Ok(());
         }
 
-        let ns = match event.info().task.namespaces.as_ref() {
-            Some(ns) => Mnt::from_inum(ns.mnt),
+        let ns = match event.info().task.namespaces.mnt {
+            Some(ns) => Mnt::from_inum(ns),
             None => return Err(anyhow!("namespace not found")),
         };
 
@@ -1726,7 +1726,7 @@ impl EventConsumer<'_> {
     }
 
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
-        ti.namespaces.map(|ns| Mnt::from_inum(ns.mnt)).into()
+        ti.namespaces.mnt.into_opt().map(Mnt::from_inum)
     }
 
     /// method acting as a central place to get the mnt namespace of a
@@ -2101,10 +2101,10 @@ impl EventConsumer<'_> {
         };
 
         // the task may have changed user namespace since its last execve or clone
-        let user_ns = ti.namespaces.into_opt().and_then(|n| {
+        let user_ns = ti.namespaces.user.into_opt().and_then(|inum| {
             let caches = &mut self.sink.caches;
             self.table
-                .task_user_ns(&TaskKey::from(ti), n.user, |inum| caches.get_user_ns(inum))
+                .task_user_ns(&TaskKey::from(ti), inum, |inum| caches.get_user_ns(inum))
         });
 
         TaskAdditionalInfo {
