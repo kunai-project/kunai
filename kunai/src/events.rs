@@ -1342,3 +1342,148 @@ impl From<&bpf_events::LossData> for LossData {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use kunai_common::user_ns::{IdExtent, IdMap, UserNs};
+
+    use super::*;
+
+    const HOST_PASSWD: &str =
+        "root:x:0:0::/root:/bin/sh\nuser:x:1000:1000::/home/user:/bin/sh";
+    const HOST_GROUP: &str = "root:x:0:\nuser:x:1000:";
+
+    fn users(s: &str) -> Option<Arc<Users>> {
+        let mut u = Users::new();
+        u.extend_from_str(s).unwrap();
+        Some(Arc::new(u))
+    }
+
+    fn groups(s: &str) -> Option<Arc<Groups>> {
+        let mut g = Groups::new();
+        g.extend_from_str(s).unwrap();
+        Some(Arc::new(g))
+    }
+
+    fn id_map(extents: &[(u32, u32, u32)]) -> IdMap {
+        let mut m = IdMap {
+            nr_extents: extents.len() as u32,
+            ..Default::default()
+        };
+        for (e, &(first, lower_first, count)) in m.extents.iter_mut().zip(extents) {
+            *e = IdExtent {
+                first,
+                lower_first,
+                count,
+            };
+        }
+        m
+    }
+
+    fn user_ns(extents: &[(u32, u32, u32)]) -> Option<Arc<UserNs>> {
+        Some(Arc::new(UserNs {
+            inum: 1,
+            uid_map: id_map(extents),
+            gid_map: id_map(extents),
+        }))
+    }
+
+    fn effective(ai: &TaskAdditionalInfo, id: u32) -> Identity<'_> {
+        let c = creds::Creds {
+            euid: id,
+            egid: id,
+            ..Default::default()
+        };
+        Creds::from_bpf_and_additions(c, ai, true).effective
+    }
+
+    fn ns_identity(uid: u32, user: &str, gid: u32, group: &str) -> Option<NsIdentity<'static>> {
+        Some(NsIdentity {
+            uid,
+            user: user.to_string().into(),
+            gid,
+            group: group.to_string().into(),
+        })
+    }
+
+    #[test]
+    fn creds_ns_identity() {
+        let (overflow_uid, overflow_gid) = overflow_ids();
+        let rootless = &[(0, 1000, 1), (1, 524288, 65536)];
+
+        // (case, task info, host id, expected host user, expected ns identity)
+        let cases = [
+            (
+                "host task",
+                TaskAdditionalInfo {
+                    users: users(HOST_PASSWD),
+                    groups: groups(HOST_GROUP),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(&[(0, 0, u32::MAX)]),
+                },
+                1000,
+                "user",
+                None,
+            ),
+            (
+                "rootless",
+                TaskAdditionalInfo {
+                    users: users("root:x:0:0::/root:/bin/sh"),
+                    groups: groups("root:x:0:"),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(rootless),
+                },
+                1000,
+                "user",
+                ns_identity(0, "root", 0, "root"),
+            ),
+            (
+                "unmapped id",
+                TaskAdditionalInfo {
+                    users: users("root:x:0:0::/root:/bin/sh"),
+                    groups: groups("root:x:0:"),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(rootless),
+                },
+                0,
+                "root",
+                ns_identity(overflow_uid, "?", overflow_gid, "?"),
+            ),
+            (
+                "rootful, different names",
+                TaskAdditionalInfo {
+                    users: users("root:x:0:0::/root:/bin/sh\nalpine:x:1000:1000::/home:/bin/sh"),
+                    groups: groups("root:x:0:\nalpine:x:1000:"),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(&[(0, 0, u32::MAX)]),
+                },
+                1000,
+                "user",
+                ns_identity(1000, "alpine", 1000, "alpine"),
+            ),
+            (
+                "unknown maps",
+                TaskAdditionalInfo {
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    ..Default::default()
+                },
+                1000,
+                "user",
+                None,
+            ),
+        ];
+
+        for (case, ai, id, host_user, ns) in cases {
+            let e = effective(&ai, id);
+            assert_eq!((e.uid, e.gid), (id, id), "{case}");
+            assert_eq!(e.user, host_user, "{case}");
+            assert_eq!(e.group, host_user, "{case}");
+            assert_eq!(e.namespace, ns, "{case}");
+        }
+    }
+}
