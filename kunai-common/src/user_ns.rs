@@ -37,7 +37,7 @@ impl IdMap {
             .iter()
             // subtracting lower_first avoids overflowing lower_first + count
             .find(|e| id >= e.lower_first && id - e.lower_first < e.count)
-            .map(|e| e.first + (id - e.lower_first))
+            .and_then(|e| e.first.checked_add(id - e.lower_first))
     }
 }
 
@@ -139,6 +139,21 @@ mod tests {
             count: u32::MAX,
         };
         assert_eq!(m.map_id_up(u32::MAX - 1), Some(u32::MAX - 1));
+    }
+
+    #[test]
+    fn invalid_extent_does_not_overflow() {
+        let mut m = IdMap {
+            nr_extents: 1,
+            ..Default::default()
+        };
+        m.extents[0] = IdExtent {
+            first: u32::MAX,
+            lower_first: 0,
+            count: 2,
+        };
+        assert_eq!(m.map_id_up(0), Some(u32::MAX));
+        assert_eq!(m.map_id_up(1), None);
     }
 
     #[test]
