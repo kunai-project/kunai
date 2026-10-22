@@ -119,16 +119,281 @@ pub struct kuid_t {
     pub val: uid_t,
 }
 #[repr(C)]
+#[derive(Copy, Clone)]
+pub struct kernel_cap_t {
+    pub __bindgen_anon_1: kernel_cap_t__bindgen_ty_1,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union kernel_cap_t__bindgen_ty_1 {
+    pub cap: [__u32; 2usize],
+    pub val: __u64,
+}
+#[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct uid_gid_extent {
+    pub first: __u32,
+    pub lower_first: __u32,
+    pub count: __u32,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct uid_gid_map {
+    pub nr_extents: __u32,
+    pub __bindgen_anon_1: uid_gid_map__bindgen_ty_1,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union uid_gid_map__bindgen_ty_1 {
+    pub extent: [uid_gid_extent; 5usize],
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_nr_extents(uid_gid_map: *mut uid_gid_map) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_nr_extents_user(uid_gid_map: *mut uid_gid_map) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_nr_extents_exists(uid_gid_map: *mut uid_gid_map) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_extent(uid_gid_map: *mut uid_gid_map) -> *mut uid_gid_extent;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_extent_user(uid_gid_map: *mut uid_gid_map) -> *mut uid_gid_extent;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_extent_exists(uid_gid_map: *mut uid_gid_map) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ns_common {
+    pub inum: ::core::ffi::c_uint,
+}
+unsafe extern "C" {
+    pub fn shim_ns_common_inum(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_ns_common_inum_user(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_ns_common_inum_exists(ns_common: *mut ns_common) -> bool;
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct user_namespace {
+    pub uid_map: uid_gid_map,
+    pub gid_map: uid_gid_map,
+    pub ns: ns_common,
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_ns(user_namespace: *mut user_namespace) -> *mut ns_common;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_ns_user(user_namespace: *mut user_namespace) -> *mut ns_common;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_ns_exists(user_namespace: *mut user_namespace) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_uid_map(user_namespace: *mut user_namespace) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_uid_map_user(
+        user_namespace: *mut user_namespace,
+    ) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_uid_map_exists(user_namespace: *mut user_namespace) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_gid_map(user_namespace: *mut user_namespace) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_gid_map_user(
+        user_namespace: *mut user_namespace,
+    ) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_gid_map_exists(user_namespace: *mut user_namespace) -> bool;
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
 pub struct cred {
+    pub user_ns: *mut user_namespace,
     pub uid: kuid_t,
     pub gid: kgid_t,
+    pub suid: kuid_t,
+    pub sgid: kgid_t,
+    pub euid: kuid_t,
+    pub egid: kgid_t,
+    pub fsuid: kuid_t,
+    pub fsgid: kgid_t,
+    pub cap_inheritable: kernel_cap_t,
+    pub cap_permitted: kernel_cap_t,
+    pub cap_effective: kernel_cap_t,
 }
 unsafe extern "C" {
-    pub fn shim_cred_uid(pcred: *mut cred) -> uid_t;
+    pub fn shim_cred_user_ns(cred: *mut cred) -> *mut user_namespace;
 }
 unsafe extern "C" {
-    pub fn shim_cred_gid(pcred: *mut cred) -> gid_t;
+    pub fn shim_cred_user_ns_user(cred: *mut cred) -> *mut user_namespace;
+}
+unsafe extern "C" {
+    pub fn shim_cred_user_ns_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_uid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_uid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_uid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_gid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_gid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_gid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_euid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_euid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_euid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_egid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_egid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_egid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_suid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_suid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_suid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_sgid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_sgid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_sgid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsuid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsuid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsuid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsgid(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsgid_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_fsgid_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_val(cred: *mut cred) -> ::core::ffi::c_ulonglong;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_val_user(cred: *mut cred) -> ::core::ffi::c_ulonglong;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_val_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_cap_lo(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_cap_lo_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_cap_lo_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_cap_hi(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_cap_hi_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_effective_cap_hi_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_val(cred: *mut cred) -> ::core::ffi::c_ulonglong;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_val_user(cred: *mut cred) -> ::core::ffi::c_ulonglong;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_val_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_cap_lo(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_cap_lo_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_cap_lo_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_cap_hi(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_cap_hi_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_permitted_cap_hi_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_val(cred: *mut cred) -> ::core::ffi::c_ulonglong;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_val_user(cred: *mut cred) -> ::core::ffi::c_ulonglong;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_val_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_cap_lo(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_cap_lo_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_cap_lo_exists(cred: *mut cred) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_cap_hi(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_cap_hi_user(cred: *mut cred) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_cred_cap_inheritable_cap_hi_exists(cred: *mut cred) -> bool;
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -595,6 +860,20 @@ unsafe extern "C" {
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct seq_file {
+    pub private: *mut ::core::ffi::c_void,
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private(seq_file: *mut seq_file) -> *mut ::core::ffi::c_void;
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private_user(seq_file: *mut seq_file) -> *mut ::core::ffi::c_void;
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private_exists(seq_file: *mut seq_file) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct fd {
     pub file: *mut file,
     pub flags: ::core::ffi::c_uint,
@@ -650,20 +929,6 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_mm_struct_exe_file_exists(mm_struct: *mut mm_struct) -> bool;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct ns_common {
-    pub inum: ::core::ffi::c_uint,
-}
-unsafe extern "C" {
-    pub fn shim_ns_common_inum(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
-}
-unsafe extern "C" {
-    pub fn shim_ns_common_inum_user(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
-}
-unsafe extern "C" {
-    pub fn shim_ns_common_inum_exists(ns_common: *mut ns_common) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
