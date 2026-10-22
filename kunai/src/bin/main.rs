@@ -40,7 +40,7 @@ use kunai_common::config::Filter;
 use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
-use kunai_common::user_ns::{IdExtent, IdMap, UserNs};
+use kunai_common::user_ns::{IdMap, UserNs};
 use kunai_common::{creds, inspect_err, kernel};
 
 use kunai::util::namespace::{Mnt, Namespace};
@@ -1565,28 +1565,10 @@ impl EventConsumer<'_> {
     /// as we read them from the initial user namespace.
     fn user_ns_from_procfs(p: &procfs::process::Process) -> Option<UserNs> {
         let id_map = |file: &str| -> Option<IdMap> {
-            let mut map = IdMap::default();
-            for line in fs::read_to_string(format!("/proc/{}/{file}", p.pid))
+            fs::read_to_string(format!("/proc/{}/{file}", p.pid))
                 .ok()?
-                .lines()
-            {
-                let mut fields = line.split_whitespace().map(|f| f.parse::<u32>());
-                let (Some(Ok(first)), Some(Ok(lower_first)), Some(Ok(count))) =
-                    (fields.next(), fields.next(), fields.next())
-                else {
-                    return None;
-                };
-                // past the inline extents the map is unsupported, we only count
-                if let Some(e) = map.extents.get_mut(map.nr_extents as usize) {
-                    *e = IdExtent {
-                        first,
-                        lower_first,
-                        count,
-                    };
-                }
-                map.nr_extents += 1;
-            }
-            Some(map)
+                .parse()
+                .ok()
         };
 
         let inum = p.namespaces().ok()?.0.get(OsStr::new("user"))?.identifier;

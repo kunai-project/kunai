@@ -41,6 +41,34 @@ impl IdMap {
     }
 }
 
+/// Parses the content of `/proc/<pid>/{uid,gid}_map`.
+#[cfg(not(target_arch = "bpf"))]
+impl core::str::FromStr for IdMap {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut map = IdMap::default();
+        for line in s.lines() {
+            let mut fields = line.split_whitespace().map(|f| f.parse::<u32>());
+            let (Some(Ok(first)), Some(Ok(lower_first)), Some(Ok(count))) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                return Err(());
+            };
+            // past the inline extents the map is unsupported, we only count
+            if let Some(e) = map.extents.get_mut(map.nr_extents as usize) {
+                *e = IdExtent {
+                    first,
+                    lower_first,
+                    count,
+                };
+            }
+            map.nr_extents += 1;
+        }
+        Ok(map)
+    }
+}
+
 /// User namespace of a task, identified by its inode number, with its id maps.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -118,5 +146,54 @@ mod tests {
         let mut m = rootless();
         m.nr_extents = MAX_BASE_EXTENTS as u32 + 1;
         assert_eq!(m.map_id_up(1000), None);
+    }
+
+    #[test]
+    fn parse_init_map() {
+        let m: IdMap = "         0          0 4294967295\n".parse().unwrap();
+        assert_eq!(m.nr_extents, 1);
+        assert_eq!(
+            m.extents[0],
+            IdExtent {
+                first: 0,
+                lower_first: 0,
+                count: u32::MAX
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rootless_map() {
+        let m: IdMap = "0 1000 1\n1 524288 65536\n".parse().unwrap();
+        assert_eq!(m, rootless());
+    }
+
+    #[test]
+    fn parse_out_of_line_map() {
+        let s: String = (0..MAX_BASE_EXTENTS as u32 + 1)
+            .map(|i| format!("{i} {} 1\n", 1000 + i))
+            .collect();
+        let m: IdMap = s.parse().unwrap();
+        assert_eq!(m.nr_extents, MAX_BASE_EXTENTS as u32 + 1);
+        assert_eq!(m.map_id_up(1000), None);
+    }
+
+    #[test]
+    fn parse_empty_map() {
+        let m: IdMap = "".parse().unwrap();
+        assert_eq!(m.nr_extents, 0);
+        let ns = UserNs {
+            inum: 1,
+            uid_map: m,
+            gid_map: rootless(),
+        };
+        assert!(!ns.is_valid());
+    }
+
+    #[test]
+    fn parse_malformed_map() {
+        assert!("0 1000\n".parse::<IdMap>().is_err());
+        assert!("0 x 1\n".parse::<IdMap>().is_err());
+        assert!("0 1000 1\n-1 0 1\n".parse::<IdMap>().is_err());
     }
 }
