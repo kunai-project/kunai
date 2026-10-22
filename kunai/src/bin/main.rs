@@ -1561,14 +1561,16 @@ impl EventConsumer<'_> {
         Ok(())
     }
 
-    /// Same as what eBPF reads on execve and clone. The maps list kernel ids
+    /// Same as what eBPF reads on execve. The maps list kernel ids
     /// as we read them from the initial user namespace.
     fn user_ns_from_procfs(p: &procfs::process::Process) -> Option<UserNs> {
         let id_map = |file: &str| -> Option<IdMap> {
-            fs::read_to_string(format!("/proc/{}/{file}", p.pid))
-                .ok()?
-                .parse()
-                .ok()
+            let path = format!("/proc/{}/{file}", p.pid);
+            let map = fs::read_to_string(&path).ok()?.parse().ok();
+            if map.is_none() {
+                debug!("failed to parse {path}");
+            }
+            map
         };
 
         let inum = p.namespaces().ok()?.0.get(OsStr::new("user"))?.identifier;

@@ -696,7 +696,8 @@ pub struct Caps {
 }
 
 #[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
-/// Host ids, named from the host's user and group tables.
+/// Host ids, named from the host's user and group tables. Names are `"?"`
+/// when those tables can't be loaded: there is no other fallback.
 pub struct Identity<'src> {
     pub uid: u32,
     pub user: Cow<'src, str>,
