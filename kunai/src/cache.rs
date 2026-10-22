@@ -27,7 +27,7 @@ use thiserror::Error;
 use crate::{
     info::ProcKey,
     util::{
-        account::{Groups, Users},
+        account::{self, Groups, Users},
         namespace::{self, Mnt, SelfNs, Switcher},
     },
     yara::Scanner,
@@ -288,6 +288,33 @@ impl Default for Key {
     }
 }
 
+pub type AccountTables = (Option<Arc<Users>>, Option<Arc<Groups>>);
+
+/// Gets the table parsed from `path` of the current mount namespace `ns`,
+/// parsing it with `load` on a cache miss. Must be called within `ns`.
+fn ns_table<T>(
+    ns: Mnt,
+    path: &str,
+    cache: &mut LruHashMap<Key, Arc<T>>,
+    load: impl FnOnce() -> Result<T, account::Error>,
+) -> Option<Arc<T>> {
+    let key = Key::from_path_in_ns(ns, &PathBuf::from(path).into())
+        .inspect_err(|e| log::debug!("{path} in mnt_ns={}: {e}", ns.inum))
+        .ok()?;
+
+    if let Some(t) = cache.get(&key) {
+        return Some(Arc::clone(t));
+    }
+
+    let t = Arc::new(
+        load()
+            .inspect_err(|e| log::debug!("failed to parse {path} in mnt_ns={}: {e}", ns.inum))
+            .ok()?,
+    );
+    cache.insert(key, Arc::clone(&t));
+    Some(t)
+}
+
 impl Key {
     fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
         // metadata() fails with io::ErrorKind::NotFound when the file is missing
@@ -514,59 +541,17 @@ impl Caches {
 
     /// Get the [Users] and [Groups] tables of the mount namespace `ns`, so that
     /// any uid/gid can be resolved by the caller. They are shared behind an
-    /// [Arc] to avoid copying the whole tables around.
-    pub fn get_user_group_in_ns(&mut self, ns: Mnt) -> Result<(Arc<Users>, Arc<Groups>), Error> {
+    /// [Arc] to avoid copying the whole tables around. Each table is loaded
+    /// independently, so a missing `/etc/passwd` doesn't prevent resolving groups.
+    pub fn get_user_group_in_ns(&mut self, ns: Mnt) -> Result<AccountTables, Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
 
-        // we haven't yet parsed users and groups or we don't find an entry
         mnt_ns
             .do_in_namespace(|| {
-                let user_path = PathBuf::from(Users::sys_path());
-
-                let umeta = user_path.metadata().map_err(|e| {
-                    namespace::Error::other(io::Error::new(
-                        e.kind(),
-                        format!("user file {}: {e}", user_path.display()),
-                    ))
-                })?;
-
-                // getting user
-                let ukey = Key::from_path_and_meta(ns, &user_path.into(), &umeta)
-                    .map_err(namespace::Error::other)?;
-
-                let users = match self.users.get(&ukey).cloned() {
-                    Some(u) => u,
-                    None => {
-                        let u = Arc::new(Users::from_sys().map_err(namespace::Error::other)?);
-                        self.users.insert(ukey, Arc::clone(&u));
-                        u
-                    }
-                };
-
-                let group_path = PathBuf::from(Groups::sys_path());
-
-                let gmeta = group_path.metadata().map_err(|e| {
-                    namespace::Error::other(io::Error::new(
-                        e.kind(),
-                        format!("group file {}: {e}", group_path.display()),
-                    ))
-                })?;
-
-                // getting group
-                let gkey = Key::from_path_and_meta(ns, &group_path.into(), &gmeta)
-                    .map_err(namespace::Error::other)?;
-
-                let groups = match self.groups.get(&gkey).cloned() {
-                    Some(g) => g,
-                    None => {
-                        let g = Arc::new(Groups::from_sys().map_err(namespace::Error::other)?);
-                        self.groups.insert(gkey, Arc::clone(&g));
-                        g
-                    }
-                };
-
+                let users = ns_table(ns, Users::sys_path(), &mut self.users, Users::from_sys);
+                let groups = ns_table(ns, Groups::sys_path(), &mut self.groups, Groups::from_sys);
                 Ok((users, groups))
             })
             .map_err(Error::from)

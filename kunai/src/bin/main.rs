@@ -2073,8 +2073,7 @@ impl EventConsumer<'_> {
                         ns.inum
                     )
                 })
-                .ok()
-                .unzip()
+                .unwrap_or_default()
         };
 
         let (users, groups) = tables(mnt_ns);
