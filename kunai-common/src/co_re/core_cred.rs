@@ -1,10 +1,11 @@
 use super::bindings::{self, *};
-use super::{CoRe, rust_shim_kernel_impl};
+use super::{CoRe, rust_shim_kernel_impl, user_namespace};
 
 #[allow(non_camel_case_types)]
 pub type cred = CoRe<bindings::cred>;
 
 impl cred {
+    rust_shim_kernel_impl!(cred, user_ns, user_namespace);
     rust_shim_kernel_impl!(cred, uid, u32);
     rust_shim_kernel_impl!(cred, gid, u32);
     rust_shim_kernel_impl!(cred, euid, u32);

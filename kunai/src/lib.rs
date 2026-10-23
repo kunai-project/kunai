@@ -1,6 +1,6 @@
 #![deny(unused_imports)]
 
-use aya::{include_bytes_aligned, programs::ProgramError, Btf, Ebpf, EbpfLoader, VerifierLogLevel};
+use aya::{Btf, Ebpf, EbpfLoader, VerifierLogLevel, include_bytes_aligned, programs::ProgramError};
 use compat::Programs;
 use config::Config;
 use kunai_common::{config::BpfConfig, kernel, version::KernelVersion};

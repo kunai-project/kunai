@@ -3,6 +3,7 @@ use std::{io, sync::Arc};
 use chrono::{DateTime, Utc};
 use kunai_common::{
     bpf_events::{self, EventInfo, TaskInfo, Type},
+    user_ns::UserNs,
     uuid::ProcUuid,
 };
 use thiserror::Error;
@@ -144,13 +145,17 @@ pub struct ContainerInfo {
     pub ty: Option<Container>,
 }
 
-/// Holds the user and group tables of the namespace a task lives in, so that
-/// any uid/gid can be resolved. Sharing them behind an [Arc] keeps this
-/// structure owned (no lifetime tied to the cache) while avoiding any copy.
+/// Holds the user and group tables of the mount namespace a task lives in and
+/// of the host, and the task's user namespace, so that both namespace and host
+/// ids can be resolved. Sharing them behind an [Arc] keeps this structure owned
+/// (no lifetime tied to the cache) while avoiding any copy.
 #[derive(Default, Debug, Clone)]
 pub struct TaskAdditionalInfo {
     pub users: Option<Arc<Users>>,
     pub groups: Option<Arc<Groups>>,
+    pub host_users: Option<Arc<Users>>,
+    pub host_groups: Option<Arc<Groups>>,
+    pub user_ns: Option<Arc<UserNs>>,
 }
 
 #[derive(Default, Debug, Clone)]

@@ -1,7 +1,6 @@
 use super::Error;
 use super::Event;
 use super::EventInfo;
-use super::Namespaces;
 use super::TaskInfo;
 use super::Type;
 use crate::co_re::core_read_kernel;
@@ -83,14 +82,21 @@ impl TaskInfo {
                 .from_cred(cred)
                 .map_err(|_| Error::CredFieldMissing)?;
 
+            // None first: zeroed memory reads as Some
+            self.namespaces.user = BpfOption::None;
+            self.namespaces.mnt = BpfOption::None;
+
+            if let Some(inum) = core_read_kernel!(cred, user_ns, ns, inum) {
+                self.namespaces.user = BpfOption::Some(inum);
+            }
+
             if let Some(nsproxy) = core_read_kernel!(task, nsproxy) {
                 // it may happen that under some very specific conditions nsproxy
                 // gets null (see https://github.com/kunai-project/kunai/issues/34)
-                if !nsproxy.is_null() {
-                    self.namespaces = BpfOption::Some(Namespaces {
-                        mnt: core_read_kernel!(nsproxy, mnt_ns, ns, inum)
-                            .ok_or(Error::MntNamespaceFailure)?,
-                    });
+                if !nsproxy.is_null()
+                    && let Some(inum) = core_read_kernel!(nsproxy, mnt_ns, ns, inum)
+                {
+                    self.namespaces.mnt = BpfOption::Some(inum);
                 }
             }
 

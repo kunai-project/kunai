@@ -12,7 +12,7 @@ use super::{
     DnsQueryEvent, ErrorEvent, Event, EventInfo, ExecveEvent, ExitEvent, FileEvent,
     FileRenameEvent, InitModuleEvent, IoUringSqeEvent, KillEvent, LogEvent, LossEvent,
     MmapExecEvent, MprotectEvent, PrctlEvent, PtraceEvent, SendEntropyEvent, SysCoreResumeEvent,
-    Type, UnlinkEvent,
+    Type, UnlinkEvent, UserNsMapEvent,
 };
 
 unsafe impl Pod for Type {}
@@ -80,6 +80,7 @@ pub enum EbpfEvent {
     Hash(Box<HashEvent>),
     Log(Box<LogEvent>),
     SysCoreResume(Box<SysCoreResumeEvent>),
+    UserNsMap(Box<UserNsMapEvent>),
 }
 
 impl From<HashEvent> for EbpfEvent {
@@ -196,6 +197,7 @@ impl EbpfEvent {
             Type::Loss => Ok(Self::Loss(Box::new(decode!(LossEvent)))),
             Type::Error => Ok(Self::Error(Box::new(decode!(ErrorEvent)))),
             Type::SyscoreResume => Ok(Self::SysCoreResume(Box::new(decode!(SysCoreResumeEvent)))),
+            Type::UserNsMap => Ok(Self::UserNsMap(Box::new(decode!(UserNsMapEvent)))),
             Type::CredsTampered
             | Type::EndConfigurable
             | Type::Max
@@ -238,6 +240,7 @@ impl EbpfEvent {
             Self::Hash(e) => &e.info,
             Self::Log(e) => &e.info,
             Self::SysCoreResume(e) => &e.info,
+            Self::UserNsMap(e) => &e.info,
         }
     }
 
@@ -269,6 +272,7 @@ impl EbpfEvent {
             Self::Hash(e) => &mut e.info,
             Self::Log(e) => &mut e.info,
             Self::SysCoreResume(e) => &mut e.info,
+            Self::UserNsMap(e) => &mut e.info,
         }
     }
 

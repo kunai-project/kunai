@@ -112,6 +112,13 @@ impl file {
 }
 
 #[allow(non_camel_case_types)]
+pub type seq_file = CoRe<bindings::seq_file>;
+
+impl seq_file {
+    rust_shim_kernel_impl!(pub, seq_file, private, *mut c_void);
+}
+
+#[allow(non_camel_case_types)]
 pub type fd = CoRe<bindings::fd>;
 
 impl fd {

@@ -78,6 +78,10 @@ unsafe fn try_security_bprm_check(ctx: &ProbeContext) -> ProbeResult<()> {
             event.data.nodename.cap() as u32,
         )?;
 
+        if let Ok(ns) = core_read_kernel!(current, cred, user_ns) {
+            event.data.user_ns.from_user_namespace(ns);
+        }
+
         EXECVE_TRACKING
             .insert(&task_uuid, event, 0)
             .map_err(|_| MapError::InsertFailure)?;

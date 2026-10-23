@@ -1778,11 +1778,11 @@ dependencies = [
 
 [[package]]
 name = "lru-st"
-version = "0.2.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5abf83bbd65832f44a5318f05998dba245ba7222bc06153e4e799dae3803115"
+checksum = "ab7f3ec2cfbc6623d0b1957b11153fbf5e9c51de77eacc5cb904ec418338ab40"
 dependencies = [
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

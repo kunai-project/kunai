@@ -31,6 +31,8 @@ pub mod log;
 pub use log::{LogData, LogEvent};
 mod syscore_resume;
 pub use syscore_resume::*;
+mod user_ns_map;
+pub use user_ns_map::*;
 mod kill;
 pub use kill::*;
 mod ptrace;
@@ -98,6 +100,7 @@ const fn max_bpf_event_size() -> usize {
             Type::Loss => LossEvent::size_of(),
             Type::Error => ErrorEvent::size_of(),
             Type::SyscoreResume => SysCoreResumeEvent::size_of(),
+            Type::UserNsMap => UserNsMapEvent::size_of(),
             // these are event types only used in user land
             Type::Unknown
             | Type::EndConfigurable

@@ -126,8 +126,97 @@ pub union kernel_cap_t__bindgen_ty_1 {
     pub val: __u64,
 }
 #[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct uid_gid_extent {
+    pub first: __u32,
+    pub lower_first: __u32,
+    pub count: __u32,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct uid_gid_map {
+    pub nr_extents: __u32,
+    pub __bindgen_anon_1: uid_gid_map__bindgen_ty_1,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union uid_gid_map__bindgen_ty_1 {
+    pub extent: [uid_gid_extent; 5usize],
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_nr_extents(uid_gid_map: *mut uid_gid_map) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_nr_extents_user(uid_gid_map: *mut uid_gid_map) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_nr_extents_exists(uid_gid_map: *mut uid_gid_map) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_extent(uid_gid_map: *mut uid_gid_map) -> *mut uid_gid_extent;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_extent_user(uid_gid_map: *mut uid_gid_map) -> *mut uid_gid_extent;
+}
+unsafe extern "C" {
+    pub fn shim_uid_gid_map_extent_exists(uid_gid_map: *mut uid_gid_map) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ns_common {
+    pub inum: ::core::ffi::c_uint,
+}
+unsafe extern "C" {
+    pub fn shim_ns_common_inum(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_ns_common_inum_user(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
+}
+unsafe extern "C" {
+    pub fn shim_ns_common_inum_exists(ns_common: *mut ns_common) -> bool;
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct user_namespace {
+    pub uid_map: uid_gid_map,
+    pub gid_map: uid_gid_map,
+    pub ns: ns_common,
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_ns(user_namespace: *mut user_namespace) -> *mut ns_common;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_ns_user(user_namespace: *mut user_namespace) -> *mut ns_common;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_ns_exists(user_namespace: *mut user_namespace) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_uid_map(user_namespace: *mut user_namespace) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_uid_map_user(
+        user_namespace: *mut user_namespace,
+    ) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_uid_map_exists(user_namespace: *mut user_namespace) -> bool;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_gid_map(user_namespace: *mut user_namespace) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_gid_map_user(
+        user_namespace: *mut user_namespace,
+    ) -> *mut uid_gid_map;
+}
+unsafe extern "C" {
+    pub fn shim_user_namespace_gid_map_exists(user_namespace: *mut user_namespace) -> bool;
+}
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct cred {
+    pub user_ns: *mut user_namespace,
     pub uid: kuid_t,
     pub gid: kgid_t,
     pub suid: kuid_t,
@@ -139,6 +228,15 @@ pub struct cred {
     pub cap_inheritable: kernel_cap_t,
     pub cap_permitted: kernel_cap_t,
     pub cap_effective: kernel_cap_t,
+}
+unsafe extern "C" {
+    pub fn shim_cred_user_ns(cred: *mut cred) -> *mut user_namespace;
+}
+unsafe extern "C" {
+    pub fn shim_cred_user_ns_user(cred: *mut cred) -> *mut user_namespace;
+}
+unsafe extern "C" {
+    pub fn shim_cred_user_ns_exists(cred: *mut cred) -> bool;
 }
 unsafe extern "C" {
     pub fn shim_cred_uid(cred: *mut cred) -> ::core::ffi::c_uint;
@@ -758,6 +856,20 @@ unsafe extern "C" {
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct seq_file {
+    pub private: *mut ::core::ffi::c_void,
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private(seq_file: *mut seq_file) -> *mut ::core::ffi::c_void;
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private_user(seq_file: *mut seq_file) -> *mut ::core::ffi::c_void;
+}
+unsafe extern "C" {
+    pub fn shim_seq_file_private_exists(seq_file: *mut seq_file) -> bool;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct fd {
     pub file: *mut file,
     pub flags: ::core::ffi::c_uint,
@@ -813,20 +925,6 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn shim_mm_struct_exe_file_exists(mm_struct: *mut mm_struct) -> bool;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct ns_common {
-    pub inum: ::core::ffi::c_uint,
-}
-unsafe extern "C" {
-    pub fn shim_ns_common_inum(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
-}
-unsafe extern "C" {
-    pub fn shim_ns_common_inum_user(ns_common: *mut ns_common) -> ::core::ffi::c_uint;
-}
-unsafe extern "C" {
-    pub fn shim_ns_common_inum_exists(ns_common: *mut ns_common) -> bool;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

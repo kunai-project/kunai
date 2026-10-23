@@ -22,6 +22,10 @@ use crate::{
     cache::{FileMeta, Hashes},
     containers::Container,
     info::{ContainerInfo, StdEventInfo, TaskAdditionalInfo},
+    util::{
+        account::{Groups, Users},
+        overflow_ids,
+    },
 };
 
 pub mod agent;
@@ -94,14 +98,18 @@ impl From<&StdEventInfo> for EventSection {
     }
 }
 
-#[derive(Debug, FieldGetter, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone)]
 pub struct NamespaceInfo {
-    pub mnt: u32,
+    pub mnt: Option<u32>,
+    pub user: Option<u32>,
 }
 
 impl From<kunai_common::bpf_events::Namespaces> for NamespaceInfo {
     fn from(value: kunai_common::bpf_events::Namespaces) -> Self {
-        Self { mnt: value.mnt }
+        Self {
+            mnt: value.mnt.into_opt(),
+            user: value.user.into_opt(),
+        }
     }
 }
 
@@ -112,7 +120,7 @@ pub struct TaskSection<'src> {
     pub tgid: i32,
     pub guuid: Uuid,
     pub creds: Creds<'src>,
-    pub namespaces: Option<NamespaceInfo>,
+    pub namespaces: NamespaceInfo,
     #[serde(with = "u32_hex")]
     pub flags: u32,
     pub zombie: bool,
@@ -126,7 +134,7 @@ impl<'src> TaskSection<'src> {
             tgid: ti.tgid,
             guuid: ti.tg_uuid.into_uuid(),
             creds: Creds::from_bpf_and_additions(ti.creds, add, true),
-            namespaces: ti.namespaces.map(|ns| ns.into()).into(),
+            namespaces: ti.namespaces.into(),
             flags: ti.flags,
             zombie: ti.zombie,
         }
@@ -688,7 +696,24 @@ pub struct Caps {
 }
 
 #[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone)]
+/// Host ids, named from the host's user and group tables. Names are `"?"`
+/// when those tables can't be loaded: there is no other fallback.
 pub struct Identity<'src> {
+    pub uid: u32,
+    pub user: Cow<'src, str>,
+    pub gid: u32,
+    pub group: Cow<'src, str>,
+    /// absent if equal to the host identity or if the task's user namespace
+    /// maps are unknown (lost events, unsupported maps, namespace changed
+    /// since the last execve or clone)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<NsIdentity<'src>>,
+}
+
+/// Ids seen from the task's user namespace, named from the user and group
+/// tables of its mount namespace.
+#[derive(Default, Debug, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct NsIdentity<'src> {
     pub uid: u32,
     pub user: Cow<'src, str>,
     pub gid: u32,
@@ -714,45 +739,68 @@ impl<'src> Creds<'src> {
         ai: &'src TaskAdditionalInfo,
         light: bool,
     ) -> Self {
-        macro_rules! identity {
-            ($uid:expr, $gid:expr) => {
-                Identity {
-                    uid: $uid,
-                    user: ai
-                        .users
-                        .as_ref()
-                        .and_then(|users| users.get_by_uid($uid))
-                        .map(|u| Cow::Borrowed(u.name.as_str()))
-                        .unwrap_or("?".into()),
-                    gid: $gid,
-                    group: ai
-                        .groups
-                        .as_ref()
-                        .and_then(|groups| groups.get_by_gid($gid))
-                        .map(|g| Cow::Borrowed(g.name.as_str()))
-                        .unwrap_or("?".into()),
-                }
+        let user = |users: &'src Option<Arc<Users>>, uid| -> Cow<'src, str> {
+            users
+                .as_ref()
+                .and_then(|u| u.get_by_uid(uid))
+                .map_or(Cow::Borrowed("?"), |u| Cow::Borrowed(u.name.as_str()))
+        };
+        let group = |groups: &'src Option<Arc<Groups>>, gid| -> Cow<'src, str> {
+            groups
+                .as_ref()
+                .and_then(|g| g.get_by_gid(gid))
+                .map_or(Cow::Borrowed("?"), |g| Cow::Borrowed(g.name.as_str()))
+        };
+
+        // each id is only meaningful in its own namespace, so is looked up in
+        // that namespace's tables
+        let identity = |uid: u32, gid: u32| -> Identity<'src> {
+            let mut id = Identity {
+                uid,
+                user: user(&ai.host_users, uid),
+                gid,
+                group: group(&ai.host_groups, gid),
+                namespace: None,
             };
-        }
+            id.namespace = ai
+                .user_ns
+                .as_ref()
+                .map(|ns| {
+                    let (overflow_uid, overflow_gid) = overflow_ids();
+                    let ns_uid = ns.uid_map.map_id_up(uid).unwrap_or(overflow_uid);
+                    let ns_gid = ns.gid_map.map_id_up(gid).unwrap_or(overflow_gid);
+                    NsIdentity {
+                        uid: ns_uid,
+                        user: user(&ai.users, ns_uid),
+                        gid: ns_gid,
+                        group: group(&ai.groups, ns_gid),
+                    }
+                })
+                // host processes and namespaces sharing the host's tables
+                .filter(|ns| {
+                    (ns.uid, &ns.user, ns.gid, &ns.group) != (uid, &id.user, gid, &id.group)
+                });
+            id
+        };
 
         Self {
             real: {
                 if light {
                     None
                 } else {
-                    Some(identity!(s.uid, s.gid))
+                    Some(identity(s.uid, s.gid))
                 }
             },
-            effective: identity!(s.euid, s.egid),
+            effective: identity(s.euid, s.egid),
             saved: if light {
                 None
             } else {
-                Some(identity!(s.suid, s.sgid))
+                Some(identity(s.suid, s.sgid))
             },
             fs: if light {
                 None
             } else {
-                Some(identity!(s.fsuid, s.fsgid))
+                Some(identity(s.fsuid, s.fsgid))
             },
             caps: if light {
                 None
@@ -1292,6 +1340,151 @@ impl From<&bpf_events::LossData> for LossData {
             read: value.read,
             lost: value.lost,
             eps: value.eps,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kunai_common::user_ns::{IdExtent, IdMap, UserNs};
+
+    use super::*;
+
+    const HOST_PASSWD: &str =
+        "root:x:0:0::/root:/bin/sh\nuser:x:1000:1000::/home/user:/bin/sh";
+    const HOST_GROUP: &str = "root:x:0:\nuser:x:1000:";
+
+    fn users(s: &str) -> Option<Arc<Users>> {
+        let mut u = Users::new();
+        u.extend_from_str(s).unwrap();
+        Some(Arc::new(u))
+    }
+
+    fn groups(s: &str) -> Option<Arc<Groups>> {
+        let mut g = Groups::new();
+        g.extend_from_str(s).unwrap();
+        Some(Arc::new(g))
+    }
+
+    fn id_map(extents: &[(u32, u32, u32)]) -> IdMap {
+        let mut m = IdMap {
+            nr_extents: extents.len() as u32,
+            ..Default::default()
+        };
+        for (e, &(first, lower_first, count)) in m.extents.iter_mut().zip(extents) {
+            *e = IdExtent {
+                first,
+                lower_first,
+                count,
+            };
+        }
+        m
+    }
+
+    fn user_ns(extents: &[(u32, u32, u32)]) -> Option<Arc<UserNs>> {
+        Some(Arc::new(UserNs {
+            inum: 1,
+            uid_map: id_map(extents),
+            gid_map: id_map(extents),
+        }))
+    }
+
+    fn effective(ai: &TaskAdditionalInfo, id: u32) -> Identity<'_> {
+        let c = creds::Creds {
+            euid: id,
+            egid: id,
+            ..Default::default()
+        };
+        Creds::from_bpf_and_additions(c, ai, true).effective
+    }
+
+    fn ns_identity(uid: u32, user: &str, gid: u32, group: &str) -> Option<NsIdentity<'static>> {
+        Some(NsIdentity {
+            uid,
+            user: user.to_string().into(),
+            gid,
+            group: group.to_string().into(),
+        })
+    }
+
+    #[test]
+    fn creds_ns_identity() {
+        let (overflow_uid, overflow_gid) = overflow_ids();
+        let rootless = &[(0, 1000, 1), (1, 524288, 65536)];
+
+        // (case, task info, host id, expected host user, expected ns identity)
+        let cases = [
+            (
+                "host task",
+                TaskAdditionalInfo {
+                    users: users(HOST_PASSWD),
+                    groups: groups(HOST_GROUP),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(&[(0, 0, u32::MAX)]),
+                },
+                1000,
+                "user",
+                None,
+            ),
+            (
+                "rootless",
+                TaskAdditionalInfo {
+                    users: users("root:x:0:0::/root:/bin/sh"),
+                    groups: groups("root:x:0:"),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(rootless),
+                },
+                1000,
+                "user",
+                ns_identity(0, "root", 0, "root"),
+            ),
+            (
+                "unmapped id",
+                TaskAdditionalInfo {
+                    users: users("root:x:0:0::/root:/bin/sh"),
+                    groups: groups("root:x:0:"),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(rootless),
+                },
+                0,
+                "root",
+                ns_identity(overflow_uid, "?", overflow_gid, "?"),
+            ),
+            (
+                "rootful, different names",
+                TaskAdditionalInfo {
+                    users: users("root:x:0:0::/root:/bin/sh\nalpine:x:1000:1000::/home:/bin/sh"),
+                    groups: groups("root:x:0:\nalpine:x:1000:"),
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    user_ns: user_ns(&[(0, 0, u32::MAX)]),
+                },
+                1000,
+                "user",
+                ns_identity(1000, "alpine", 1000, "alpine"),
+            ),
+            (
+                "unknown maps",
+                TaskAdditionalInfo {
+                    host_users: users(HOST_PASSWD),
+                    host_groups: groups(HOST_GROUP),
+                    ..Default::default()
+                },
+                1000,
+                "user",
+                None,
+            ),
+        ];
+
+        for (case, ai, id, host_user, ns) in cases {
+            let e = effective(&ai, id);
+            assert_eq!((e.uid, e.gid), (id, id), "{case}");
+            assert_eq!(e.user, host_user, "{case}");
+            assert_eq!(e.group, host_user, "{case}");
+            assert_eq!(e.namespace, ns, "{case}");
         }
     }
 }

@@ -6,6 +6,10 @@ pub enum BpfOption<T> {
     None,
 }
 
+// Not for eBPF: None leaves the payload undefined and LLVM may merge both
+// variants into one store of a register never written on the None path,
+// which the verifier rejects (R !read_ok). Assign None then Some instead.
+#[cfg(not(target_arch = "bpf"))]
 impl<T> From<Option<T>> for BpfOption<T> {
     fn from(value: Option<T>) -> Self {
         match value {
@@ -29,7 +33,10 @@ where
     T: Clone,
 {
     fn clone(&self) -> Self {
-        self.as_ref().map(|t| t.clone())
+        match self {
+            Self::Some(t) => Self::Some(t.clone()),
+            Self::None => Self::None,
+        }
     }
 }
 
@@ -51,6 +58,8 @@ where
 impl<T> Eq for BpfOption<T> where T: Eq {}
 
 impl<T> BpfOption<T> {
+    // same eBPF pitfall as From<Option<T>>
+    #[cfg(not(target_arch = "bpf"))]
     #[inline]
     pub fn map<U, F>(self, f: F) -> BpfOption<U>
     where

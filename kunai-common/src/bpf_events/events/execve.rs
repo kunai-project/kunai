@@ -2,6 +2,7 @@ use crate::bpf_events::{Event, Nodename};
 use crate::buffer::Buffer;
 use crate::cgroup::Cgroup;
 use crate::path::Path;
+use crate::user_ns::UserNs;
 
 pub const MAX_ARGV_SIZE: usize = 512;
 
@@ -14,5 +15,6 @@ pub struct ExecveData {
     pub argv: Buffer<MAX_ARGV_SIZE>,
     pub cgroup: Cgroup,
     pub nodename: Nodename,
+    pub user_ns: UserNs,
     pub rc: i32,
 }

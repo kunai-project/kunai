@@ -10,6 +10,7 @@ use kunai::info::{ProcKey, StdEventInfo, TaskKey};
 use kunai::util::tgkill;
 use kunai_common::bpf_events::TaskInfo;
 use kunai_common::creds;
+use kunai_common::user_ns::UserNs;
 
 const MAX_ANCESTORS: usize = 1024;
 
@@ -66,6 +67,9 @@ pub(crate) struct Task {
     // shared with the leader task when equal, replaced wholesale on change
     pub(crate) cgroups: Arc<[String]>,
     pub(crate) nodename: Option<Arc<str>>,
+    // set on execve and clone only, so it may be stale after unshare/setns:
+    // users check its inode against the event's
+    pub(crate) user_ns: Option<Arc<UserNs>>,
     // Baseline credentials used to detect out-of-band tampering. Only ever set
     // from what commit_creds() installs, it is our ground truth.
     pub(crate) expected_creds: creds::Creds,
@@ -166,6 +170,28 @@ impl ProcessTable {
         }
     }
 
+    /// Returns the user namespace `inum` of task `tk`, fixing up the task's
+    /// one with `lookup` if it changed namespace (unshare/setns) since we
+    /// last set it.
+    pub(crate) fn task_user_ns(
+        &mut self,
+        tk: &TaskKey,
+        inum: u32,
+        lookup: impl FnOnce(u32) -> Option<Arc<UserNs>>,
+    ) -> Option<Arc<UserNs>> {
+        let task = self.tasks.get_mut(tk);
+        if let Some(ns) = task.as_ref().and_then(|t| t.user_ns.as_ref())
+            && ns.inum == inum
+        {
+            return Some(Arc::clone(ns));
+        }
+        let ns = lookup(inum);
+        if let Some(t) = task {
+            t.user_ns = ns.clone();
+        }
+        ns
+    }
+
     /// `timestamp` is the event's, in ns since boot.
     pub(crate) fn track_task(&mut self, ti: &TaskInfo, timestamp: u64) {
         let tk = TaskKey::from(ti);
@@ -181,6 +207,7 @@ impl ProcessTable {
                 pid: ti.pid,
                 cgroups: leader.map(|l| Arc::clone(&l.cgroups)).unwrap_or_default(),
                 nodename: leader.and_then(|l| l.nodename.clone()),
+                user_ns: leader.and_then(|l| l.user_ns.clone()),
                 expected_creds: ti.creds,
                 reported_creds: None,
                 last_seen_alive: timestamp,
@@ -281,6 +308,7 @@ impl ProcessTable {
                 exited.push(t.proc_key);
             }
         }
+
         exited
     }
 
@@ -562,6 +590,29 @@ mod tests {
     }
 
     #[test]
+    fn task_user_ns_follows_namespace_changes() {
+        let mut t = threaded();
+        let tk = TaskKey::from(&thread(100, 101));
+        let ns = Arc::new(UserNs {
+            inum: 42,
+            ..Default::default()
+        });
+        let known = |inum| (inum == 42).then(|| Arc::clone(&ns));
+
+        // the task is seen in a namespace before its maps get written
+        assert!(t.task_user_ns(&tk, 42, |_| None).is_none());
+
+        assert!(Arc::ptr_eq(&t.task_user_ns(&tk, 42, known).unwrap(), &ns));
+        assert!(Arc::ptr_eq(t.tasks[&tk].user_ns.as_ref().unwrap(), &ns));
+        // the task's one is used without lookup
+        assert!(t.task_user_ns(&tk, 42, |_| unreachable!()).is_some());
+
+        // unshare to an unknown namespace drops the stale one
+        assert!(t.task_user_ns(&tk, 43, known).is_none());
+        assert!(t.tasks[&tk].user_ns.is_none());
+    }
+
+    #[test]
     fn sweep_drops_task_whose_pid_was_reused() {
         let mut t = threaded();
         let app = pkey(100);
@@ -596,6 +647,7 @@ mod tests {
                 pid: ti.pid,
                 cgroups: Arc::from([]),
                 nodename: None,
+                user_ns: None,
                 expected_creds: creds::Creds::default(),
                 reported_creds: None,
                 last_seen_alive: 0,

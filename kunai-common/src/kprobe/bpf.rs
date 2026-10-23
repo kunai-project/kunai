@@ -34,6 +34,8 @@ pub enum ProbeFn {
     sk_reuseport_attach_prog,
     security_path_unlink,
     security_task_alloc,
+    user_ns_proc_uid_map_write,
+    user_ns_proc_gid_map_write,
 }
 
 #[repr(C)]

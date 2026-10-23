@@ -4,9 +4,10 @@ use gene_derive::FieldGetter;
 
 use huby::ByteSize;
 use kunai_common::time::Time;
+use kunai_common::user_ns::UserNs;
 use lru_st::collections::LruHashMap;
 use md5::{Digest, Md5};
-use pure_magic::{readers::DataRead, DataReader, MagicDb};
+use pure_magic::{DataReader, MagicDb, readers::DataRead};
 
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
@@ -26,7 +27,7 @@ use thiserror::Error;
 use crate::{
     info::ProcKey,
     util::{
-        account::{Groups, Users},
+        account::{self, Groups, Users},
         namespace::{self, Mnt, SelfNs, Switcher},
     },
     yara::Scanner,
@@ -287,6 +288,33 @@ impl Default for Key {
     }
 }
 
+pub type AccountTables = (Option<Arc<Users>>, Option<Arc<Groups>>);
+
+/// Gets the table parsed from `path` of the current mount namespace `ns`,
+/// parsing it with `load` on a cache miss. Must be called within `ns`.
+fn ns_table<T>(
+    ns: Mnt,
+    path: &str,
+    cache: &mut LruHashMap<Key, Arc<T>>,
+    load: impl FnOnce() -> Result<T, account::Error>,
+) -> Option<Arc<T>> {
+    let key = Key::from_path_in_ns(ns, &PathBuf::from(path).into())
+        .inspect_err(|e| log::debug!("{path} in mnt_ns={}: {e}", ns.inum))
+        .ok()?;
+
+    if let Some(t) = cache.get(&key) {
+        return Some(Arc::clone(t));
+    }
+
+    let t = Arc::new(
+        load()
+            .inspect_err(|e| log::debug!("failed to parse {path} in mnt_ns={}: {e}", ns.inum))
+            .ok()?,
+    );
+    cache.insert(key, Arc::clone(&t));
+    Some(t)
+}
+
 impl Key {
     fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
         // metadata() fails with io::ErrorKind::NotFound when the file is missing
@@ -440,6 +468,10 @@ pub struct Caches {
     hashes: LruHashMap<Key, Arc<Hashes>>,
     users: LruHashMap<Key, Arc<Users>>,
     groups: LruHashMap<Key, Arc<Groups>>,
+    // valid user namespaces by inode, tasks keep theirs alive past eviction
+    user_namespaces: LruHashMap<u32, Arc<UserNs>>,
+    // warn only once, users may want a bigger cache
+    user_ns_evicted_in_use: bool,
     // since hashes and signatures are not computed
     // at the same time. It seems a better option
     // to separate into two HashMaps to prevent
@@ -456,9 +488,42 @@ impl Caches {
             mnt_namespaces: MntNsCache::with_max_entries(NS_CACHE_SIZE),
             users: LruHashMap::with_max_entries(NS_CACHE_SIZE),
             groups: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            user_namespaces: LruHashMap::with_max_entries(NS_CACHE_SIZE),
+            user_ns_evicted_in_use: false,
             hashes: LruHashMap::with_max_entries(cap),
             signatures: LruHashMap::with_max_entries(cap),
         }
+    }
+
+    /// Returns the shared instance of `ns`, or `None` if it is not valid.
+    pub fn cache_user_ns(&mut self, ns: &UserNs) -> Option<Arc<UserNs>> {
+        if !ns.is_valid() {
+            return None;
+        }
+        // maps are written once, a difference means the inode was reused
+        if let Some(cached) = self.user_namespaces.get(&ns.inum)
+            && **cached == *ns
+        {
+            return Some(Arc::clone(cached));
+        }
+        let ns = Arc::new(*ns);
+        // evicting namespaces no task holds is the LRU's normal life, only
+        // evicting one still in use loses identities (e.g. of new forks)
+        if let Some((_, evicted)) = self.user_namespaces.insert(ns.inum, Arc::clone(&ns))
+            && Arc::strong_count(&evicted) > 1
+            && !self.user_ns_evicted_in_use
+        {
+            log::warn!(
+                "user namespace cache is too small ({} entries): namespaces in use get evicted, some events may miss their in-namespace identity",
+                self.user_namespaces.cap()
+            );
+            self.user_ns_evicted_in_use = true;
+        }
+        Some(ns)
+    }
+
+    pub fn get_user_ns(&mut self, inum: u32) -> Option<Arc<UserNs>> {
+        self.user_namespaces.get(&inum).cloned()
     }
 
     /// Caches mount namespace `ns` of process `pid`. If `track` is set, the
@@ -476,62 +541,17 @@ impl Caches {
 
     /// Get the [Users] and [Groups] tables of the mount namespace `ns`, so that
     /// any uid/gid can be resolved by the caller. They are shared behind an
-    /// [Arc] to avoid copying the whole tables around.
-    pub fn get_user_group_in_ns(&mut self, ns: Mnt) -> Result<(Arc<Users>, Arc<Groups>), Error> {
+    /// [Arc] to avoid copying the whole tables around. Each table is loaded
+    /// independently, so a missing `/etc/passwd` doesn't prevent resolving groups.
+    pub fn get_user_group_in_ns(&mut self, ns: Mnt) -> Result<AccountTables, Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
 
-        // we haven't yet parsed users and groups or we don't find an entry
         mnt_ns
             .do_in_namespace(|| {
-                let user_path = PathBuf::from(Users::sys_path());
-
-                // we must explicitely return a bare io::Error here (keeping the original
-                // io::ErrorKind) as the caller downcasts it to detect a missing file and
-                // fallback on the host namespace
-                let umeta = user_path.metadata().map_err(|e| {
-                    namespace::Error::other(io::Error::new(
-                        e.kind(),
-                        format!("user file {}: {e}", user_path.display()),
-                    ))
-                })?;
-
-                // getting user
-                let ukey = Key::from_path_and_meta(ns, &user_path.into(), &umeta)
-                    .map_err(namespace::Error::other)?;
-
-                let users = match self.users.get(&ukey).cloned() {
-                    Some(u) => u,
-                    None => {
-                        let u = Arc::new(Users::from_sys().map_err(namespace::Error::other)?);
-                        self.users.insert(ukey, Arc::clone(&u));
-                        u
-                    }
-                };
-
-                let group_path = PathBuf::from(Groups::sys_path());
-
-                let gmeta = group_path.metadata().map_err(|e| {
-                    namespace::Error::other(io::Error::new(
-                        e.kind(),
-                        format!("group file {}: {e}", group_path.display()),
-                    ))
-                })?;
-
-                // getting group
-                let gkey = Key::from_path_and_meta(ns, &group_path.into(), &gmeta)
-                    .map_err(namespace::Error::other)?;
-
-                let groups = match self.groups.get(&gkey).cloned() {
-                    Some(g) => g,
-                    None => {
-                        let g = Arc::new(Groups::from_sys().map_err(namespace::Error::other)?);
-                        self.groups.insert(gkey, Arc::clone(&g));
-                        g
-                    }
-                };
-
+                let users = ns_table(ns, Users::sys_path(), &mut self.users, Users::from_sys);
+                let groups = ns_table(ns, Groups::sys_path(), &mut self.groups, Groups::from_sys);
                 Ok((users, groups))
             })
             .map_err(Error::from)
@@ -631,6 +651,55 @@ mod tests {
             random: 0,
             tgid: pid,
         })
+    }
+
+    fn user_ns(inum: u32, lower_first: u32) -> UserNs {
+        let mut map = kunai_common::user_ns::IdMap {
+            nr_extents: 1,
+            ..Default::default()
+        };
+        map.extents[0] = kunai_common::user_ns::IdExtent {
+            first: 0,
+            lower_first,
+            count: 1,
+        };
+        UserNs {
+            inum,
+            uid_map: map,
+            gid_map: map,
+        }
+    }
+
+    #[test]
+    fn cache_user_ns_shares_instances() {
+        let mut c = Caches::with_max_entries(1);
+        assert!(c.cache_user_ns(&UserNs::default()).is_none());
+
+        let a = c.cache_user_ns(&user_ns(42, 1000)).unwrap();
+        let b = c.cache_user_ns(&user_ns(42, 1000)).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert!(Arc::ptr_eq(&c.get_user_ns(42).unwrap(), &a));
+
+        // inode reused by another namespace
+        let r = c.cache_user_ns(&user_ns(42, 2000)).unwrap();
+        assert_eq!(r.uid_map.extents[0].lower_first, 2000);
+        assert!(Arc::ptr_eq(&c.get_user_ns(42).unwrap(), &r));
+        assert!(c.get_user_ns(43).is_none());
+    }
+
+    #[test]
+    fn cache_user_ns_flags_only_in_use_evictions() {
+        let mut c = Caches::with_max_entries(1);
+        c.user_namespaces = LruHashMap::with_max_entries(1);
+
+        // nothing holds the evicted one
+        c.cache_user_ns(&user_ns(1, 1000));
+        c.cache_user_ns(&user_ns(2, 1000));
+        assert!(!c.user_ns_evicted_in_use);
+
+        let _held = c.get_user_ns(2);
+        c.cache_user_ns(&user_ns(3, 1000));
+        assert!(c.user_ns_evicted_in_use);
     }
 
     #[test]

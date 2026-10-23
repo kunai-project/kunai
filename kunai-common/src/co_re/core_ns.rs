@@ -27,6 +27,23 @@ impl mnt_namespace {
 }
 
 #[allow(non_camel_case_types)]
+pub type user_namespace = CoRe<bindings::user_namespace>;
+
+impl user_namespace {
+    rust_shim_kernel_impl!(user_namespace, ns, ns_common);
+    rust_shim_kernel_impl!(user_namespace, uid_map, uid_gid_map);
+    rust_shim_kernel_impl!(user_namespace, gid_map, uid_gid_map);
+}
+
+#[allow(non_camel_case_types)]
+pub type uid_gid_map = CoRe<bindings::uid_gid_map>;
+
+impl uid_gid_map {
+    rust_shim_kernel_impl!(uid_gid_map, nr_extents, u32);
+    rust_shim_kernel_impl!(uid_gid_map, extent, *mut bindings::uid_gid_extent);
+}
+
+#[allow(non_camel_case_types)]
 pub type uts_namespace = CoRe<bindings::uts_namespace>;
 
 impl uts_namespace {

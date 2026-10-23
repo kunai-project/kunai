@@ -47,8 +47,6 @@ pub enum Error {
     GroupLeaderMissing,
     #[error("comm field is missing")]
     CommMissing,
-    #[error("failed to get mnt_namespace")]
-    MntNamespaceFailure,
 }
 
 impl From<Error> for ProbeError {
@@ -172,6 +170,8 @@ pub enum Type {
     Log,
     #[str("syscore_resume")]
     SyscoreResume,
+    #[str("user_ns_map")]
+    UserNsMap,
 
     // !!! all new event types must be put before max
     #[str("max")]
@@ -191,7 +191,9 @@ impl Type {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Namespaces {
-    pub mnt: u32,
+    pub mnt: BpfOption<u32>,
+    // inode of the creds' user namespace
+    pub user: BpfOption<u32>,
 }
 
 #[repr(C)]
@@ -209,7 +211,7 @@ pub struct TaskInfo {
     pub pid: i32,
     // task group uuid -> used to group tasks
     pub tg_uuid: ProcUuid,
-    pub namespaces: BpfOption<Namespaces>,
+    pub namespaces: Namespaces,
     pub start_time: u64,
 }
 
