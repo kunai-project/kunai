@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, LitStr};
+use syn::{DeriveInput, LitStr, parse_macro_input};
 
 fn split_on_capital_letters(s: &str) -> Vec<String> {
     let mut words = Vec::new();
@@ -113,7 +113,14 @@ pub fn str_enum_derive(item: TokenStream) -> TokenStream {
 
     let data_enum = match input.data {
         syn::Data::Enum(data_enum) => data_enum,
-        _ => return quote! {}.into(),
+        _ => {
+            return syn::Error::new_spanned(
+                enum_name,
+                "StrEnum only supports enums (if an attribute macro forwards derives to a generated non-enum item, place #[derive(StrEnum)] above it)",
+            )
+            .to_compile_error()
+            .into();
+        }
     };
 
     let mut as_str_arms = vec![];
