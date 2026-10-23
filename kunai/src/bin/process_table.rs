@@ -154,6 +154,7 @@ pub(crate) fn task_is_dead(t: &Task) -> bool {
 pub(crate) struct ProcessTable {
     pub(crate) processes: Processes,
     pub(crate) tasks: HashMap<TaskKey, Task>,
+    cap: usize,
 }
 
 /// Time (ns) a task must go unseen before the sweep checks it is alive.
@@ -167,6 +168,7 @@ impl ProcessTable {
         Self {
             processes: Processes(HashMap::with_capacity(cap)),
             tasks: HashMap::with_capacity(cap),
+            cap,
         }
     }
 
@@ -398,6 +400,13 @@ impl ProcessTable {
         {
             std_info.bpf.parent.zombie = true
         }
+    }
+
+    pub(crate) fn shrink_to_cap(&mut self) {
+        // 2x headroom so a shrunk map doesn't regrow on the next inserts
+        let procs = self.processes.len();
+        self.processes.shrink_to((procs * 2).max(self.cap));
+        self.tasks.shrink_to((self.tasks.len() * 2).max(self.cap));
     }
 }
 

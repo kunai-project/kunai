@@ -1774,8 +1774,7 @@ impl EventConsumer<'_> {
                 self.table
                     .processes
                     .retain(|pk, _| !shadow_proc.contains(pk));
-                // shrinking processes HashMap
-                self.table.processes.shrink_to_fit();
+                self.table.shrink_to_cap();
             }
 
             self.exited_tasks = self.exited_tasks.wrapping_add(1);
