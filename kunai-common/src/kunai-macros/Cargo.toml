@@ -1,20 +1,20 @@
 [package]
 name = "kunai-macros"
+version.workspace = true
 edition.workspace = true
 description = "Package providing proc-macro specific to Kunai"
-version.workspace = true
-license.workspace = true
 repository.workspace = true
+license.workspace = true
 publish = false
-
-[lints]
-workspace = true
 
 [lib]
 proc-macro = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+proc-macro2 = "1"
 quote = "1.0.26"
 syn = { version = "2.0.11", features = ["full"] }
-proc-macro2 = { version = "1", default-features = false }
+
+[lints]
+workspace = true

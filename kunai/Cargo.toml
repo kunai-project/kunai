@@ -46,24 +46,10 @@ magic-db = { workspace = true }
 object = { workspace = true, features = ["elf"] }
 procfs = { workspace = true }
 pure-magic = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
-tokio = {
-  workspace = true,
-  features = [
-    "fs",
-    "io-util",
-    "macros",
-    "net",
-    "rt",
-    "rt-multi-thread",
-    "signal",
-    "sync",
-    "time",
-  ]
-}
 uuid = { workspace = true, features = ["serde", "v4", "v5"] }
 yara-x = { workspace = true }
 
@@ -73,8 +59,22 @@ sha1 = { workspace = true }
 sha2 = { workspace = true }
 
 # detection engine for events
-gene = { workspace = true }
+gene = { workspace = true, features = ["uuid"] }
 gene_derive = { workspace = true }
+
+[dependencies.tokio]
+workspace = true
+features = [
+  "fs",
+  "io-util",
+  "macros",
+  "net",
+  "rt",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+]
 
 [dev-dependencies]
 tempfile = "3.12.0"

@@ -1226,11 +1226,12 @@ dependencies = [
 
 [[package]]
 name = "gene"
-version = "0.7.6"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "443c567b5e03dfef4a4594d0977b1c6944955512fb8af1095c978f2e2fe7b9b1"
+checksum = "af55658ba2b29b3f6ac74fe0eb5cdc9e3136de605b8c9c98ca6e9c0a642916f5"
 dependencies = [
  "gene_derive",
+ "hashbrown 0.17.1",
  "lazy_static",
  "pest",
  "pest_derive",
@@ -1243,9 +1244,9 @@ dependencies = [
 
 [[package]]
 name = "gene_derive"
-version = "0.7.6"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba52a3d316fc1b9bd6e09f53bf2a4f1329baa6c2d853d2c6e31af9d93f082798"
+checksum = "a91f629090b162b63bd9375ef03ada5303a1069fd6477eaa6d7cc0777114c601"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1374,6 +1375,7 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
  "equivalent",
  "foldhash",
  "serde",
@@ -1897,9 +1899,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.2.3"
+version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b18443e9c262bfe8fa82f51666e2642c53393f7e5c27b3e1aeab922cff5b9d8"
+checksum = "1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee"
 dependencies = [
  "libc",
  "wasi",
@@ -3022,9 +3024,9 @@ checksum = "6847a2bf223d67c916a25d5fb8d197fc1c7c3205421e05d50f3373e092034146"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "bytes",
  "libc",
