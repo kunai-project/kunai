@@ -824,6 +824,8 @@ pub enum Output {
     Stderr(std::io::Stderr),
     // variant too big, boxing suggested by clippy
     File(Box<firo::File>),
+    #[cfg(test)]
+    Sink(io::Sink),
 }
 
 impl Output {
@@ -848,6 +850,8 @@ impl io::Write for Output {
             Self::Stdout(o) => o.write(buf),
             Self::Stderr(o) => o.write(buf),
             Self::File(o) => o.write(buf),
+            #[cfg(test)]
+            Self::Sink(o) => o.write(buf),
         }
     }
 
@@ -856,6 +860,8 @@ impl io::Write for Output {
             Self::Stdout(o) => o.flush(),
             Self::Stderr(o) => o.flush(),
             Self::File(o) => o.flush(),
+            #[cfg(test)]
+            Self::Sink(o) => o.flush(),
         }
     }
 }
@@ -4386,6 +4392,177 @@ mod tests {
             uid,
             ..Default::default()
         }
+    }
+
+    fn event_consumer() -> EventConsumer<'static> {
+        EventConsumer {
+            system_info: SystemInfo {
+                host_uuid: uuid::Uuid::nil(),
+                hostname: "test".into(),
+                mount_ns: Mnt::from_inum(0),
+            },
+            filter: Filter::all_enabled(),
+            random: 0,
+            table: ProcessTable::default(),
+            resolved: HashMap::new(),
+            exited_tasks: 0,
+            sink: EventSink {
+                config: Config::default(),
+                json_buf: Vec::new(),
+                engine: Engine::new(),
+                iocs: HashMap::new(),
+                caches: Caches::with_max_entries(16),
+                killed_tasks: LruHashSet::with_max_entries(16),
+                output: Output::Sink(io::sink()),
+                file_scanner: None,
+                magic_db: magic_db::load().unwrap(),
+                scan_events_enabled: false,
+            },
+        }
+    }
+
+    fn task_info(pid: i32, creds: creds::Creds) -> TaskInfo {
+        TaskInfo {
+            pid,
+            tgid: 100,
+            tg_uuid: kunai_common::uuid::ProcUuid {
+                leader_start_time_ns: 0,
+                random: 0,
+                tgid: 100,
+            },
+            creds,
+            ..Default::default()
+        }
+    }
+
+    fn clone_event(task: TaskInfo, parent: TaskInfo) -> EbpfEvent {
+        EbpfEvent::Clone(Box::new(bpf_events::Event {
+            info: bpf_events::EventInfo {
+                etype: Type::Clone,
+                process: task,
+                parent,
+                ..Default::default()
+            },
+            data: bpf_events::CloneData {
+                flags: 0,
+                executable: Default::default(),
+                argv: Default::default(),
+                cgroup: Default::default(),
+                nodename: Default::default(),
+            },
+        }))
+    }
+
+    fn commit_creds_event(task: TaskInfo, new: creds::Creds) -> EbpfEvent {
+        EbpfEvent::CommitCreds(Box::new(bpf_events::Event {
+            info: bpf_events::EventInfo {
+                etype: Type::CommitCreds,
+                process: task,
+                ..Default::default()
+            },
+            data: bpf_events::CommitCredsData {
+                old: task.creds,
+                new,
+            },
+        }))
+    }
+
+    fn prctl_event(task: TaskInfo) -> EbpfEvent {
+        EbpfEvent::Prctl(Box::new(bpf_events::Event {
+            info: bpf_events::EventInfo {
+                etype: Type::Prctl,
+                process: task,
+                ..Default::default()
+            },
+            data: Default::default(),
+        }))
+    }
+
+    #[test]
+    fn clone_seeds_each_tasks_own_creds() {
+        let mut consumer = event_consumer();
+        let leader = task_info(100, creds(1000));
+        let child = task_info(101, creds(1001));
+
+        for (task, parent) in [(leader, TaskInfo::default()), (child, leader)] {
+            consumer.handle_event(clone_event(task, parent));
+        }
+
+        let leader_task = &consumer.table.tasks[&TaskKey::from(&leader)];
+        let child_task = &consumer.table.tasks[&TaskKey::from(&child)];
+        assert_eq!(leader_task.expected_creds, leader.creds);
+        assert_eq!(leader_task.reported_creds, None);
+        assert_eq!(child_task.expected_creds, child.creds);
+        assert_eq!(child_task.reported_creds, None);
+    }
+
+    #[test]
+    fn commit_creds_seeds_first_seen_task_with_new_creds() {
+        let mut consumer = event_consumer();
+        let ti = task_info(100, creds(1000));
+        let new = creds::Creds {
+            uid: 1001,
+            gid: 1002,
+            euid: 1003,
+            egid: 1004,
+            suid: 1005,
+            sgid: 1006,
+            fsuid: 1007,
+            fsgid: 1008,
+            cap_effective: 1 << 12,
+            cap_permitted: 1 << 13,
+            cap_inheritable: 1 << 14,
+        };
+
+        consumer.handle_event(commit_creds_event(ti, new));
+
+        let task = &consumer.table.tasks[&TaskKey::from(&ti)];
+        assert_eq!(task.expected_creds, new);
+        assert_eq!(task.reported_creds, None);
+    }
+
+    #[test]
+    fn commit_creds_refreshes_only_committing_task_and_rearms_reporting() {
+        let mut consumer = event_consumer();
+        let mut ti = task_info(101, creds(1000));
+        let key = TaskKey::from(&ti);
+        let sibling = task_info(100, creds(2000));
+        let sibling_key = TaskKey::from(&sibling);
+        consumer.table.track_task(&ti, 0);
+        consumer.table.track_task(&sibling, 0);
+        consumer
+            .table
+            .tasks
+            .get_mut(&sibling_key)
+            .unwrap()
+            .reported_creds = Some(creds(2001));
+
+        ti.creds = creds(1001);
+        consumer.handle_event(prctl_event(ti));
+        assert_eq!(consumer.table.tasks[&key].expected_creds, creds(1000));
+        assert_eq!(consumer.table.tasks[&key].reported_creds, Some(ti.creds));
+
+        let new = creds(1002);
+        consumer.handle_event(commit_creds_event(ti, new));
+        assert_eq!(consumer.table.tasks[&key].expected_creds, new);
+        assert_eq!(consumer.table.tasks[&key].reported_creds, None);
+        assert_eq!(
+            consumer.table.tasks[&sibling_key].expected_creds,
+            sibling.creds
+        );
+        assert_eq!(
+            consumer.table.tasks[&sibling_key].reported_creds,
+            Some(creds(2001))
+        );
+
+        ti.creds = new;
+        consumer.handle_event(prctl_event(ti));
+        assert_eq!(consumer.table.tasks[&key].reported_creds, None);
+
+        ti.creds = creds(1001);
+        consumer.handle_event(prctl_event(ti));
+        assert_eq!(consumer.table.tasks[&key].expected_creds, new);
+        assert_eq!(consumer.table.tasks[&key].reported_creds, Some(ti.creds));
     }
 
     #[test]

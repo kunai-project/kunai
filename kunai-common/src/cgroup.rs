@@ -12,7 +12,7 @@ const CGROUP_PATH_MAX: usize = 128;
 const CGROUP_STRING_LEN: usize = CGROUP_PATH_MAX * 2;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Cgroup {
     path: crate::string::String<CGROUP_STRING_LEN>,
     pub error: BpfOption<Error>,

@@ -482,6 +482,75 @@ mod tests {
     }
 
     #[test]
+    fn track_task_seeds_creds_without_a_known_process() {
+        let mut t = ProcessTable::default();
+        let ti = TaskInfo {
+            creds: creds::Creds {
+                uid: 1000,
+                euid: 1001,
+                cap_effective: 1 << 12,
+                ..Default::default()
+            },
+            ..thread(100, 100)
+        };
+
+        t.track_task(&ti, 1);
+
+        let task = &t.tasks[&TaskKey::from(&ti)];
+        assert_eq!(task.expected_creds, ti.creds);
+        assert_eq!(task.reported_creds, None);
+    }
+
+    #[test]
+    fn track_task_seeds_thread_creds_independently_of_leader() {
+        let mut t = threaded();
+        let leader = TaskKey::from(&thread(100, 100));
+        let leader_creds = creds::Creds {
+            uid: 1000,
+            ..Default::default()
+        };
+        t.tasks.get_mut(&leader).unwrap().expected_creds = leader_creds;
+        let ti = TaskInfo {
+            creds: creds::Creds {
+                uid: 1001,
+                cap_permitted: 1 << 12,
+                ..Default::default()
+            },
+            ..thread(100, 103)
+        };
+
+        t.track_task(&ti, 1);
+
+        let task = &t.tasks[&TaskKey::from(&ti)];
+        assert_eq!(task.expected_creds, ti.creds);
+        assert_eq!(task.reported_creds, None);
+        assert_eq!(t.tasks[&leader].expected_creds, leader_creds);
+    }
+
+    #[test]
+    fn track_task_preserves_existing_creds_baseline_and_report() {
+        let mut t: ProcessTable = threaded();
+        let mut ti = thread(100, 101);
+        let key = TaskKey::from(&ti);
+        let baseline = t.tasks[&key].expected_creds;
+        let reported = creds::Creds {
+            uid: 1000,
+            ..Default::default()
+        };
+        t.tasks.get_mut(&key).unwrap().reported_creds = Some(reported);
+        ti.creds = creds::Creds {
+            uid: 1001,
+            ..Default::default()
+        };
+
+        t.track_task(&ti, 1);
+
+        let task = &t.tasks[&key];
+        assert_eq!(task.expected_creds, baseline);
+        assert_eq!(task.reported_creds, Some(reported));
+    }
+
+    #[test]
     fn leader_exit_with_live_sibling_keeps_group() {
         let mut t = threaded();
         assert!(!exit(&mut t, 100, false));
