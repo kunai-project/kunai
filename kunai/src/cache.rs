@@ -15,9 +15,9 @@ use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
     collections::HashMap,
-    fs::{self, File},
-    io::{self},
-    os::unix::prelude::MetadataExt,
+    fs::{self, File, OpenOptions},
+    io::{self, SeekFrom},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::PathBuf,
     sync::Arc,
     time::SystemTime,
@@ -34,6 +34,66 @@ use crate::{
 };
 
 pub const FILE_SIZE_SCAN_LIMIT: u64 = ByteSize::from_mb(100).in_bytes();
+
+struct OpenedFile {
+    file: File,
+    meta: fs::Metadata,
+}
+
+impl OpenedFile {
+    fn new(path: &std::path::Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+            .open(path)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not a regular file",
+            ));
+        }
+        Ok(Self { file, meta })
+    }
+
+    // Reads and allocates, so only call it once a cache lookup missed.
+    fn reader(self) -> io::Result<DataReader<'static>> {
+        DataReader::from_file(self.file)
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to create lazy cache: {e}")))
+    }
+}
+
+fn scan_signatures(
+    reader: &mut DataReader<'_>,
+    size: u64,
+    scanner: &mut Scanner<'_>,
+) -> Result<Arc<[String]>, Error> {
+    // Cap reads at the opened length so concurrent growth cannot extend the budget.
+    let len = size.min(FILE_SIZE_SCAN_LIMIT);
+    let data = reader.read_range(0..len)?;
+    if data.len() as u64 != len {
+        return Err(
+            io::Error::new(io::ErrorKind::UnexpectedEof, "file shrank while reading").into(),
+        );
+    }
+    // yara-x resets its state on every scan, so a poisoned scanner is still usable
+    let scanner = scanner
+        .get_mut()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let results = scanner.scan(data)?;
+    Ok(results
+        .matching_rules()
+        .map(|rule| rule.identifier().to_string())
+        .collect())
+}
+
+/// Result of [Caches::get_scan_in_ns].
+pub struct ScanOutcome {
+    pub hashes: Arc<Hashes>,
+    /// `None` without a scanner or if scanning failed
+    pub signatures: Option<Arc<[String]>>,
+    pub scan_error: Option<String>,
+}
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -152,62 +212,83 @@ impl Hashes {
 
     pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T, magic_db: &MagicDb) -> Self {
         let path = p.as_ref();
-        let mut h = Hashes {
-            path: path.to_path_buf(),
-            ..Hashes::default()
+        match OpenedFile::new(path) {
+            Ok(file) => Self::from_file(path.to_path_buf(), file, magic_db),
+            Err(e) => Self {
+                path: path.to_path_buf(),
+                error: Some(format!("failed to open file: {e}")),
+                ..Self::default()
+            },
+        }
+    }
+
+    fn from_file(path: PathBuf, file: OpenedFile, magic_db: &MagicDb) -> Self {
+        let size = file.meta.len();
+        match file.reader() {
+            Ok(mut f) => Self::from_reader(path, size, &mut f, magic_db),
+            Err(e) => Self::with_error(path, size, e.to_string()),
+        }
+    }
+
+    fn with_error(path: PathBuf, size: u64, error: String) -> Self {
+        Self {
+            path,
+            size,
+            error: Some(error),
+            ..Self::default()
+        }
+    }
+
+    fn from_reader(path: PathBuf, size: u64, f: &mut DataReader<'_>, magic_db: &MagicDb) -> Self {
+        let mut h = Self {
+            path,
+            size,
+            ..Self::default()
         };
 
-        let Ok(meta) = path.metadata().inspect_err(|e| {
-            h.error = Some(format!("failed to get metadata: {e}"));
-        }) else {
-            return h;
-        };
+        if h.size > FILE_SIZE_SCAN_LIMIT {
+            h.error = Some(Error::FileSizeScanLimit.to_string());
+        } else if let Err(e) = f.seek(SeekFrom::Start(0)) {
+            h.error = Some(format!("failed to read: {e}"));
+        } else {
+            let mut md5 = Md5::new();
+            let mut sha1 = Sha1::new();
+            let mut sha256 = Sha256::new();
+            let mut sha512 = Sha512::new();
+            let mut remaining = h.size;
 
-        h.size = meta.size();
-
-        if let Ok(mut f) = File::open(path)
-            .inspect_err(|e| {
-                h.error = Some(format!("failed to open file: {e}",));
-            })
-            .and_then(DataReader::from_file)
-            .inspect_err(|e| {
-                h.error = Some(format!("failed to create lazy cache: {e}",));
-            })
-        {
-            if meta.size() <= FILE_SIZE_SCAN_LIMIT {
-                let mut md5 = Md5::new();
-                let mut sha1 = Sha1::new();
-                let mut sha256 = Sha256::new();
-                let mut sha512 = Sha512::new();
-
-                while let Ok(buf) = f.read_count(4096).inspect_err(|e| {
-                    h.error = Some(format!("failed to read: {e}",));
-                }) {
-                    if buf.is_empty() {
-                        break;
+            while let Ok(buf) = f.read_count(remaining.min(4096)).inspect_err(|e| {
+                h.error = Some(format!("failed to read: {e}"));
+            }) {
+                if buf.is_empty() {
+                    if remaining != 0 {
+                        h.error = Some(String::from("failed to read: file shrank while reading"));
                     }
-                    md5.update(buf);
-                    sha1.update(buf);
-                    sha256.update(buf);
-                    sha512.update(buf);
-                }
 
+                    break;
+                }
+                remaining -= buf.len() as u64;
+                md5.update(buf);
+                sha1.update(buf);
+                sha256.update(buf);
+                sha512.update(buf);
+            }
+
+            if h.error.is_none() {
                 h.md5 = hex::encode(md5.finalize());
                 h.sha1 = hex::encode(sha1.finalize());
                 h.sha256 = hex::encode(sha256.finalize());
                 h.sha512 = hex::encode(sha512.finalize());
-            } else {
-                h.error = Some(Error::FileSizeScanLimit.to_string());
             }
-
-            h.magic = magic_db
-                .first_magic(&mut f, None)
-                .inspect_err(|e| {
-                    h.error = Some(format!("failed to find magic: {e}",));
-                })
-                .map(|m| m.message())
-                .unwrap_or_else(|_| "?".into());
         }
+
+        h.magic = magic_db
+            .first_magic(f, None)
+            .inspect_err(|e| {
+                h.error = Some(format!("failed to find magic: {e}"));
+            })
+            .map(|m| m.message())
+            .unwrap_or_else(|_| "?".into());
 
         h
     }
@@ -514,7 +595,8 @@ impl Caches {
             && !self.user_ns_evicted_in_use
         {
             log::warn!(
-                "user namespace cache is too small ({} entries): namespaces in use get evicted, some events may miss their in-namespace identity",
+                "user namespace cache is too small ({} entries): namespaces in use get evicted, \
+                 some events may miss their in-namespace identity",
                 self.user_namespaces.cap()
             );
             self.user_ns_evicted_in_use = true;
@@ -557,54 +639,79 @@ impl Caches {
             .map_err(Error::from)
     }
 
-    pub fn get_sig_in_ns(
+    /// Gets hashes and, if `scanner` is set, signatures of `path`, reading
+    /// the file once for whatever is missing from the caches.
+    pub fn get_scan_in_ns(
         &mut self,
         ns: Mnt,
         path: &Path,
-        scanner: &mut Scanner<'_>,
-    ) -> Result<(Arc<[String]>, Option<String>), Error> {
-        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
-            return Err(Error::UnknownMntNs(ns));
-        };
+        scanner: Option<&mut Scanner<'_>>,
+        magic_db: &MagicDb,
+    ) -> Result<ScanOutcome, Error> {
+        let (file, key) = self.open_in_ns(ns, path)?;
+        Ok(self.scan_file(file, key, scanner, magic_db))
+    }
 
-        let res = mnt_ns.do_in_namespace(|| {
-            let pb = path.as_path();
-            // we create key to check if we already have cached
-            // signatures for that file
-            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
-            let mut msg = None;
+    fn scan_file(
+        &mut self,
+        file: OpenedFile,
+        key: Key,
+        mut scanner: Option<&mut Scanner<'_>>,
+        magic_db: &MagicDb,
+    ) -> ScanOutcome {
+        let size = file.meta.len();
 
-            if key.size > FILE_SIZE_SCAN_LIMIT {
-                msg = Some(String::from("partial scan, file size exceeds scan limit"))
+        let mut signatures = None;
+        let mut scan_error = None;
+        if scanner.is_some() {
+            if size > FILE_SIZE_SCAN_LIMIT {
+                scan_error = Some(String::from("partial scan, file size exceeds scan limit"));
             }
-
-            let sigs = match self.signatures.get(&key) {
-                // we have caches signatures
-                Some(sig) => Arc::clone(sig),
-                // we don't have cached signatures
-                None => {
-                    // lock should never fail as the scanner is used only in one thread
-                    let mut yx_scanner = scanner.lock().expect("failed to lock yara scanner");
-                    let sr = yx_scanner.scan_file(pb).map_err(namespace::Error::other)?;
-                    let sigs: Arc<[String]> = sr
-                        .matching_rules()
-                        .map(|m| m.identifier().to_string())
-                        .collect();
-                    // we update our cache
-                    self.signatures.insert(key.clone(), Arc::clone(&sigs));
-                    sigs
-                }
-            };
-
-            Ok((sigs, msg))
-        });
-
-        // we must be sure that we restore our namespace
-        if matches!(res.as_ref(), Err(namespace::Error::Exit(_, _, _))) {
-            res.as_ref().expect("failed to restore namespace");
+            if let Some(sigs) = self.signatures.get(&key) {
+                signatures = Some(Arc::clone(sigs));
+                // we clear scanner, we don't need it
+                scanner = None;
+            }
         }
 
-        res.map_err(Error::from)
+        let hashes = match (self.hashes.get(&key).cloned(), scanner) {
+            (Some(hashes), None) => hashes,
+            (hashes, scanner) => {
+                // a reader failure only affects what missed the caches
+                let mut reader = file.reader();
+
+                if let Some(scanner) = scanner {
+                    let res = match reader.as_mut() {
+                        Ok(r) => scan_signatures(r, size, scanner).map_err(|e| e.to_string()),
+                        Err(e) => Err(e.to_string()),
+                    };
+                    match res {
+                        Ok(sigs) => {
+                            self.signatures.insert(key.clone(), Arc::clone(&sigs));
+                            signatures = Some(sigs);
+                        }
+                        Err(e) => scan_error = Some(e),
+                    }
+                }
+
+                hashes.unwrap_or_else(|| {
+                    let path = key.path.clone();
+                    let h = Arc::new(match reader.as_mut() {
+                        Ok(r) => Hashes::from_reader(path, size, r, magic_db),
+                        Err(e) => Hashes::with_error(path, size, e.to_string()),
+                    });
+                    // errors are cached too, bounding the work a hostile file can cause
+                    self.hashes.insert(key, Arc::clone(&h));
+                    h
+                })
+            }
+        };
+
+        ScanOutcome {
+            hashes,
+            signatures,
+            scan_error,
+        }
     }
 
     pub fn get_hashes_in_ns(
@@ -613,22 +720,29 @@ impl Caches {
         path: &Path,
         magic_db: &MagicDb,
     ) -> Result<Arc<Hashes>, Error> {
+        let (file, key) = self.open_in_ns(ns, path)?;
+
+        if let Some(h) = self.hashes.get(&key) {
+            return Ok(Arc::clone(h));
+        }
+
+        let h = Arc::new(Hashes::from_file(key.path.clone(), file, magic_db));
+        self.hashes.insert(key, Arc::clone(&h));
+        Ok(h)
+    }
+
+    /// Opens `path` in mount namespace `ns`. Only resolving the path needs the
+    /// namespace: the returned descriptor is read from the current one.
+    fn open_in_ns(&mut self, ns: Mnt, path: &Path) -> Result<(OpenedFile, Key), Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
 
         let res = mnt_ns.do_in_namespace(|| {
-            let pb = path.as_path();
-
-            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
-
-            if let Some(h) = self.hashes.get(&key) {
-                return Ok(Arc::clone(h));
-            }
-
-            let h = Arc::new(Hashes::from_path_ref(pb, magic_db));
-            self.hashes.insert(key, Arc::clone(&h));
-            Ok(h)
+            let file = OpenedFile::new(path.as_path()).map_err(namespace::Error::other)?;
+            let key =
+                Key::from_path_and_meta(ns, path, &file.meta).map_err(namespace::Error::other)?;
+            Ok((file, key))
         });
 
         // we must be sure that we restore our namespace
