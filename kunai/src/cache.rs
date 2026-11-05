@@ -846,3 +846,388 @@ mod tests {
         assert_eq!(refs.untrack(&pkey(1)), Some(b));
     }
 }
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+    use crate::util::namespace::Namespace;
+    use std::{
+        ffi::{CString, OsString},
+        io::Write,
+        os::unix::{
+            ffi::OsStringExt,
+            fs::{FileExt, symlink},
+        },
+        process::{Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    fn scanner() -> Scanner<'static> {
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source("rule safe { strings: $s = \"safe\" condition: $s }")
+            .unwrap();
+        Scanner::with_rules(compiler.build())
+    }
+
+    fn caches() -> (Caches, Mnt) {
+        let pid = std::process::id();
+        let ns = Mnt::from_pid::<Mnt>(pid).unwrap();
+        let mut caches = Caches::with_max_entries(16);
+        caches.cache_mnt_ns(pid as i32, ns, None).unwrap();
+        (caches, ns)
+    }
+
+    fn fifo(path: &std::path::Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: path is a live NUL-terminated string and mkfifo retains no pointers.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    }
+
+    fn assert_digests(hashes: &Hashes, data: &[u8]) {
+        assert!(hashes.error.is_none(), "{:?}", hashes.error);
+        assert_eq!(hashes.md5, hex::encode(Md5::digest(data)));
+        assert_eq!(hashes.sha1, hex::encode(Sha1::digest(data)));
+        assert_eq!(hashes.sha256, hex::encode(Sha256::digest(data)));
+        assert_eq!(hashes.sha512, hex::encode(Sha512::digest(data)));
+        assert_ne!(hashes.magic, "?");
+    }
+
+    // procfs refuses to reopen a socket, so building the reader fails
+    fn unreadable(meta: fs::Metadata) -> OpenedFile {
+        let (sock, _) = std::os::unix::net::UnixStream::pair().unwrap();
+        OpenedFile {
+            file: File::from(std::os::fd::OwnedFd::from(sock)),
+            meta,
+        }
+    }
+
+    fn assert_no_digests(hashes: &Hashes) {
+        assert!(hashes.error.is_some());
+        assert_eq!(hashes.md5, "?");
+        assert_eq!(hashes.sha1, "?");
+        assert_eq!(hashes.sha256, "?");
+        assert_eq!(hashes.sha512, "?");
+    }
+
+    #[test]
+    fn hostile_paths_do_not_block() {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cache::file_tests::hostile_paths_child",
+                "--nocapture",
+            ])
+            .env("KUNAI_HOSTILE_FILE_CHILD", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let timed_out = loop {
+            if child.try_wait().unwrap().is_some() {
+                break false;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                break true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let output = child.wait_with_output().unwrap();
+        assert!(!timed_out, "hostile-file I/O child exceeded its watchdog");
+        assert!(
+            output.status.success(),
+            "child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed;"));
+    }
+
+    #[test]
+    fn hostile_paths_child() {
+        if std::env::var_os("KUNAI_HOSTILE_FILE_CHILD").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let named_pipe = dir.path().join("fifo");
+        fifo(&named_pipe);
+        let link = dir.path().join("link");
+        symlink(&named_pipe, &link).unwrap();
+        let replacement = dir.path().join("replacement");
+        fs::write(&replacement, b"safe").unwrap();
+        assert!(replacement.metadata().unwrap().is_file());
+        fs::remove_file(&replacement).unwrap();
+        fifo(&replacement);
+
+        let db = magic_db::load().unwrap();
+        let mut scanner = scanner();
+        let (mut caches, ns) = caches();
+        for path in [
+            named_pipe.as_path(),
+            link.as_path(),
+            replacement.as_path(),
+            dir.path(),
+            std::path::Path::new("/dev/null"),
+            std::path::Path::new("/dev/zero"),
+        ] {
+            assert!(OpenedFile::new(path).is_err(), "{}", path.display());
+            assert_no_digests(&Hashes::from_path_ref(path, &db));
+            let path = Path::Std(path.to_path_buf());
+            assert!(caches.get_hashes_in_ns(ns, &path, &db).is_err());
+            assert!(
+                caches
+                    .get_scan_in_ns(ns, &path, Some(&mut scanner), &db)
+                    .is_err()
+            );
+        }
+        assert!(caches.hashes.is_empty());
+        assert!(caches.signatures.is_empty());
+
+        let path = dir.path().join("cached");
+        fs::write(&path, b"safe").unwrap();
+        let cached_path = Path::Std(path.clone());
+        assert_digests(
+            &caches.get_hashes_in_ns(ns, &cached_path, &db).unwrap(),
+            b"safe",
+        );
+        let scan = caches
+            .get_scan_in_ns(ns, &cached_path, Some(&mut scanner), &db)
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["safe"]);
+        assert_eq!(scan.scan_error, None);
+        fs::remove_file(&path).unwrap();
+        fifo(&path);
+        assert!(caches.get_hashes_in_ns(ns, &cached_path, &db).is_err());
+        assert!(
+            caches
+                .get_scan_in_ns(ns, &cached_path, Some(&mut scanner), &db)
+                .is_err()
+        );
+
+        let original = dir.path().join("original");
+        fs::write(&original, b"safe").unwrap();
+        let opened = OpenedFile::new(&original).unwrap();
+        let scan_opened = OpenedFile::new(&original).unwrap();
+        fs::remove_file(&original).unwrap();
+        fifo(&original);
+        assert_digests(&Hashes::from_file(original, opened, &db), b"safe");
+        let size = scan_opened.meta.len();
+        let mut reader = scan_opened.reader().unwrap();
+        assert_eq!(
+            scan_signatures(&mut reader, size, &mut scanner)
+                .unwrap()
+                .as_ref(),
+            ["safe"]
+        );
+    }
+
+    #[test]
+    fn special_files_are_never_opened_for_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fifo");
+        fifo(&path);
+
+        // a FIFO stands for a device: opening it for read has a visible side effect
+        let (tx, rx) = std::sync::mpsc::channel();
+        let writer_path = path.clone();
+        thread::spawn(move || {
+            let _w = OpenOptions::new().write(true).open(&writer_path).unwrap();
+            tx.send(()).unwrap();
+        });
+        thread::sleep(Duration::from_millis(50));
+
+        assert!(OpenedFile::new(&path).is_err());
+        let woken = rx.recv_timeout(Duration::from_millis(500)).is_ok();
+
+        // releases the writer; nonblocking so it cannot hang once the writer is gone
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path)
+                .unwrap(),
+        );
+        assert!(!woken, "OpenedFile::new opened a non-regular file for read");
+    }
+
+    #[test]
+    fn hashes_and_scans_preserve_exact_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(OsString::from_vec(b"file-\xff".to_vec()));
+        let data = b"safe\0\xff\n";
+        fs::write(&path, data).unwrap();
+        let db = magic_db::load().unwrap();
+        let hashes = Hashes::from_path_ref(&path, &db);
+        assert_eq!(hashes.path, path);
+        assert_eq!(hashes.size, data.len() as u64);
+        assert_digests(&hashes, data);
+
+        // fresh caches: signatures and hashes share one reader
+        let (mut caches, ns) = caches();
+        let scan = caches
+            .get_scan_in_ns(ns, &Path::Std(path), Some(&mut scanner()), &db)
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["safe"]);
+        assert_eq!(scan.scan_error, None);
+        assert_digests(&scan.hashes, data);
+
+        let empty = dir.path().join("empty");
+        fs::write(&empty, []).unwrap();
+        assert_digests(&Hashes::from_path_ref(&empty, &db), b"");
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source("rule empty { condition: filesize == 0 }")
+            .unwrap();
+        let mut scanner = Scanner::with_rules(compiler.build());
+        let scan = caches
+            .get_scan_in_ns(ns, &Path::Std(empty), Some(&mut scanner), &db)
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["empty"]);
+    }
+
+    #[test]
+    fn hashes_iterate_in_chunks_and_stop_at_opened_length() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let data: Vec<u8> = (0..12_295).map(|i| (i % 251) as u8).collect();
+        file.write_all(&data).unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.write_all(b"appended after metadata").unwrap();
+        let hashes = Hashes::from_file(
+            file.path().to_path_buf(),
+            opened,
+            &magic_db::load().unwrap(),
+        );
+        assert_eq!(hashes.size, data.len() as u64);
+        assert_digests(&hashes, &data);
+    }
+
+    #[test]
+    fn signature_scans_stop_at_opened_length() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"safe").unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.write_all(b"more").unwrap();
+        let size = opened.meta.len();
+        let mut reader = opened.reader().unwrap();
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source("rule prefix { condition: filesize == 4 and uint32(0) == 0x65666173 }")
+            .unwrap();
+        let mut scanner = Scanner::with_rules(compiler.build());
+        let matches = scan_signatures(&mut reader, size, &mut scanner).unwrap();
+        assert_eq!(matches.as_ref(), ["prefix"]);
+    }
+
+    #[test]
+    fn failed_reads_do_not_publish_partial_hashes() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"safe").unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.as_file().set_len(2).unwrap();
+        let size = opened.meta.len();
+        let error =
+            scan_signatures(&mut opened.reader().unwrap(), size, &mut scanner()).unwrap_err();
+        assert!(
+            matches!(&error, Error::IoError(e) if e.kind() == io::ErrorKind::UnexpectedEof),
+            "{error}"
+        );
+
+        file.as_file().set_len(4).unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.as_file().set_len(0).unwrap();
+        let db = magic_db::load().unwrap();
+        assert_no_digests(&Hashes::from_file(file.path().to_path_buf(), opened, &db));
+
+        file.as_file().set_len(4).unwrap();
+        let opened = unreadable(file.as_file().metadata().unwrap());
+        assert_no_digests(&Hashes::from_file(file.path().to_path_buf(), opened, &db));
+    }
+
+    #[test]
+    fn reader_failures_keep_cache_hits() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), b"safe").unwrap();
+        let opened = || unreadable(file.as_file().metadata().unwrap());
+        let db = magic_db::load().unwrap();
+        let mut scanner = scanner();
+        let (mut caches, ns) = caches();
+        let path = Path::Std(file.path().to_path_buf());
+        let key = Key::from_path_and_meta(ns, &path, &opened().meta).unwrap();
+
+        let scan = caches.scan_file(opened(), key.clone(), Some(&mut scanner), &db);
+        assert!(scan.signatures.is_none());
+        assert!(scan.scan_error.unwrap().contains("reopen"));
+        assert_no_digests(&scan.hashes);
+        assert_eq!(scan.hashes.size, 4);
+        assert!(caches.hashes.contains_key(&key));
+        assert!(caches.signatures.is_empty());
+
+        let cached = Arc::new(Hashes::with_error(key.path.clone(), 1, "cached".into()));
+        caches.hashes.insert(key.clone(), Arc::clone(&cached));
+        let scan = caches.scan_file(opened(), key.clone(), Some(&mut scanner), &db);
+        assert!(Arc::ptr_eq(&scan.hashes, &cached));
+        assert!(scan.signatures.is_none());
+        assert!(scan.scan_error.unwrap().contains("reopen"));
+
+        caches.hashes.remove(&key);
+        caches
+            .signatures
+            .insert(key.clone(), Arc::from(["cached".to_string()]));
+        let scan = caches.scan_file(opened(), key, Some(&mut scanner), &db);
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["cached"]);
+        assert_eq!(scan.scan_error, None);
+        assert!(scan.hashes.error.as_ref().unwrap().contains("reopen"));
+        assert_eq!(scan.hashes.size, 4);
+    }
+
+    #[test]
+    fn oversized_yara_scans_only_the_bounded_prefix() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"safe").unwrap();
+        file.as_file()
+            .write_all_at(b"outside-the-budget", FILE_SIZE_SCAN_LIMIT)
+            .unwrap();
+        let source = format!(
+            "rule prefix {{ strings: $s = \"safe\" condition: $s at 0 and filesize == \
+             {FILE_SIZE_SCAN_LIMIT} }}\nrule excluded {{ strings: $s = \"outside-the-budget\" \
+             condition: $s }}"
+        );
+        let mut compiler = yara_x::Compiler::new();
+        compiler.add_source(source.as_str()).unwrap();
+        let mut scanner = Scanner::with_rules(compiler.build());
+        let (mut caches, ns) = caches();
+        let db = magic_db::load().unwrap();
+        let scan = caches
+            .get_scan_in_ns(
+                ns,
+                &Path::Std(file.path().to_path_buf()),
+                Some(&mut scanner),
+                &db,
+            )
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["prefix"]);
+        assert_eq!(
+            scan.scan_error.as_deref(),
+            Some("partial scan, file size exceeds scan limit")
+        );
+        assert_eq!(
+            scan.hashes.error,
+            Some(Error::FileSizeScanLimit.to_string())
+        );
+    }
+
+    #[test]
+    fn oversized_files_skip_hashing_but_keep_magic() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        file.as_file().set_len(FILE_SIZE_SCAN_LIMIT + 1).unwrap();
+        let hashes = Hashes::from_path_ref(file.path(), &magic_db::load().unwrap());
+        assert_eq!(hashes.size, FILE_SIZE_SCAN_LIMIT + 1);
+        assert_eq!(hashes.error, Some(Error::FileSizeScanLimit.to_string()));
+        assert_no_digests(&hashes);
+        assert_ne!(hashes.magic, "?");
+    }
+}
