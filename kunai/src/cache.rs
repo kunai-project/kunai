@@ -17,7 +17,10 @@ use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{self, SeekFrom},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
     path::PathBuf,
     sync::Arc,
     time::SystemTime,
@@ -42,9 +45,10 @@ struct OpenedFile {
 
 impl OpenedFile {
     fn new(path: &std::path::Path) -> io::Result<Self> {
+        // O_PATH never calls the driver's open, which may have side effects (e.g. watchdog)
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+            .custom_flags(libc::O_PATH)
             .open(path)?;
         let meta = file.metadata()?;
         if !meta.is_file() {
@@ -56,9 +60,15 @@ impl OpenedFile {
         Ok(Self { file, meta })
     }
 
-    // Reads and allocates, so only call it once a cache lookup missed.
+    // Reads and allocates, so only call it once a cache lookup missed. Call it
+    // from our own mount namespace, whose /proc belongs to us.
     fn reader(self) -> io::Result<DataReader<'static>> {
-        DataReader::from_file(self.file)
+        // reopening the descriptor through procfs targets the checked inode, not the path
+        let file = OpenOptions::new()
+            .read(true)
+            .open(format!("/proc/self/fd/{}", self.file.as_raw_fd()))
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to reopen file: {e}")))?;
+        DataReader::from_file(file)
             .map_err(|e| io::Error::new(e.kind(), format!("failed to create lazy cache: {e}")))
     }
 }
