@@ -1798,9 +1798,9 @@ dependencies = [
 
 [[package]]
 name = "magic-db"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5733f71e8b369ae0936d1a40fa17aea9261166436ed38281c6c89feb4a573f12"
+checksum = "c5561e467fa5bd8c92c322e5034af2e1d6da9d91da1b24b1359078ba3e34276a"
 dependencies = [
  "magic-embed",
  "pure-magic",
@@ -1808,9 +1808,9 @@ dependencies = [
 
 [[package]]
 name = "magic-embed"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "546e353f65f02a77f895d9b38bb50a1bd623e198c7b4cdd5e69870d89b264029"
+checksum = "ed49920fe6094285be429c43f467f78b11191f1b290ad66b586bca848070c96b"
 dependencies = [
  "fs-walk 0.2.2",
  "proc-macro2",
@@ -2323,20 +2323,21 @@ dependencies = [
 
 [[package]]
 name = "pure-magic"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d00c964a0cc0521b1e499934571f051ac6692ebbfc05e2d2c04a3dd6f9aaafdd"
+checksum = "c9f8c064c6afc714317bf68411d6c03b80bd9c53b1266b27048a6ba56aa9c107"
 dependencies = [
- "bincode",
  "chrono",
  "csv",
  "dyf",
  "flaglet",
  "flate2",
+ "foldhash",
  "memchr",
  "memmap2",
  "pest",
  "pest_derive",
+ "postcard",
  "regex",
  "serde",
  "serde_json",
