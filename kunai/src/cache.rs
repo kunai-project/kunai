@@ -15,9 +15,12 @@ use sha2::{Sha256, Sha512};
 use std::{
     borrow::Cow,
     collections::HashMap,
-    fs::{self, File},
-    io::{self},
-    os::unix::prelude::MetadataExt,
+    fs::{self, File, OpenOptions},
+    io::{self, SeekFrom},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
     path::PathBuf,
     sync::Arc,
     time::SystemTime,
@@ -34,6 +37,73 @@ use crate::{
 };
 
 pub const FILE_SIZE_SCAN_LIMIT: u64 = ByteSize::from_mb(100).in_bytes();
+
+struct OpenedFile {
+    file: File,
+    meta: fs::Metadata,
+}
+
+impl OpenedFile {
+    fn new(path: &std::path::Path) -> io::Result<Self> {
+        // O_PATH never calls the driver's open, which may have side effects (e.g. watchdog)
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_PATH)
+            .open(path)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not a regular file",
+            ));
+        }
+        Ok(Self { file, meta })
+    }
+
+    // Reads and allocates, so only call it once a cache lookup missed. Call it
+    // from our own mount namespace, whose /proc belongs to us.
+    fn reader(self) -> io::Result<DataReader<'static>> {
+        // reopening the descriptor through procfs targets the checked inode, not the path
+        let file = OpenOptions::new()
+            .read(true)
+            .open(format!("/proc/self/fd/{}", self.file.as_raw_fd()))
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to reopen file: {e}")))?;
+        DataReader::from_file(file)
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to create lazy cache: {e}")))
+    }
+}
+
+fn scan_signatures(
+    reader: &mut DataReader<'_>,
+    size: u64,
+    scanner: &mut Scanner<'_>,
+) -> Result<Arc<[String]>, Error> {
+    // Cap reads at the opened length so concurrent growth cannot extend the budget.
+    let len = size.min(FILE_SIZE_SCAN_LIMIT);
+    let data = reader.read_range(0..len)?;
+    if data.len() as u64 != len {
+        return Err(
+            io::Error::new(io::ErrorKind::UnexpectedEof, "file shrank while reading").into(),
+        );
+    }
+    // yara-x resets its state on every scan, so a poisoned scanner is still usable
+    let scanner = scanner
+        .get_mut()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let results = scanner.scan(data)?;
+    Ok(results
+        .matching_rules()
+        .map(|rule| rule.identifier().to_string())
+        .collect())
+}
+
+/// Result of [Caches::get_scan_in_ns].
+pub struct ScanOutcome {
+    pub hashes: Arc<Hashes>,
+    /// `None` without a scanner or if scanning failed
+    pub signatures: Option<Arc<[String]>>,
+    pub scan_error: Option<String>,
+}
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -152,62 +222,83 @@ impl Hashes {
 
     pub fn from_path_ref<T: AsRef<std::path::Path>>(p: T, magic_db: &MagicDb) -> Self {
         let path = p.as_ref();
-        let mut h = Hashes {
-            path: path.to_path_buf(),
-            ..Hashes::default()
+        match OpenedFile::new(path) {
+            Ok(file) => Self::from_file(path.to_path_buf(), file, magic_db),
+            Err(e) => Self {
+                path: path.to_path_buf(),
+                error: Some(format!("failed to open file: {e}")),
+                ..Self::default()
+            },
+        }
+    }
+
+    fn from_file(path: PathBuf, file: OpenedFile, magic_db: &MagicDb) -> Self {
+        let size = file.meta.len();
+        match file.reader() {
+            Ok(mut f) => Self::from_reader(path, size, &mut f, magic_db),
+            Err(e) => Self::with_error(path, size, e.to_string()),
+        }
+    }
+
+    fn with_error(path: PathBuf, size: u64, error: String) -> Self {
+        Self {
+            path,
+            size,
+            error: Some(error),
+            ..Self::default()
+        }
+    }
+
+    fn from_reader(path: PathBuf, size: u64, f: &mut DataReader<'_>, magic_db: &MagicDb) -> Self {
+        let mut h = Self {
+            path,
+            size,
+            ..Self::default()
         };
 
-        let Ok(meta) = path.metadata().inspect_err(|e| {
-            h.error = Some(format!("failed to get metadata: {e}"));
-        }) else {
-            return h;
-        };
+        if h.size > FILE_SIZE_SCAN_LIMIT {
+            h.error = Some(Error::FileSizeScanLimit.to_string());
+        } else if let Err(e) = f.seek(SeekFrom::Start(0)) {
+            h.error = Some(format!("failed to read: {e}"));
+        } else {
+            let mut md5 = Md5::new();
+            let mut sha1 = Sha1::new();
+            let mut sha256 = Sha256::new();
+            let mut sha512 = Sha512::new();
+            let mut remaining = h.size;
 
-        h.size = meta.size();
-
-        if let Ok(mut f) = File::open(path)
-            .inspect_err(|e| {
-                h.error = Some(format!("failed to open file: {e}",));
-            })
-            .and_then(DataReader::from_file)
-            .inspect_err(|e| {
-                h.error = Some(format!("failed to create lazy cache: {e}",));
-            })
-        {
-            if meta.size() <= FILE_SIZE_SCAN_LIMIT {
-                let mut md5 = Md5::new();
-                let mut sha1 = Sha1::new();
-                let mut sha256 = Sha256::new();
-                let mut sha512 = Sha512::new();
-
-                while let Ok(buf) = f.read_count(4096).inspect_err(|e| {
-                    h.error = Some(format!("failed to read: {e}",));
-                }) {
-                    if buf.is_empty() {
-                        break;
+            while let Ok(buf) = f.read_count(remaining.min(4096)).inspect_err(|e| {
+                h.error = Some(format!("failed to read: {e}"));
+            }) {
+                if buf.is_empty() {
+                    if remaining != 0 {
+                        h.error = Some(String::from("failed to read: file shrank while reading"));
                     }
-                    md5.update(buf);
-                    sha1.update(buf);
-                    sha256.update(buf);
-                    sha512.update(buf);
-                }
 
+                    break;
+                }
+                remaining -= buf.len() as u64;
+                md5.update(buf);
+                sha1.update(buf);
+                sha256.update(buf);
+                sha512.update(buf);
+            }
+
+            if h.error.is_none() {
                 h.md5 = hex::encode(md5.finalize());
                 h.sha1 = hex::encode(sha1.finalize());
                 h.sha256 = hex::encode(sha256.finalize());
                 h.sha512 = hex::encode(sha512.finalize());
-            } else {
-                h.error = Some(Error::FileSizeScanLimit.to_string());
             }
-
-            h.magic = magic_db
-                .first_magic(&mut f, None)
-                .inspect_err(|e| {
-                    h.error = Some(format!("failed to find magic: {e}",));
-                })
-                .map(|m| m.message())
-                .unwrap_or_else(|_| "?".into());
         }
+
+        h.magic = magic_db
+            .first_magic(f, None)
+            .inspect_err(|e| {
+                h.error = Some(format!("failed to find magic: {e}"));
+            })
+            .map(|m| m.message())
+            .unwrap_or_else(|_| "?".into());
 
         h
     }
@@ -514,7 +605,8 @@ impl Caches {
             && !self.user_ns_evicted_in_use
         {
             log::warn!(
-                "user namespace cache is too small ({} entries): namespaces in use get evicted, some events may miss their in-namespace identity",
+                "user namespace cache is too small ({} entries): namespaces in use get evicted, \
+                 some events may miss their in-namespace identity",
                 self.user_namespaces.cap()
             );
             self.user_ns_evicted_in_use = true;
@@ -557,54 +649,79 @@ impl Caches {
             .map_err(Error::from)
     }
 
-    pub fn get_sig_in_ns(
+    /// Gets hashes and, if `scanner` is set, signatures of `path`, reading
+    /// the file once for whatever is missing from the caches.
+    pub fn get_scan_in_ns(
         &mut self,
         ns: Mnt,
         path: &Path,
-        scanner: &mut Scanner<'_>,
-    ) -> Result<(Arc<[String]>, Option<String>), Error> {
-        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
-            return Err(Error::UnknownMntNs(ns));
-        };
+        scanner: Option<&mut Scanner<'_>>,
+        magic_db: &MagicDb,
+    ) -> Result<ScanOutcome, Error> {
+        let (file, key) = self.open_in_ns(ns, path)?;
+        Ok(self.scan_file(file, key, scanner, magic_db))
+    }
 
-        let res = mnt_ns.do_in_namespace(|| {
-            let pb = path.as_path();
-            // we create key to check if we already have cached
-            // signatures for that file
-            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
-            let mut msg = None;
+    fn scan_file(
+        &mut self,
+        file: OpenedFile,
+        key: Key,
+        mut scanner: Option<&mut Scanner<'_>>,
+        magic_db: &MagicDb,
+    ) -> ScanOutcome {
+        let size = file.meta.len();
 
-            if key.size > FILE_SIZE_SCAN_LIMIT {
-                msg = Some(String::from("partial scan, file size exceeds scan limit"))
+        let mut signatures = None;
+        let mut scan_error = None;
+        if scanner.is_some() {
+            if size > FILE_SIZE_SCAN_LIMIT {
+                scan_error = Some(String::from("partial scan, file size exceeds scan limit"));
             }
-
-            let sigs = match self.signatures.get(&key) {
-                // we have caches signatures
-                Some(sig) => Arc::clone(sig),
-                // we don't have cached signatures
-                None => {
-                    // lock should never fail as the scanner is used only in one thread
-                    let mut yx_scanner = scanner.lock().expect("failed to lock yara scanner");
-                    let sr = yx_scanner.scan_file(pb).map_err(namespace::Error::other)?;
-                    let sigs: Arc<[String]> = sr
-                        .matching_rules()
-                        .map(|m| m.identifier().to_string())
-                        .collect();
-                    // we update our cache
-                    self.signatures.insert(key.clone(), Arc::clone(&sigs));
-                    sigs
-                }
-            };
-
-            Ok((sigs, msg))
-        });
-
-        // we must be sure that we restore our namespace
-        if matches!(res.as_ref(), Err(namespace::Error::Exit(_, _, _))) {
-            res.as_ref().expect("failed to restore namespace");
+            if let Some(sigs) = self.signatures.get(&key) {
+                signatures = Some(Arc::clone(sigs));
+                // we clear scanner, we don't need it
+                scanner = None;
+            }
         }
 
-        res.map_err(Error::from)
+        let hashes = match (self.hashes.get(&key).cloned(), scanner) {
+            (Some(hashes), None) => hashes,
+            (hashes, scanner) => {
+                // a reader failure only affects what missed the caches
+                let mut reader = file.reader();
+
+                if let Some(scanner) = scanner {
+                    let res = match reader.as_mut() {
+                        Ok(r) => scan_signatures(r, size, scanner).map_err(|e| e.to_string()),
+                        Err(e) => Err(e.to_string()),
+                    };
+                    match res {
+                        Ok(sigs) => {
+                            self.signatures.insert(key.clone(), Arc::clone(&sigs));
+                            signatures = Some(sigs);
+                        }
+                        Err(e) => scan_error = Some(e),
+                    }
+                }
+
+                hashes.unwrap_or_else(|| {
+                    let path = key.path.clone();
+                    let h = Arc::new(match reader.as_mut() {
+                        Ok(r) => Hashes::from_reader(path, size, r, magic_db),
+                        Err(e) => Hashes::with_error(path, size, e.to_string()),
+                    });
+                    // errors are cached too, bounding the work a hostile file can cause
+                    self.hashes.insert(key, Arc::clone(&h));
+                    h
+                })
+            }
+        };
+
+        ScanOutcome {
+            hashes,
+            signatures,
+            scan_error,
+        }
     }
 
     pub fn get_hashes_in_ns(
@@ -613,22 +730,29 @@ impl Caches {
         path: &Path,
         magic_db: &MagicDb,
     ) -> Result<Arc<Hashes>, Error> {
+        let (file, key) = self.open_in_ns(ns, path)?;
+
+        if let Some(h) = self.hashes.get(&key) {
+            return Ok(Arc::clone(h));
+        }
+
+        let h = Arc::new(Hashes::from_file(key.path.clone(), file, magic_db));
+        self.hashes.insert(key, Arc::clone(&h));
+        Ok(h)
+    }
+
+    /// Opens `path` in mount namespace `ns`. Only resolving the path needs the
+    /// namespace: the returned descriptor is read from the current one.
+    fn open_in_ns(&mut self, ns: Mnt, path: &Path) -> Result<(OpenedFile, Key), Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
 
         let res = mnt_ns.do_in_namespace(|| {
-            let pb = path.as_path();
-
-            let key = Key::from_path_in_ns(ns, path).map_err(namespace::Error::other)?;
-
-            if let Some(h) = self.hashes.get(&key) {
-                return Ok(Arc::clone(h));
-            }
-
-            let h = Arc::new(Hashes::from_path_ref(pb, magic_db));
-            self.hashes.insert(key, Arc::clone(&h));
-            Ok(h)
+            let file = OpenedFile::new(path.as_path()).map_err(namespace::Error::other)?;
+            let key =
+                Key::from_path_and_meta(ns, path, &file.meta).map_err(namespace::Error::other)?;
+            Ok((file, key))
         });
 
         // we must be sure that we restore our namespace
@@ -730,5 +854,390 @@ mod tests {
         assert_eq!(refs.track(pkey(1), a), None);
         assert_eq!(refs.track(pkey(1), b), Some(a));
         assert_eq!(refs.untrack(&pkey(1)), Some(b));
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+    use crate::util::namespace::Namespace;
+    use std::{
+        ffi::{CString, OsString},
+        io::Write,
+        os::unix::{
+            ffi::OsStringExt,
+            fs::{FileExt, symlink},
+        },
+        process::{Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    fn scanner() -> Scanner<'static> {
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source("rule safe { strings: $s = \"safe\" condition: $s }")
+            .unwrap();
+        Scanner::with_rules(compiler.build())
+    }
+
+    fn caches() -> (Caches, Mnt) {
+        let pid = std::process::id();
+        let ns = Mnt::from_pid::<Mnt>(pid).unwrap();
+        let mut caches = Caches::with_max_entries(16);
+        caches.cache_mnt_ns(pid as i32, ns, None).unwrap();
+        (caches, ns)
+    }
+
+    fn fifo(path: &std::path::Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: path is a live NUL-terminated string and mkfifo retains no pointers.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    }
+
+    fn assert_digests(hashes: &Hashes, data: &[u8]) {
+        assert!(hashes.error.is_none(), "{:?}", hashes.error);
+        assert_eq!(hashes.md5, hex::encode(Md5::digest(data)));
+        assert_eq!(hashes.sha1, hex::encode(Sha1::digest(data)));
+        assert_eq!(hashes.sha256, hex::encode(Sha256::digest(data)));
+        assert_eq!(hashes.sha512, hex::encode(Sha512::digest(data)));
+        assert_ne!(hashes.magic, "?");
+    }
+
+    // procfs refuses to reopen a socket, so building the reader fails
+    fn unreadable(meta: fs::Metadata) -> OpenedFile {
+        let (sock, _) = std::os::unix::net::UnixStream::pair().unwrap();
+        OpenedFile {
+            file: File::from(std::os::fd::OwnedFd::from(sock)),
+            meta,
+        }
+    }
+
+    fn assert_no_digests(hashes: &Hashes) {
+        assert!(hashes.error.is_some());
+        assert_eq!(hashes.md5, "?");
+        assert_eq!(hashes.sha1, "?");
+        assert_eq!(hashes.sha256, "?");
+        assert_eq!(hashes.sha512, "?");
+    }
+
+    #[test]
+    fn hostile_paths_do_not_block() {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cache::file_tests::hostile_paths_child",
+                "--nocapture",
+            ])
+            .env("KUNAI_HOSTILE_FILE_CHILD", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let timed_out = loop {
+            if child.try_wait().unwrap().is_some() {
+                break false;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                break true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let output = child.wait_with_output().unwrap();
+        assert!(!timed_out, "hostile-file I/O child exceeded its watchdog");
+        assert!(
+            output.status.success(),
+            "child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed;"));
+    }
+
+    #[test]
+    fn hostile_paths_child() {
+        if std::env::var_os("KUNAI_HOSTILE_FILE_CHILD").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let named_pipe = dir.path().join("fifo");
+        fifo(&named_pipe);
+        let link = dir.path().join("link");
+        symlink(&named_pipe, &link).unwrap();
+        let replacement = dir.path().join("replacement");
+        fs::write(&replacement, b"safe").unwrap();
+        assert!(replacement.metadata().unwrap().is_file());
+        fs::remove_file(&replacement).unwrap();
+        fifo(&replacement);
+
+        let db = magic_db::load().unwrap();
+        let mut scanner = scanner();
+        let (mut caches, ns) = caches();
+        for path in [
+            named_pipe.as_path(),
+            link.as_path(),
+            replacement.as_path(),
+            dir.path(),
+            std::path::Path::new("/dev/null"),
+            std::path::Path::new("/dev/zero"),
+        ] {
+            assert!(OpenedFile::new(path).is_err(), "{}", path.display());
+            assert_no_digests(&Hashes::from_path_ref(path, &db));
+            let path = Path::Std(path.to_path_buf());
+            assert!(caches.get_hashes_in_ns(ns, &path, &db).is_err());
+            assert!(
+                caches
+                    .get_scan_in_ns(ns, &path, Some(&mut scanner), &db)
+                    .is_err()
+            );
+        }
+        assert!(caches.hashes.is_empty());
+        assert!(caches.signatures.is_empty());
+
+        let path = dir.path().join("cached");
+        fs::write(&path, b"safe").unwrap();
+        let cached_path = Path::Std(path.clone());
+        assert_digests(
+            &caches.get_hashes_in_ns(ns, &cached_path, &db).unwrap(),
+            b"safe",
+        );
+        let scan = caches
+            .get_scan_in_ns(ns, &cached_path, Some(&mut scanner), &db)
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["safe"]);
+        assert_eq!(scan.scan_error, None);
+        fs::remove_file(&path).unwrap();
+        fifo(&path);
+        assert!(caches.get_hashes_in_ns(ns, &cached_path, &db).is_err());
+        assert!(
+            caches
+                .get_scan_in_ns(ns, &cached_path, Some(&mut scanner), &db)
+                .is_err()
+        );
+
+        let original = dir.path().join("original");
+        fs::write(&original, b"safe").unwrap();
+        let opened = OpenedFile::new(&original).unwrap();
+        let scan_opened = OpenedFile::new(&original).unwrap();
+        fs::remove_file(&original).unwrap();
+        fifo(&original);
+        assert_digests(&Hashes::from_file(original, opened, &db), b"safe");
+        let size = scan_opened.meta.len();
+        let mut reader = scan_opened.reader().unwrap();
+        assert_eq!(
+            scan_signatures(&mut reader, size, &mut scanner)
+                .unwrap()
+                .as_ref(),
+            ["safe"]
+        );
+    }
+
+    #[test]
+    fn special_files_are_never_opened_for_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fifo");
+        fifo(&path);
+
+        // a FIFO stands for a device: opening it for read has a visible side effect
+        let (tx, rx) = std::sync::mpsc::channel();
+        let writer_path = path.clone();
+        thread::spawn(move || {
+            let _w = OpenOptions::new().write(true).open(&writer_path).unwrap();
+            tx.send(()).unwrap();
+        });
+        thread::sleep(Duration::from_millis(50));
+
+        assert!(OpenedFile::new(&path).is_err());
+        let woken = rx.recv_timeout(Duration::from_millis(500)).is_ok();
+
+        // releases the writer; nonblocking so it cannot hang once the writer is gone
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path)
+                .unwrap(),
+        );
+        assert!(!woken, "OpenedFile::new opened a non-regular file for read");
+    }
+
+    #[test]
+    fn hashes_and_scans_preserve_exact_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(OsString::from_vec(b"file-\xff".to_vec()));
+        let data = b"safe\0\xff\n";
+        fs::write(&path, data).unwrap();
+        let db = magic_db::load().unwrap();
+        let hashes = Hashes::from_path_ref(&path, &db);
+        assert_eq!(hashes.path, path);
+        assert_eq!(hashes.size, data.len() as u64);
+        assert_digests(&hashes, data);
+
+        // fresh caches: signatures and hashes share one reader
+        let (mut caches, ns) = caches();
+        let scan = caches
+            .get_scan_in_ns(ns, &Path::Std(path), Some(&mut scanner()), &db)
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["safe"]);
+        assert_eq!(scan.scan_error, None);
+        assert_digests(&scan.hashes, data);
+
+        let empty = dir.path().join("empty");
+        fs::write(&empty, []).unwrap();
+        assert_digests(&Hashes::from_path_ref(&empty, &db), b"");
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source("rule empty { condition: filesize == 0 }")
+            .unwrap();
+        let mut scanner = Scanner::with_rules(compiler.build());
+        let scan = caches
+            .get_scan_in_ns(ns, &Path::Std(empty), Some(&mut scanner), &db)
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["empty"]);
+    }
+
+    #[test]
+    fn hashes_iterate_in_chunks_and_stop_at_opened_length() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let data: Vec<u8> = (0..12_295).map(|i| (i % 251) as u8).collect();
+        file.write_all(&data).unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.write_all(b"appended after metadata").unwrap();
+        let hashes = Hashes::from_file(
+            file.path().to_path_buf(),
+            opened,
+            &magic_db::load().unwrap(),
+        );
+        assert_eq!(hashes.size, data.len() as u64);
+        assert_digests(&hashes, &data);
+    }
+
+    #[test]
+    fn signature_scans_stop_at_opened_length() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"safe").unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.write_all(b"more").unwrap();
+        let size = opened.meta.len();
+        let mut reader = opened.reader().unwrap();
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source("rule prefix { condition: filesize == 4 and uint32(0) == 0x65666173 }")
+            .unwrap();
+        let mut scanner = Scanner::with_rules(compiler.build());
+        let matches = scan_signatures(&mut reader, size, &mut scanner).unwrap();
+        assert_eq!(matches.as_ref(), ["prefix"]);
+    }
+
+    #[test]
+    fn failed_reads_do_not_publish_partial_hashes() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"safe").unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.as_file().set_len(2).unwrap();
+        let size = opened.meta.len();
+        let error =
+            scan_signatures(&mut opened.reader().unwrap(), size, &mut scanner()).unwrap_err();
+        assert!(
+            matches!(&error, Error::IoError(e) if e.kind() == io::ErrorKind::UnexpectedEof),
+            "{error}"
+        );
+
+        file.as_file().set_len(4).unwrap();
+        let opened = OpenedFile::new(file.path()).unwrap();
+        file.as_file().set_len(0).unwrap();
+        let db = magic_db::load().unwrap();
+        assert_no_digests(&Hashes::from_file(file.path().to_path_buf(), opened, &db));
+
+        file.as_file().set_len(4).unwrap();
+        let opened = unreadable(file.as_file().metadata().unwrap());
+        assert_no_digests(&Hashes::from_file(file.path().to_path_buf(), opened, &db));
+    }
+
+    #[test]
+    fn reader_failures_keep_cache_hits() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), b"safe").unwrap();
+        let opened = || unreadable(file.as_file().metadata().unwrap());
+        let db = magic_db::load().unwrap();
+        let mut scanner = scanner();
+        let (mut caches, ns) = caches();
+        let path = Path::Std(file.path().to_path_buf());
+        let key = Key::from_path_and_meta(ns, &path, &opened().meta).unwrap();
+
+        let scan = caches.scan_file(opened(), key.clone(), Some(&mut scanner), &db);
+        assert!(scan.signatures.is_none());
+        assert!(scan.scan_error.unwrap().contains("reopen"));
+        assert_no_digests(&scan.hashes);
+        assert_eq!(scan.hashes.size, 4);
+        assert!(caches.hashes.contains_key(&key));
+        assert!(caches.signatures.is_empty());
+
+        let cached = Arc::new(Hashes::with_error(key.path.clone(), 1, "cached".into()));
+        caches.hashes.insert(key.clone(), Arc::clone(&cached));
+        let scan = caches.scan_file(opened(), key.clone(), Some(&mut scanner), &db);
+        assert!(Arc::ptr_eq(&scan.hashes, &cached));
+        assert!(scan.signatures.is_none());
+        assert!(scan.scan_error.unwrap().contains("reopen"));
+
+        caches.hashes.remove(&key);
+        caches
+            .signatures
+            .insert(key.clone(), Arc::from(["cached".to_string()]));
+        let scan = caches.scan_file(opened(), key, Some(&mut scanner), &db);
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["cached"]);
+        assert_eq!(scan.scan_error, None);
+        assert!(scan.hashes.error.as_ref().unwrap().contains("reopen"));
+        assert_eq!(scan.hashes.size, 4);
+    }
+
+    #[test]
+    fn oversized_yara_scans_only_the_bounded_prefix() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"safe").unwrap();
+        file.as_file()
+            .write_all_at(b"outside-the-budget", FILE_SIZE_SCAN_LIMIT)
+            .unwrap();
+        let source = format!(
+            "rule prefix {{ strings: $s = \"safe\" condition: $s at 0 and filesize == \
+             {FILE_SIZE_SCAN_LIMIT} }}\nrule excluded {{ strings: $s = \"outside-the-budget\" \
+             condition: $s }}"
+        );
+        let mut compiler = yara_x::Compiler::new();
+        compiler.add_source(source.as_str()).unwrap();
+        let mut scanner = Scanner::with_rules(compiler.build());
+        let (mut caches, ns) = caches();
+        let db = magic_db::load().unwrap();
+        let scan = caches
+            .get_scan_in_ns(
+                ns,
+                &Path::Std(file.path().to_path_buf()),
+                Some(&mut scanner),
+                &db,
+            )
+            .unwrap();
+        assert_eq!(scan.signatures.unwrap().as_ref(), ["prefix"]);
+        assert_eq!(
+            scan.scan_error.as_deref(),
+            Some("partial scan, file size exceeds scan limit")
+        );
+        assert_eq!(
+            scan.hashes.error,
+            Some(Error::FileSizeScanLimit.to_string())
+        );
+    }
+
+    #[test]
+    fn oversized_files_skip_hashing_but_keep_magic() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        file.as_file().set_len(FILE_SIZE_SCAN_LIMIT + 1).unwrap();
+        let hashes = Hashes::from_path_ref(file.path(), &magic_db::load().unwrap());
+        assert_eq!(hashes.size, FILE_SIZE_SCAN_LIMIT + 1);
+        assert_eq!(hashes.error, Some(Error::FileSizeScanLimit.to_string()));
+        assert_no_digests(&hashes);
+        assert_ne!(hashes.magic, "?");
     }
 }

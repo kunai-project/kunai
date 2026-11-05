@@ -1045,15 +1045,23 @@ impl EventSink<'_> {
     {
         let cp = cache::Path::from(p.to_path_buf());
         // if the scanner is None, signatures stay at their (empty) default
-        let (sigs, err) = match self.file_scanner.as_mut() {
-            Some(s) => match self.caches.get_sig_in_ns(ns, &cp, s) {
-                Ok((sigs, msg)) => (Some(sigs), msg),
-                Err(e) => (None, Some(format!("{e}"))),
-            },
-            None => (None, None),
+        let scanning = self.file_scanner.is_some();
+        let scan = self
+            .caches
+            .get_scan_in_ns(ns, &cp, self.file_scanner.as_mut(), &self.magic_db);
+        let (hashes, sigs, err) = match scan {
+            Ok(scan) => (scan.hashes, scan.signatures, scan.scan_error),
+            Err(e) => {
+                let meta = FileMeta {
+                    error: Some(format!("{e}")),
+                    ..Default::default()
+                };
+                let hashes = Arc::new(Hashes::with_meta(cp.as_path().to_path_buf(), meta));
+                (hashes, None, scanning.then(|| format!("{e}")))
+            }
         };
 
-        let mut data = FileScanData::from_hashes(self.get_hashes_in_ns(Some(ns), &cp));
+        let mut data = FileScanData::from_hashes(hashes);
         data.source_event = event.info().event.uuid;
         if let Some(sigs) = sigs {
             data.positives = sigs.len();
