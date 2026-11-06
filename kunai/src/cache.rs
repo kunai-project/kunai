@@ -134,6 +134,11 @@ pub enum FileMod {
         kernel: DateTime<Utc>,
         userland: DateTime<Utc>,
     },
+    #[error("ctime changed: kernel={kernel} userland={userland}")]
+    Ctime {
+        kernel: DateTime<Utc>,
+        userland: DateTime<Utc>,
+    },
 }
 
 impl Error {
@@ -360,23 +365,12 @@ impl Path {
 struct Key {
     mnt_namespace: Mnt,
     path: PathBuf,
+    dev: u64,
+    ino: u64,
     size: u64,
     modified: SystemTime,
-    created: SystemTime,
-    accessed: SystemTime,
-}
-
-impl Default for Key {
-    fn default() -> Self {
-        Key {
-            mnt_namespace: Mnt::default(),
-            path: PathBuf::default(),
-            size: 0,
-            modified: SystemTime::UNIX_EPOCH,
-            created: SystemTime::UNIX_EPOCH,
-            accessed: SystemTime::UNIX_EPOCH,
-        }
-    }
+    // unlike mtime, users cannot set ctime and rewrites update it
+    changed: SystemTime,
 }
 
 pub type AccountTables = (Option<Arc<Users>>, Option<Arc<Groups>>);
@@ -419,10 +413,11 @@ impl Key {
         let k = Key {
             mnt_namespace: ns,
             path: path.as_path().to_path_buf(),
+            dev: meta.dev(),
+            ino: meta.ino(),
             size: meta.size(),
             modified: SystemTime::from(&Time::new(meta.mtime(), meta.mtime_nsec())),
-            accessed: SystemTime::from(&Time::new(meta.atime(), meta.atime_nsec())),
-            ..Default::default()
+            changed: SystemTime::from(&Time::new(meta.ctime(), meta.ctime_nsec())),
         };
 
         // we do extra checks if it is a Path comming from our probes
@@ -431,17 +426,17 @@ impl Key {
             // we don't have to switch to ns here as it is done in caller
             let ebpf_meta = ebpf_meta.ok_or(Error::MetadataRequired)?;
 
-            if ebpf_meta.size as u64 != meta.size() {
+            if ebpf_meta.size as u64 != k.size {
                 return Err(Error::FileModSinceKernelEvent(FileMod::Size {
                     kernel: ebpf_meta.size as u64,
-                    userland: meta.size(),
+                    userland: k.size,
                 }));
             }
 
-            if ebpf_meta.ino != meta.ino() {
+            if ebpf_meta.ino != k.ino {
                 return Err(Error::FileModSinceKernelEvent(FileMod::Inode {
                     kernel: ebpf_meta.ino,
-                    userland: meta.ino(),
+                    userland: k.ino,
                 }));
             }
 
@@ -450,6 +445,14 @@ impl Key {
                 return Err(Error::FileModSinceKernelEvent(FileMod::Mtime {
                     kernel: kernel_mtime.into(),
                     userland: k.modified.into(),
+                }));
+            }
+
+            let kernel_ctime = SystemTime::from(&ebpf_meta.ctime);
+            if kernel_ctime != k.changed {
+                return Err(Error::FileModSinceKernelEvent(FileMod::Ctime {
+                    kernel: kernel_ctime.into(),
+                    userland: k.changed.into(),
                 }));
             }
         }
