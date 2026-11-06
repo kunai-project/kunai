@@ -1194,6 +1194,75 @@ mod file_tests {
         assert_eq!(scan.hashes.size, 4);
     }
 
+    fn key(path: &std::path::Path) -> Key {
+        Key::from_path_in_ns(Mnt::default(), &Path::Std(path.to_path_buf())).unwrap()
+    }
+
+    fn copy_times(file: &File, meta: &fs::Metadata) {
+        let times = fs::FileTimes::new()
+            .set_accessed(meta.accessed().unwrap())
+            .set_modified(meta.modified().unwrap());
+        file.set_times(times).unwrap();
+    }
+
+    #[test]
+    fn key_changes_when_file_renamed_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let (benign, evil) = (dir.path().join("a"), dir.path().join("b"));
+        fs::write(&benign, b"safe").unwrap();
+        fs::write(&evil, b"evil").unwrap();
+        let cached = key(&benign);
+
+        let evil_file = File::options().write(true).open(&evil).unwrap();
+        copy_times(&evil_file, &fs::metadata(&benign).unwrap());
+        fs::rename(&evil, &benign).unwrap();
+        assert_ne!(key(&benign), cached);
+    }
+
+    #[test]
+    fn key_changes_when_rewritten_in_place() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), b"safe").unwrap();
+        let meta = fs::metadata(file.path()).unwrap();
+        let cached = key(file.path());
+
+        // kernels without multigrain timestamps update ctime from a coarse clock
+        thread::sleep(Duration::from_millis(20));
+        file.as_file().write_all_at(b"evil", 0).unwrap();
+        copy_times(file.as_file(), &meta);
+        assert_ne!(key(file.path()), cached);
+    }
+
+    fn ebpf_meta(meta: &fs::Metadata) -> kunai_common::path::Metadata {
+        kunai_common::path::Metadata {
+            ino: meta.ino(),
+            size: meta.size() as i64,
+            atime: Time::new(meta.atime(), meta.atime_nsec()),
+            mtime: Time::new(meta.mtime(), meta.mtime_nsec()),
+            ctime: Time::new(meta.ctime(), meta.ctime_nsec()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bpf_key_rejects_rewrite_since_kernel_event() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), b"safe").unwrap();
+        let meta = fs::metadata(file.path()).unwrap();
+        let path = Path::Bpf {
+            path: file.path().to_path_buf(),
+            ebpf_meta: Some(ebpf_meta(&meta)),
+        };
+        assert!(Key::from_path_in_ns(Mnt::default(), &path).is_ok());
+
+        // coarse ctime clock, see key_changes_when_rewritten_in_place
+        thread::sleep(Duration::from_millis(20));
+        file.as_file().write_all_at(b"evil", 0).unwrap();
+        copy_times(file.as_file(), &meta);
+        let err = Key::from_path_in_ns(Mnt::default(), &path).unwrap_err();
+        assert!(err.to_string().contains("ctime changed"), "{err}");
+    }
+
     #[test]
     fn oversized_yara_scans_only_the_bounded_prefix() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
