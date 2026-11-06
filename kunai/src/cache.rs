@@ -134,6 +134,11 @@ pub enum FileMod {
         kernel: DateTime<Utc>,
         userland: DateTime<Utc>,
     },
+    #[error("ctime changed: kernel={kernel} userland={userland}")]
+    Ctime {
+        kernel: DateTime<Utc>,
+        userland: DateTime<Utc>,
+    },
 }
 
 impl Error {
@@ -360,23 +365,12 @@ impl Path {
 struct Key {
     mnt_namespace: Mnt,
     path: PathBuf,
+    dev: u64,
+    ino: u64,
     size: u64,
     modified: SystemTime,
-    created: SystemTime,
-    accessed: SystemTime,
-}
-
-impl Default for Key {
-    fn default() -> Self {
-        Key {
-            mnt_namespace: Mnt::default(),
-            path: PathBuf::default(),
-            size: 0,
-            modified: SystemTime::UNIX_EPOCH,
-            created: SystemTime::UNIX_EPOCH,
-            accessed: SystemTime::UNIX_EPOCH,
-        }
-    }
+    // unlike mtime, users cannot set ctime and rewrites update it
+    changed: SystemTime,
 }
 
 pub type AccountTables = (Option<Arc<Users>>, Option<Arc<Groups>>);
@@ -419,10 +413,11 @@ impl Key {
         let k = Key {
             mnt_namespace: ns,
             path: path.as_path().to_path_buf(),
+            dev: meta.dev(),
+            ino: meta.ino(),
             size: meta.size(),
             modified: SystemTime::from(&Time::new(meta.mtime(), meta.mtime_nsec())),
-            accessed: SystemTime::from(&Time::new(meta.atime(), meta.atime_nsec())),
-            ..Default::default()
+            changed: SystemTime::from(&Time::new(meta.ctime(), meta.ctime_nsec())),
         };
 
         // we do extra checks if it is a Path comming from our probes
@@ -431,17 +426,17 @@ impl Key {
             // we don't have to switch to ns here as it is done in caller
             let ebpf_meta = ebpf_meta.ok_or(Error::MetadataRequired)?;
 
-            if ebpf_meta.size as u64 != meta.size() {
+            if ebpf_meta.size as u64 != k.size {
                 return Err(Error::FileModSinceKernelEvent(FileMod::Size {
                     kernel: ebpf_meta.size as u64,
-                    userland: meta.size(),
+                    userland: k.size,
                 }));
             }
 
-            if ebpf_meta.ino != meta.ino() {
+            if ebpf_meta.ino != k.ino {
                 return Err(Error::FileModSinceKernelEvent(FileMod::Inode {
                     kernel: ebpf_meta.ino,
-                    userland: meta.ino(),
+                    userland: k.ino,
                 }));
             }
 
@@ -450,6 +445,14 @@ impl Key {
                 return Err(Error::FileModSinceKernelEvent(FileMod::Mtime {
                     kernel: kernel_mtime.into(),
                     userland: k.modified.into(),
+                }));
+            }
+
+            let kernel_ctime = SystemTime::from(&ebpf_meta.ctime);
+            if kernel_ctime != k.changed {
+                return Err(Error::FileModSinceKernelEvent(FileMod::Ctime {
+                    kernel: kernel_ctime.into(),
+                    userland: k.changed.into(),
                 }));
             }
         }
@@ -1192,6 +1195,75 @@ mod file_tests {
         assert_eq!(scan.scan_error, None);
         assert!(scan.hashes.error.as_ref().unwrap().contains("reopen"));
         assert_eq!(scan.hashes.size, 4);
+    }
+
+    fn key(path: &std::path::Path) -> Key {
+        Key::from_path_in_ns(Mnt::default(), &Path::Std(path.to_path_buf())).unwrap()
+    }
+
+    fn copy_times(file: &File, meta: &fs::Metadata) {
+        let times = fs::FileTimes::new()
+            .set_accessed(meta.accessed().unwrap())
+            .set_modified(meta.modified().unwrap());
+        file.set_times(times).unwrap();
+    }
+
+    #[test]
+    fn key_changes_when_file_renamed_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let (benign, evil) = (dir.path().join("a"), dir.path().join("b"));
+        fs::write(&benign, b"safe").unwrap();
+        fs::write(&evil, b"evil").unwrap();
+        let cached = key(&benign);
+
+        let evil_file = File::options().write(true).open(&evil).unwrap();
+        copy_times(&evil_file, &fs::metadata(&benign).unwrap());
+        fs::rename(&evil, &benign).unwrap();
+        assert_ne!(key(&benign), cached);
+    }
+
+    #[test]
+    fn key_changes_when_rewritten_in_place() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), b"safe").unwrap();
+        let meta = fs::metadata(file.path()).unwrap();
+        let cached = key(file.path());
+
+        // kernels without multigrain timestamps update ctime from a coarse clock
+        thread::sleep(Duration::from_millis(20));
+        file.as_file().write_all_at(b"evil", 0).unwrap();
+        copy_times(file.as_file(), &meta);
+        assert_ne!(key(file.path()), cached);
+    }
+
+    fn ebpf_meta(meta: &fs::Metadata) -> kunai_common::path::Metadata {
+        kunai_common::path::Metadata {
+            ino: meta.ino(),
+            size: meta.size() as i64,
+            atime: Time::new(meta.atime(), meta.atime_nsec()),
+            mtime: Time::new(meta.mtime(), meta.mtime_nsec()),
+            ctime: Time::new(meta.ctime(), meta.ctime_nsec()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bpf_key_rejects_rewrite_since_kernel_event() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), b"safe").unwrap();
+        let meta = fs::metadata(file.path()).unwrap();
+        let path = Path::Bpf {
+            path: file.path().to_path_buf(),
+            ebpf_meta: Some(ebpf_meta(&meta)),
+        };
+        assert!(Key::from_path_in_ns(Mnt::default(), &path).is_ok());
+
+        // coarse ctime clock, see key_changes_when_rewritten_in_place
+        thread::sleep(Duration::from_millis(20));
+        file.as_file().write_all_at(b"evil", 0).unwrap();
+        copy_times(file.as_file(), &meta);
+        let err = Key::from_path_in_ns(Mnt::default(), &path).unwrap_err();
+        assert!(err.to_string().contains("ctime changed"), "{err}");
     }
 
     #[test]

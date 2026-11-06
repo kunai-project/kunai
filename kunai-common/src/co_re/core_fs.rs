@@ -72,7 +72,8 @@ impl inode {
             self._i_ctime().or_else(|| self.___i_ctime()).or_else(|| {
                 Some(timespec64 {
                     tv_sec: self.i_ctime_sec()?,
-                    tv_nsec: self.i_ctime_nsec()? as i64,
+                    // kernels >= 6.13 store the I_CTIME_QUERIED multigrain flag in bit 31
+                    tv_nsec: (self.i_ctime_nsec()? & !(1 << 31)) as i64,
                 })
             })
         }
