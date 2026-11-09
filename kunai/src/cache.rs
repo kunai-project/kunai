@@ -30,7 +30,7 @@ use thiserror::Error;
 use crate::{
     info::ProcKey,
     util::{
-        account::{self, Groups, Users},
+        account::{self, AccountTable, Groups, Users},
         namespace::{self, Mnt, SelfNs, Switcher},
     },
     yara::Scanner,
@@ -60,15 +60,18 @@ impl OpenedFile {
         Ok(Self { file, meta })
     }
 
-    // Reads and allocates, so only call it once a cache lookup missed. Call it
-    // from our own mount namespace, whose /proc belongs to us.
-    fn reader(self) -> io::Result<DataReader<'static>> {
+    // Call it from our own mount namespace, whose /proc belongs to us.
+    fn reopen(&self) -> io::Result<File> {
         // reopening the descriptor through procfs targets the checked inode, not the path
-        let file = OpenOptions::new()
+        OpenOptions::new()
             .read(true)
             .open(format!("/proc/self/fd/{}", self.file.as_raw_fd()))
-            .map_err(|e| io::Error::new(e.kind(), format!("failed to reopen file: {e}")))?;
-        DataReader::from_file(file)
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to reopen file: {e}")))
+    }
+
+    // Reads and allocates, so only call it once a cache lookup missed.
+    fn reader(self) -> io::Result<DataReader<'static>> {
+        DataReader::from_file(self.reopen()?)
             .map_err(|e| io::Error::new(e.kind(), format!("failed to create lazy cache: {e}")))
     }
 }
@@ -375,40 +378,55 @@ struct Key {
 
 pub type AccountTables = (Option<Arc<Users>>, Option<Arc<Groups>>);
 
-/// Gets the table parsed from `path` of the current mount namespace `ns`,
-/// parsing it with `load` on a cache miss. Must be called within `ns`.
-fn ns_table<T>(
-    ns: Mnt,
-    path: &str,
-    cache: &mut LruHashMap<Key, Arc<T>>,
-    load: impl FnOnce() -> Result<T, account::Error>,
-) -> Option<Arc<T>> {
-    let key = Key::from_path_in_ns(ns, &PathBuf::from(path).into())
-        .inspect_err(|e| log::debug!("{path} in mnt_ns={}: {e}", ns.inum))
-        .ok()?;
+/// Opens `path` of the current mount namespace `ns`, see [OpenedFile::new].
+fn open_keyed(ns: Mnt, path: &Path) -> Result<(OpenedFile, Key), Error> {
+    let file = OpenedFile::new(path.as_path())?;
+    let key = Key::from_path_and_meta(ns, path, &file.meta)?;
+    Ok((file, key))
+}
 
+/// Gets the table of `file`, [open_keyed] as `key`, parsing it on a cache
+/// miss. A file whose content is rejected is cached as `None`.
+/// Must be called from our own mount namespace, see [OpenedFile::reopen].
+fn ns_account_table<T: AccountTable>(
+    file: OpenedFile,
+    key: Key,
+    cache: &mut LruHashMap<Key, Option<Arc<T>>>,
+) -> Option<Arc<T>> {
     if let Some(t) = cache.get(&key) {
-        return Some(Arc::clone(t));
+        return t.clone();
     }
 
-    let t = Arc::new(
-        load()
-            .inspect_err(|e| log::debug!("failed to parse {path} in mnt_ns={}: {e}", ns.inum))
-            .ok()?,
-    );
-    cache.insert(key, Arc::clone(&t));
-    Some(t)
+    let parsed = file
+        .reopen()
+        .map_err(account::Error::from)
+        .and_then(T::from_reader)
+        .inspect_err(|e| {
+            log::debug!(
+                "failed to parse {} in mnt_ns={}: {e}",
+                key.path.display(),
+                key.mnt_namespace.inum
+            )
+        });
+    // I/O errors may be transient, so the next event retries them
+    if matches!(parsed, Err(account::Error::Io(_))) {
+        return None;
+    }
+
+    let t = parsed.ok().map(Arc::new);
+    cache.insert(key, t.clone());
+    t
 }
 
 impl Key {
+    // production keys come from an opened descriptor, see open_keyed
+    #[cfg(test)]
     fn from_path_in_ns(ns: Mnt, path: &Path) -> Result<Self, Error> {
-        // metadata() fails with io::ErrorKind::NotFound when the file is missing
         let meta = path.as_path().metadata()?;
         Self::from_path_and_meta(ns, path, &meta)
     }
 
-    /// Same as [Key::from_path_in_ns] but reuses [fs::Metadata] already
-    /// fetched by the caller, saving a stat.
+    /// Builds the key of `path` in mount namespace `ns` from its [fs::Metadata].
     fn from_path_and_meta(ns: Mnt, path: &Path, meta: &fs::Metadata) -> Result<Self, Error> {
         let k = Key {
             mnt_namespace: ns,
@@ -560,8 +578,8 @@ impl MntNsCache {
 pub struct Caches {
     mnt_namespaces: MntNsCache,
     hashes: LruHashMap<Key, Arc<Hashes>>,
-    users: LruHashMap<Key, Arc<Users>>,
-    groups: LruHashMap<Key, Arc<Groups>>,
+    users: LruHashMap<Key, Option<Arc<Users>>>,
+    groups: LruHashMap<Key, Option<Arc<Groups>>>,
     // valid user namespaces by inode, tasks keep theirs alive past eviction
     user_namespaces: LruHashMap<u32, Arc<UserNs>>,
     // warn only once, users may want a bigger cache
@@ -639,17 +657,26 @@ impl Caches {
     /// [Arc] to avoid copying the whole tables around. Each table is loaded
     /// independently, so a missing `/etc/passwd` doesn't prevent resolving groups.
     pub fn get_user_group_in_ns(&mut self, ns: Mnt) -> Result<AccountTables, Error> {
-        let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
-            return Err(Error::UnknownMntNs(ns));
-        };
+        let (users_path, groups_path) = (Users::sys_path(), Groups::sys_path());
+        // the reopen in ns_table relies on in_mnt_ns restoring our namespace
+        let (passwd, group) = self.in_mnt_ns(ns, || {
+            Ok((
+                open_keyed(ns, &users_path.into()),
+                open_keyed(ns, &groups_path.into()),
+            ))
+        })?;
 
-        mnt_ns
-            .do_in_namespace(|| {
-                let users = ns_table(ns, Users::sys_path(), &mut self.users, Users::from_sys);
-                let groups = ns_table(ns, Groups::sys_path(), &mut self.groups, Groups::from_sys);
-                Ok((users, groups))
-            })
-            .map_err(Error::from)
+        let users = passwd
+            .inspect_err(|e| log::debug!("{users_path} in mnt_ns={}: {e}", ns.inum))
+            .ok()
+            .and_then(|(file, key)| ns_account_table(file, key, &mut self.users));
+
+        let groups = group
+            .inspect_err(|e| log::debug!("{groups_path} in mnt_ns={}: {e}", ns.inum))
+            .ok()
+            .and_then(|(file, key)| ns_account_table(file, key, &mut self.groups));
+
+        Ok((users, groups))
     }
 
     /// Gets hashes and, if `scanner` is set, signatures of `path`, reading
@@ -747,16 +774,19 @@ impl Caches {
     /// Opens `path` in mount namespace `ns`. Only resolving the path needs the
     /// namespace: the returned descriptor is read from the current one.
     fn open_in_ns(&mut self, ns: Mnt, path: &Path) -> Result<(OpenedFile, Key), Error> {
+        self.in_mnt_ns(ns, || open_keyed(ns, path).map_err(namespace::Error::other))
+    }
+
+    fn in_mnt_ns<T>(
+        &mut self,
+        ns: Mnt,
+        f: impl FnOnce() -> Result<T, namespace::Error>,
+    ) -> Result<T, Error> {
         let Some(mnt_ns) = self.mnt_namespaces.get(&ns) else {
             return Err(Error::UnknownMntNs(ns));
         };
 
-        let res = mnt_ns.do_in_namespace(|| {
-            let file = OpenedFile::new(path.as_path()).map_err(namespace::Error::other)?;
-            let key =
-                Key::from_path_and_meta(ns, path, &file.meta).map_err(namespace::Error::other)?;
-            Ok((file, key))
-        });
+        let res = mnt_ns.do_in_namespace(f);
 
         // we must be sure that we restore our namespace
         if matches!(res.as_ref(), Err(namespace::Error::Exit(_, _, _))) {
@@ -917,6 +947,16 @@ mod file_tests {
         }
     }
 
+    fn users_table(caches: &mut Caches, ns: Mnt, path: &std::path::Path) -> Option<Arc<Users>> {
+        let (file, key) = open_keyed(ns, &path.to_path_buf().into()).ok()?;
+        ns_account_table(file, key, &mut caches.users)
+    }
+
+    fn groups_table(caches: &mut Caches, ns: Mnt, path: &std::path::Path) -> Option<Arc<Groups>> {
+        let (file, key) = open_keyed(ns, &path.to_path_buf().into()).ok()?;
+        ns_account_table(file, key, &mut caches.groups)
+    }
+
     fn assert_no_digests(hashes: &Hashes) {
         assert!(hashes.error.is_some());
         assert_eq!(hashes.md5, "?");
@@ -925,12 +965,12 @@ mod file_tests {
         assert_eq!(hashes.sha512, "?");
     }
 
-    #[test]
-    fn hostile_paths_do_not_block() {
+    // Runs test `name` in a subprocess, so that a blocking open fails it instead of hanging the suite.
+    fn run_child(name: &str) {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "cache::file_tests::hostile_paths_child",
+                &format!("cache::file_tests::{name}"),
                 "--nocapture",
             ])
             .env("KUNAI_HOSTILE_FILE_CHILD", "1")
@@ -950,7 +990,7 @@ mod file_tests {
             thread::sleep(Duration::from_millis(10));
         };
         let output = child.wait_with_output().unwrap();
-        assert!(!timed_out, "hostile-file I/O child exceeded its watchdog");
+        assert!(!timed_out, "{name} exceeded its watchdog");
         assert!(
             output.status.success(),
             "child failed:\n{}\n{}",
@@ -960,36 +1000,49 @@ mod file_tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed;"));
     }
 
-    #[test]
-    fn hostile_paths_child() {
-        if std::env::var_os("KUNAI_HOSTILE_FILE_CHILD").is_none() {
-            return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let named_pipe = dir.path().join("fifo");
+    // children run only under run_child
+    fn is_child() -> bool {
+        std::env::var_os("KUNAI_HOSTILE_FILE_CHILD").is_some()
+    }
+
+    fn hostile_paths(dir: &std::path::Path) -> Vec<PathBuf> {
+        let named_pipe = dir.join("fifo");
         fifo(&named_pipe);
-        let link = dir.path().join("link");
+        let link = dir.join("link");
         symlink(&named_pipe, &link).unwrap();
-        let replacement = dir.path().join("replacement");
+        let replacement = dir.join("replacement");
         fs::write(&replacement, b"safe").unwrap();
         assert!(replacement.metadata().unwrap().is_file());
         fs::remove_file(&replacement).unwrap();
         fifo(&replacement);
+        vec![
+            named_pipe,
+            link,
+            replacement,
+            dir.to_path_buf(),
+            "/dev/null".into(),
+            "/dev/zero".into(),
+        ]
+    }
 
+    #[test]
+    fn hostile_paths_are_not_scanned() {
+        run_child("hostile_paths_are_not_scanned_child");
+    }
+
+    #[test]
+    fn hostile_paths_are_not_scanned_child() {
+        if !is_child() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
         let db = magic_db::load().unwrap();
         let mut scanner = scanner();
         let (mut caches, ns) = caches();
-        for path in [
-            named_pipe.as_path(),
-            link.as_path(),
-            replacement.as_path(),
-            dir.path(),
-            std::path::Path::new("/dev/null"),
-            std::path::Path::new("/dev/zero"),
-        ] {
-            assert!(OpenedFile::new(path).is_err(), "{}", path.display());
-            assert_no_digests(&Hashes::from_path_ref(path, &db));
-            let path = Path::Std(path.to_path_buf());
+        for path in hostile_paths(dir.path()) {
+            assert!(OpenedFile::new(&path).is_err(), "{}", path.display());
+            assert_no_digests(&Hashes::from_path_ref(&path, &db));
+            let path = Path::Std(path);
             assert!(caches.get_hashes_in_ns(ns, &path, &db).is_err());
             assert!(
                 caches
@@ -999,7 +1052,83 @@ mod file_tests {
         }
         assert!(caches.hashes.is_empty());
         assert!(caches.signatures.is_empty());
+    }
 
+    #[test]
+    fn hostile_account_files_are_not_loaded() {
+        run_child("hostile_account_files_are_not_loaded_child");
+    }
+
+    #[test]
+    fn hostile_account_files_are_not_loaded_child() {
+        if !is_child() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (mut caches, ns) = caches();
+        for path in hostile_paths(dir.path()) {
+            assert!(
+                users_table(&mut caches, ns, &path).is_none(),
+                "{}",
+                path.display()
+            );
+            assert!(
+                groups_table(&mut caches, ns, &path).is_none(),
+                "{}",
+                path.display()
+            );
+        }
+        assert!(caches.users.is_empty());
+        assert!(caches.groups.is_empty());
+    }
+
+    #[test]
+    fn cached_account_files_swapped_for_fifo() {
+        run_child("cached_account_files_swapped_for_fifo_child");
+    }
+
+    #[test]
+    fn cached_account_files_swapped_for_fifo_child() {
+        if !is_child() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (mut caches, ns) = caches();
+        let (passwd, group) = (dir.path().join("passwd"), dir.path().join("group"));
+        fs::write(&passwd, "user:x:1000:1000::/home/user:/bin/sh\n").unwrap();
+        fs::write(&group, "user:x:1000:\n").unwrap();
+        let (passwd_link, group_link) = (
+            dir.path().join("passwd_link"),
+            dir.path().join("group_link"),
+        );
+        symlink(&passwd, &passwd_link).unwrap();
+        symlink(&group, &group_link).unwrap();
+        let users = users_table(&mut caches, ns, &passwd_link).unwrap();
+        assert_eq!(users.get_by_uid(1000).unwrap().name, "user");
+        let groups = groups_table(&mut caches, ns, &group_link).unwrap();
+        assert_eq!(groups.get_by_gid(1000).unwrap().name, "user");
+        for path in [&passwd, &group] {
+            fs::remove_file(path).unwrap();
+            fifo(path);
+        }
+        assert!(users_table(&mut caches, ns, &passwd_link).is_none());
+        assert!(groups_table(&mut caches, ns, &group_link).is_none());
+    }
+
+    #[test]
+    fn cached_file_swapped_for_fifo() {
+        run_child("cached_file_swapped_for_fifo_child");
+    }
+
+    #[test]
+    fn cached_file_swapped_for_fifo_child() {
+        if !is_child() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db = magic_db::load().unwrap();
+        let mut scanner = scanner();
+        let (mut caches, ns) = caches();
         let path = dir.path().join("cached");
         fs::write(&path, b"safe").unwrap();
         let cached_path = Path::Std(path.clone());
@@ -1020,7 +1149,21 @@ mod file_tests {
                 .get_scan_in_ns(ns, &cached_path, Some(&mut scanner), &db)
                 .is_err()
         );
+    }
 
+    #[test]
+    fn opened_file_survives_path_swap() {
+        run_child("opened_file_survives_path_swap_child");
+    }
+
+    #[test]
+    fn opened_file_survives_path_swap_child() {
+        if !is_child() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db = magic_db::load().unwrap();
+        let mut scanner = scanner();
         let original = dir.path().join("original");
         fs::write(&original, b"safe").unwrap();
         let opened = OpenedFile::new(&original).unwrap();
@@ -1195,6 +1338,52 @@ mod file_tests {
         assert_eq!(scan.scan_error, None);
         assert!(scan.hashes.error.as_ref().unwrap().contains("reopen"));
         assert_eq!(scan.hashes.size, 4);
+    }
+
+    // content failures are stable for a key, caching them spares re-reading hostile files on every event
+    #[test]
+    fn account_content_failures_are_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut caches, ns) = caches();
+        let oversized = "x".repeat(account::MAX_BYTES + 1);
+        let too_many_entries: String = (0..=account::MAX_ENTRIES)
+            .map(|i| format!("u{i}:x:{i}:{i}::/:/bin/sh\n"))
+            .collect();
+        let malformed = "malformed\n".to_string();
+        let invalid_utf8 = b"user:x:1000:1000:\xff:/home/user:/bin/sh\n".to_vec();
+        for (name, content) in [
+            ("oversized", oversized.into_bytes()),
+            ("too_many_entries", too_many_entries.into_bytes()),
+            ("malformed", malformed.into_bytes()),
+            ("invalid_utf8", invalid_utf8),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, content).unwrap();
+            let (file, key) = open_keyed(ns, &path.into()).unwrap();
+            assert!(
+                ns_account_table(file, key.clone(), &mut caches.users).is_none(),
+                "{name}"
+            );
+            assert!(caches.users.contains_key(&key), "{name}");
+        }
+    }
+
+    // I/O failures may be transient (EMFILE, ENOMEM), so the next event must retry
+    #[test]
+    fn account_io_failures_are_retried() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), "user:x:1000:1000::/home/user:/bin/sh\n").unwrap();
+        let (mut caches, ns) = caches();
+        let path = Path::Std(file.path().to_path_buf());
+        let opened = unreadable(file.as_file().metadata().unwrap());
+        let key = Key::from_path_and_meta(ns, &path, &opened.meta).unwrap();
+
+        assert!(ns_account_table(opened, key.clone(), &mut caches.users).is_none());
+        assert!(!caches.users.contains_key(&key));
+
+        let (file, key) = open_keyed(ns, &path).unwrap();
+        let users = ns_account_table(file, key, &mut caches.users).unwrap();
+        assert_eq!(users.get_by_uid(1000).unwrap().name, "user");
     }
 
     fn key(path: &std::path::Path) -> Key {

@@ -3,10 +3,11 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, BufRead, BufReader},
+    io::{self, Read},
     num::ParseIntError,
     path::Path,
     str::FromStr,
+    string::FromUtf8Error,
 };
 
 use thiserror::Error;
@@ -83,6 +84,45 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("parse error: {0}")]
     Parse(#[from] ParseError),
+    #[error("invalid utf-8: {0}")]
+    Utf8(#[from] FromUtf8Error),
+    #[error("file exceeds limit of {MAX_BYTES} bytes")]
+    SizeLimit,
+    #[error("file exceeds limit of {MAX_ENTRIES} entries")]
+    EntryLimit,
+}
+
+// Account files may come from a hostile namespace root, these bound the memory they cost.
+pub const MAX_BYTES: usize = 1 << 20;
+pub const MAX_ENTRIES: usize = 16384;
+
+fn read_bounded<R: io::Read>(r: R) -> Result<String, Error> {
+    let mut bytes = Vec::new();
+    r.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(Error::SizeLimit);
+    }
+    Ok(String::from_utf8(bytes)?)
+}
+
+pub trait AccountTable: Sized {
+    fn from_reader<R: io::Read>(r: R) -> Result<Self, Error>;
+}
+
+impl AccountTable for Users {
+    fn from_reader<R: io::Read>(r: R) -> Result<Self, Error> {
+        let mut out = Self::new();
+        out.extend_from_reader(r)?;
+        Ok(out)
+    }
+}
+
+impl AccountTable for Groups {
+    fn from_reader<R: io::Read>(r: R) -> Result<Self, Error> {
+        let mut out = Self::new();
+        out.extend_from_reader(r)?;
+        Ok(out)
+    }
 }
 
 // Structure holding data parsed from /etc/passwd
@@ -103,32 +143,25 @@ impl Users {
     }
 
     #[inline]
-    pub fn extend_from_vec<S: AsRef<str>>(&mut self, v: Vec<S>) -> Result<&mut Self, Error> {
-        let mut lines = Vec::new();
+    pub fn extend_from_vec<S: AsRef<str>>(
+        &mut self,
+        v: impl IntoIterator<Item = S>,
+    ) -> Result<&mut Self, Error> {
         for line in v {
-            let group = User::from_str(line.as_ref())?;
-            self.insert_user(group);
-            lines.push(line.as_ref().to_string());
+            if self.users.len() == MAX_ENTRIES {
+                return Err(Error::EntryLimit);
+            }
+            self.insert_user(User::from_str(line.as_ref())?);
         }
         Ok(self)
     }
 
     pub fn extend_from_reader<R: io::Read>(&mut self, r: R) -> Result<&mut Self, Error> {
-        let r = BufReader::new(r);
-        let mut lines = Vec::new();
-        for res in r.lines() {
-            lines.push(res?);
-        }
-        self.extend_from_vec(lines)
+        self.extend_from_vec(read_bounded(r)?.lines())
     }
 
     pub fn extend_from_file<P: AsRef<Path>>(&mut self, p: P) -> Result<&mut Self, Error> {
-        let r = BufReader::new(File::open(p.as_ref())?);
-        for res in r.lines() {
-            let user = User::from_str(&res?)?;
-            self.insert_user(user);
-        }
-        Ok(self)
+        self.extend_from_reader(File::open(p.as_ref())?)
     }
 
     pub fn extend_from_str<S: AsRef<str>>(&mut self, s: S) -> Result<&mut Self, Error> {
@@ -190,24 +223,22 @@ impl Groups {
     }
 
     #[inline]
-    pub fn extend_from_vec<S: AsRef<str>>(&mut self, v: Vec<S>) -> Result<&mut Self, Error> {
-        let mut lines = Vec::new();
+    pub fn extend_from_vec<S: AsRef<str>>(
+        &mut self,
+        v: impl IntoIterator<Item = S>,
+    ) -> Result<&mut Self, Error> {
         for line in v {
-            let group = Group::from_str(line.as_ref())?;
-            self.insert_group(group);
-            lines.push(line.as_ref().to_string());
+            if self.groups.len() == MAX_ENTRIES {
+                return Err(Error::EntryLimit);
+            }
+            self.insert_group(Group::from_str(line.as_ref())?);
         }
         Ok(self)
     }
 
     #[inline]
     pub fn extend_from_reader<R: io::Read>(&mut self, r: R) -> Result<&mut Self, Error> {
-        let r = BufReader::new(r);
-        let mut lines = Vec::new();
-        for res in r.lines() {
-            lines.push(res?);
-        }
-        self.extend_from_vec(lines)
+        self.extend_from_vec(read_bounded(r)?.lines())
     }
 
     pub fn extend_from_file<P: AsRef<Path>>(&mut self, p: P) -> Result<&mut Self, Error> {
@@ -307,5 +338,71 @@ operations:x:612:chris,kate,adam"#,
             db.get_by_name("operations").unwrap().name.as_str(),
             "operations"
         );
+    }
+
+    struct Counted<R> {
+        inner: R,
+        read: usize,
+    }
+
+    impl<R: io::Read> io::Read for Counted<R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read += n;
+            Ok(n)
+        }
+    }
+
+    // valid for both formats, `width` includes the newline
+    fn table(entries: usize, width: usize) -> String {
+        (0..entries)
+            .map(|i| format!("{:<1$}\n", format!("u{i:05}:x:{i}:"), width - 1))
+            .collect()
+    }
+
+    fn reads_are_bounded<T: AccountTable>() {
+        let mut r = Counted {
+            inner: io::Read::take(io::repeat(0), 4 * MAX_BYTES as u64),
+            read: 0,
+        };
+        assert!(matches!(T::from_reader(&mut r), Err(Error::SizeLimit)));
+        assert!(r.read <= MAX_BYTES + 1, "read {} bytes", r.read);
+    }
+
+    #[test]
+    fn newline_free_input_reads_are_bounded() {
+        reads_are_bounded::<Users>();
+        reads_are_bounded::<Groups>();
+    }
+
+    fn byte_limit<T: AccountTable>() {
+        let at_limit = table(MAX_ENTRIES, MAX_BYTES / MAX_ENTRIES);
+        assert_eq!(at_limit.len(), MAX_BYTES);
+        let over = format!("{} \n", at_limit.trim_end_matches('\n'));
+        T::from_reader(at_limit.as_bytes()).unwrap();
+        assert!(matches!(
+            T::from_reader(over.as_bytes()),
+            Err(Error::SizeLimit)
+        ));
+    }
+
+    #[test]
+    fn byte_limit_boundary() {
+        byte_limit::<Users>();
+        byte_limit::<Groups>();
+    }
+
+    fn entry_limit<T: AccountTable>() {
+        T::from_reader(table(MAX_ENTRIES, 16).as_bytes()).unwrap();
+        assert!(matches!(
+            T::from_reader(table(MAX_ENTRIES + 1, 16).as_bytes()),
+            Err(Error::EntryLimit)
+        ));
+    }
+
+    #[test]
+    fn entry_limit_boundary() {
+        entry_limit::<Users>();
+        entry_limit::<Groups>();
     }
 }
