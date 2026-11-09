@@ -386,31 +386,36 @@ fn open_keyed(ns: Mnt, path: &Path) -> Result<(OpenedFile, Key), Error> {
 }
 
 /// Gets the table of `file`, [open_keyed] as `key`, parsing it on a cache
-/// miss. Must be called from our own mount namespace, see [OpenedFile::reopen].
+/// miss. A file whose content is rejected is cached as `None`.
+/// Must be called from our own mount namespace, see [OpenedFile::reopen].
 fn ns_account_table<T: AccountTable>(
     file: OpenedFile,
     key: Key,
-    cache: &mut LruHashMap<Key, Arc<T>>,
+    cache: &mut LruHashMap<Key, Option<Arc<T>>>,
 ) -> Option<Arc<T>> {
     if let Some(t) = cache.get(&key) {
-        return Some(Arc::clone(t));
+        return t.clone();
     }
 
-    let t = Arc::new(
-        file.reopen()
-            .map_err(account::Error::from)
-            .and_then(T::from_reader)
-            .inspect_err(|e| {
-                log::debug!(
-                    "failed to parse {} in mnt_ns={}: {e}",
-                    key.path.display(),
-                    key.mnt_namespace.inum
-                )
-            })
-            .ok()?,
-    );
-    cache.insert(key, Arc::clone(&t));
-    Some(t)
+    let parsed = file
+        .reopen()
+        .map_err(account::Error::from)
+        .and_then(T::from_reader)
+        .inspect_err(|e| {
+            log::debug!(
+                "failed to parse {} in mnt_ns={}: {e}",
+                key.path.display(),
+                key.mnt_namespace.inum
+            )
+        });
+    // I/O errors may be transient, so the next event retries them
+    if matches!(parsed, Err(account::Error::Io(_))) {
+        return None;
+    }
+
+    let t = parsed.ok().map(Arc::new);
+    cache.insert(key, t.clone());
+    t
 }
 
 impl Key {
@@ -573,8 +578,8 @@ impl MntNsCache {
 pub struct Caches {
     mnt_namespaces: MntNsCache,
     hashes: LruHashMap<Key, Arc<Hashes>>,
-    users: LruHashMap<Key, Arc<Users>>,
-    groups: LruHashMap<Key, Arc<Groups>>,
+    users: LruHashMap<Key, Option<Arc<Users>>>,
+    groups: LruHashMap<Key, Option<Arc<Groups>>>,
     // valid user namespaces by inode, tasks keep theirs alive past eviction
     user_namespaces: LruHashMap<u32, Arc<UserNs>>,
     // warn only once, users may want a bigger cache
