@@ -7,6 +7,7 @@ use std::{
     num::ParseIntError,
     path::Path,
     str::FromStr,
+    string::FromUtf8Error,
 };
 
 use thiserror::Error;
@@ -83,6 +84,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("parse error: {0}")]
     Parse(#[from] ParseError),
+    #[error("invalid utf-8: {0}")]
+    Utf8(#[from] FromUtf8Error),
     #[error("file exceeds limit of {MAX_BYTES} bytes")]
     SizeLimit,
     #[error("file exceeds limit of {MAX_ENTRIES} entries")]
@@ -94,12 +97,12 @@ pub const MAX_BYTES: usize = 1 << 20;
 pub const MAX_ENTRIES: usize = 16384;
 
 fn read_bounded<R: io::Read>(r: R) -> Result<String, Error> {
-    let mut s = String::new();
-    r.take(MAX_BYTES as u64 + 1).read_to_string(&mut s)?;
-    if s.len() > MAX_BYTES {
+    let mut bytes = Vec::new();
+    r.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_BYTES {
         return Err(Error::SizeLimit);
     }
-    Ok(s)
+    Ok(String::from_utf8(bytes)?)
 }
 
 pub trait AccountTable: Sized {
