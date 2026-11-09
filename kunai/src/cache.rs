@@ -1350,10 +1350,12 @@ mod file_tests {
             .map(|i| format!("u{i}:x:{i}:{i}::/:/bin/sh\n"))
             .collect();
         let malformed = "malformed\n".to_string();
+        let invalid_utf8 = b"user:x:1000:1000:\xff:/home/user:/bin/sh\n".to_vec();
         for (name, content) in [
-            ("oversized", oversized),
-            ("too_many_entries", too_many_entries),
-            ("malformed", malformed),
+            ("oversized", oversized.into_bytes()),
+            ("too_many_entries", too_many_entries.into_bytes()),
+            ("malformed", malformed.into_bytes()),
+            ("invalid_utf8", invalid_utf8),
         ] {
             let path = dir.path().join(name);
             fs::write(&path, content).unwrap();
