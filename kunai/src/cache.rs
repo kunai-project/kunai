@@ -1335,6 +1335,50 @@ mod file_tests {
         assert_eq!(scan.hashes.size, 4);
     }
 
+    // content failures are stable for a key, caching them spares re-reading hostile files on every event
+    #[test]
+    fn account_content_failures_are_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut caches, ns) = caches();
+        let oversized = "x".repeat(account::MAX_BYTES + 1);
+        let too_many_entries: String = (0..=account::MAX_ENTRIES)
+            .map(|i| format!("u{i}:x:{i}:{i}::/:/bin/sh\n"))
+            .collect();
+        let malformed = "malformed\n".to_string();
+        for (name, content) in [
+            ("oversized", oversized),
+            ("too_many_entries", too_many_entries),
+            ("malformed", malformed),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, content).unwrap();
+            let (file, key) = open_keyed(ns, &path.into()).unwrap();
+            assert!(
+                ns_account_table(file, key.clone(), &mut caches.users).is_none(),
+                "{name}"
+            );
+            assert!(caches.users.contains_key(&key), "{name}");
+        }
+    }
+
+    // I/O failures may be transient (EMFILE, ENOMEM), so the next event must retry
+    #[test]
+    fn account_io_failures_are_retried() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), "user:x:1000:1000::/home/user:/bin/sh\n").unwrap();
+        let (mut caches, ns) = caches();
+        let path = Path::Std(file.path().to_path_buf());
+        let opened = unreadable(file.as_file().metadata().unwrap());
+        let key = Key::from_path_and_meta(ns, &path, &opened.meta).unwrap();
+
+        assert!(ns_account_table(opened, key.clone(), &mut caches.users).is_none());
+        assert!(!caches.users.contains_key(&key));
+
+        let (file, key) = open_keyed(ns, &path).unwrap();
+        let users = ns_account_table(file, key, &mut caches.users).unwrap();
+        assert_eq!(users.get_by_uid(1000).unwrap().name, "user");
+    }
+
     fn key(path: &std::path::Path) -> Key {
         Key::from_path_in_ns(Mnt::default(), &Path::Std(path.to_path_buf())).unwrap()
     }
