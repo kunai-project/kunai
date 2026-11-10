@@ -914,6 +914,11 @@ mod tests {
             {
                 break ns;
             }
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!(
+                    "unshare exited with {status}, unprivileged user namespaces may be restricted"
+                );
+            }
             if Instant::now() >= deadline {
                 child.kill().unwrap();
                 child.wait().unwrap();
