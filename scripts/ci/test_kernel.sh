@@ -65,10 +65,10 @@ then
     if [[ $(grep -oP "\.deb$"<<<$image) ]]
     then
         deb=${tmp_dir}/${image}
-        curl -k -o ${deb} ${base_url}${image}
+        curl -fk -o ${deb} ${base_url}${image}
         dpkg --fsys-tarfile ${deb} | tar -C ${tmp_dir} --wildcards --extract "./boot/*vmlinuz*"
     else
-        curl -k ${base_url}${image} | tar -zC ${tmp_dir} --wildcards --extract "boot/*vmlinuz*" 2>/dev/null
+        curl -fk ${base_url}${image} | tar -zC ${tmp_dir} --wildcards --extract "boot/*vmlinuz*" 2>/dev/null
     fi
     # we create cache dir
     mkdir -p $cache_dir
