@@ -2,6 +2,7 @@ use std::hash::Hash;
 use std::io::Error as IoError;
 use std::num::ParseIntError;
 
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::RawFd;
 
 use std::path::PathBuf;
@@ -9,7 +10,7 @@ use std::process;
 use std::sync::Arc;
 use std::{fs::File, os::fd::AsRawFd};
 
-use libc::{c_int, pid_t, syscall, SYS_pidfd_open, CLONE_NEWNS};
+use libc::{CLONE_NEWNS, SYS_pidfd_open, c_int, pid_t, syscall};
 use thiserror::Error;
 
 #[allow(dead_code)]
@@ -96,14 +97,17 @@ macro_rules! impl_ns {
         }
 
         impl Namespace for $ty {
+            #[inline]
             fn inum(&self) -> u32 {
                 self.inum
             }
 
+            #[inline]
             fn as_str() -> &'static str {
                 $s
             }
 
+            #[inline]
             fn with_inum(&mut self, inum: u32) -> &mut Self {
                 self.inum = inum;
                 self
@@ -129,6 +133,8 @@ pub enum NsError {
     Parse(#[from] ParseIntError),
     #[error("{0}")]
     Io(#[from] IoError),
+    #[error("expected inode {exp} got {cur}")]
+    UnexpectedNsInode { cur: u32, exp: u32 },
 }
 
 /// Shareable handle on a namespace of the current process, so that
@@ -190,20 +196,30 @@ where
     N: Namespace,
 {
     /// Creates a switcher into the namespace of `pid`, coming back to
-    /// `src` on exit.
-    pub fn new(pid: u32, src: &SelfNs<N>) -> Result<Self, Error> {
-        let target_ns = N::from_pid::<N>(pid)?;
+    /// `src` on exit. Fails if `pid` is not in the `expected` namespace.
+    pub fn new(pid: u32, src: &SelfNs<N>, expected: &N) -> Result<Self, Error> {
+        // identity comes from the opened fd, as pid may change namespace or
+        // be reused between any two lookups of its /proc entry
+        let dst = N::open::<N>(pid)?;
+        let ino = dst.metadata().map_err(NsError::from)?.ino();
+        let inum = u32::try_from(ino).map_err(Error::other)?;
 
-        let (src, dst) = if src.namespace == target_ns {
+        if inum != expected.inum() {
+            return Err(NsError::UnexpectedNsInode {
+                exp: expected.inum(),
+                cur: inum,
+            }
+            .into());
+        }
+
+        let (src, dst) = if src.namespace == *expected {
             (None, None)
         } else {
-            // namespace of the target process
-            let dst = N::open::<N>(pid)?;
             (Some(Arc::clone(&src.file)), Some(dst))
         };
 
         Ok(Self {
-            namespace: target_ns,
+            namespace: *expected,
             src,
             dst,
         })

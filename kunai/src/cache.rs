@@ -558,7 +558,7 @@ impl MntNsCache {
                 None => self.self_ns.insert(SelfNs::open()?),
             };
             self.switchers
-                .insert(ns, Switcher::new(pid as u32, self_ns)?);
+                .insert(ns, Switcher::new(pid as u32, self_ns, &ns)?);
             debug_assert!(self.switchers.contains_key(&ns));
         }
         Ok(())
@@ -801,6 +801,11 @@ impl Caches {
 mod tests {
     use super::*;
     use crate::util::namespace::Namespace;
+    use std::{
+        process::{Child, Command},
+        thread,
+        time::{Duration, Instant},
+    };
 
     fn pkey(pid: i32) -> ProcKey {
         ProcKey::from_proc_uuid(kunai_common::uuid::ProcUuid {
@@ -887,6 +892,82 @@ mod tests {
         assert_eq!(refs.track(pkey(1), a), None);
         assert_eq!(refs.track(pkey(1), b), Some(a));
         assert_eq!(refs.untrack(&pkey(1)), Some(b));
+    }
+
+    const FOREIGN_NS_TIMEOUT: Duration = Duration::from_secs(5);
+
+    fn self_mnt_ns() -> Mnt {
+        Mnt::from_pid::<Mnt>(std::process::id()).unwrap()
+    }
+
+    // Rootless child living in its own mount namespace, the user namespace
+    // is only there to allow unsharing the mount namespace.
+    fn foreign_mnt_ns_child() -> (Child, Mnt) {
+        let mut child = Command::new("unshare")
+            .args(["--user", "--map-root-user", "--mount", "sleep", "30"])
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + FOREIGN_NS_TIMEOUT;
+        let foreign = loop {
+            if let Ok(ns) = Mnt::from_pid::<Mnt>(child.id())
+                && ns != self_mnt_ns()
+            {
+                break ns;
+            }
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!(
+                    "unshare exited with {status}, unprivileged user namespaces may be restricted"
+                );
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("child never entered its own mount namespace");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        (child, foreign)
+    }
+
+    #[test]
+    fn mnt_ns_cache_rejects_self_ns_under_other_key() {
+        let mut cache = MntNsCache::with_max_entries(4);
+        let expected = Mnt::from_inum::<Mnt>(self_mnt_ns().inum.wrapping_add(1));
+
+        // pid now lives in our namespace, a no-op switcher would resolve the
+        // expected namespace against our own files
+        let res = cache.cache(std::process::id() as i32, expected, None);
+
+        assert!(res.is_err());
+        assert!(cache.get(&expected).is_none());
+    }
+
+    #[test]
+    fn mnt_ns_cache_rejects_foreign_ns_under_other_key() {
+        let (mut child, foreign) = foreign_mnt_ns_child();
+        let mut cache = MntNsCache::with_max_entries(4);
+        let expected = self_mnt_ns();
+
+        let res = cache.cache(child.id() as i32, expected, None);
+
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(res.is_err());
+        assert!(cache.get(&expected).is_none());
+        assert!(cache.get(&foreign).is_none());
+    }
+
+    #[test]
+    fn mnt_ns_cache_accepts_matching_foreign_ns() {
+        let (mut child, foreign) = foreign_mnt_ns_child();
+        let mut cache = MntNsCache::with_max_entries(4);
+
+        let res = cache.cache(child.id() as i32, foreign, None);
+
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(res.is_ok(), "{res:?}");
+        assert_eq!(cache.get(&foreign).unwrap().namespace, foreign);
     }
 }
 

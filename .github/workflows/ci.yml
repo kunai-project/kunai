@@ -59,6 +59,10 @@ jobs:
       - name: Run clippy on full project
         run: cargo clippy -- -D warnings
 
+      # Ubuntu 24.04 blocks the rootless unshare used by mount namespace tests
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Run cargo test
         run: cargo test --all-features
 
