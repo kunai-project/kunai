@@ -34,6 +34,7 @@ pub use start::*;
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
 pub struct File<'src> {
+    #[serde(serialize_with = "crate::util::serde::serialize_path")]
     pub path: Cow<'src, Path>,
 }
 
@@ -1067,6 +1068,7 @@ impl Scannable for InitModuleData<'_> {
 
 def_user_data!(
     pub struct FileData<'src> {
+        #[serde(serialize_with = "crate::util::serde::serialize_path")]
         pub path: PathBuf,
     }
 );
@@ -1089,6 +1091,7 @@ impl Scannable for FileData<'_> {
 
 def_user_data!(
     pub struct UnlinkData<'src> {
+        #[serde(serialize_with = "crate::util::serde::serialize_path")]
         pub path: PathBuf,
         pub success: bool,
     }
@@ -1109,7 +1112,9 @@ impl Scannable for UnlinkData<'_> {
 
 def_user_data!(
     pub struct FileRenameData<'src> {
+        #[serde(serialize_with = "crate::util::serde::serialize_path")]
         pub old: PathBuf,
+        #[serde(serialize_with = "crate::util::serde::serialize_path")]
         pub new: PathBuf,
     }
 );
@@ -1291,6 +1296,7 @@ impl_std_iocs!(ErrorData<'_>);
 
 #[derive(Default, Debug, Serialize, Deserialize, FieldGetter)]
 pub struct FileScanData {
+    #[serde(serialize_with = "crate::util::serde::serialize_path")]
     pub path: PathBuf,
     pub meta: FileMeta,
     #[getter(skip)]

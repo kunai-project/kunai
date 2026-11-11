@@ -189,6 +189,7 @@ impl FileMeta {
 
 #[derive(Debug, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct Hashes {
+    #[serde(serialize_with = "crate::util::serde::serialize_path")]
     pub path: PathBuf,
     pub magic: String,
     pub md5: String,
