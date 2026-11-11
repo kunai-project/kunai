@@ -40,6 +40,7 @@ use kunai_common::config::Filter;
 use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
+use kunai_common::string::escape_invalid_utf8;
 use kunai_common::user_ns::{IdMap, UserNs};
 use kunai_common::{creds, inspect_err, kernel};
 
@@ -64,6 +65,7 @@ use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
 
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -182,7 +184,7 @@ impl Processes {
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| c.image.to_string_lossy())
+            .map(|c| escape_invalid_utf8(c.image.as_os_str().as_bytes()))
             .unwrap_or(Cow::Borrowed("?"))
     }
 
@@ -428,8 +430,8 @@ impl Processes {
             command_line,
             exe: exe.into(),
             syscall: Cow::Borrowed(bpf_data.args.syscall_name()),
-            module_name: Cow::Borrowed(bpf_data.name.as_str()),
-            args: Cow::Borrowed(bpf_data.uargs.as_str()),
+            module_name: bpf_data.name.to_string_lossy(),
+            args: bpf_data.uargs.to_string_lossy(),
             loaded: bpf_data.loaded,
         };
 
@@ -489,7 +491,7 @@ impl Processes {
         // we always display a warning on stderr
         warn!(
             "comm={} pid={} tgid={} guuid={}: {}",
-            ti.comm_str(),
+            ti.comm_string(),
             ti.pid,
             ti.tgid,
             ti.tg_uuid.into_uuid(),
@@ -2039,20 +2041,10 @@ impl EventConsumer<'_> {
             }
         };
 
-        let (command_line, opt_err) = seed.argv.to_argv();
-        opt_err.inspect(|e| {
-            error!(
-                "utf8 decoding error while parsing argv for comm={} pid={} task={}: {e}",
-                ti.comm_string(),
-                ti.tgid,
-                ti.tg_uuid.into_uuid()
-            )
-        });
-
         self.table.insert_process(
             ti,
             image,
-            command_line.join(" "),
+            seed.argv.to_argv().join(" "),
             cgroups,
             parent_key,
             parent_task_info,
