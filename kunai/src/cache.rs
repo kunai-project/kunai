@@ -3,6 +3,7 @@ use gene::{FieldGetter, FieldNameIterator, FieldValue};
 use gene_derive::FieldGetter;
 
 use huby::ByteSize;
+use kunai_common::string::escape_invalid_utf8_path;
 use kunai_common::time::Time;
 use kunai_common::user_ns::UserNs;
 use lru_st::collections::LruHashMap;
@@ -314,7 +315,7 @@ impl Hashes {
 
     pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
         vec![
-            self.path.to_string_lossy(),
+            escape_invalid_utf8_path(&self.path),
             self.md5.as_str().into(),
             self.sha1.as_str().into(),
             self.sha256.as_str().into(),

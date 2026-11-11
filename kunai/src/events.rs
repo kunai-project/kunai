@@ -14,6 +14,7 @@ use kunai_common::{
     bpf_events::{self, TaskInfo, Type},
     consts::caps_to_str_vec,
     creds, net,
+    string::escape_invalid_utf8_path,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
 use uuid::Uuid;
@@ -564,7 +565,7 @@ macro_rules! def_user_data {
 
                 impl <$lt> $struct_name <$lt> {
                     fn _iocs(&self) -> Vec<Cow<'_,str>>{
-                        vec![self.exe.path.to_string_lossy()]
+                        vec![escape_invalid_utf8_path(&self.exe.path)]
                     }
                 }
             };
@@ -866,7 +867,7 @@ impl Scannable for MmapExecData<'_> {
 
 impl IocGetter for MmapExecData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.exe.path.to_string_lossy()];
+        let mut v = vec![escape_invalid_utf8_path(&self.exe.path)];
         v.extend(self.mapped.iocs());
         v
     }
@@ -1000,7 +1001,7 @@ impl Scannable for DnsQueryData<'_> {
 impl IocGetter for DnsQueryData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         // set executable
-        let mut v = vec![self.exe.path.to_string_lossy()];
+        let mut v = vec![escape_invalid_utf8_path(&self.exe.path)];
         // the ip addresses in the response
         v.extend(
             self.response
@@ -1036,7 +1037,7 @@ impl Scannable for SendDataData<'_> {
 
 impl IocGetter for SendDataData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.exe.path.to_string_lossy()];
+        let mut v = vec![escape_invalid_utf8_path(&self.exe.path)];
         v.extend(self.dst.iocs());
         v
     }
@@ -1055,7 +1056,7 @@ pub struct InitModuleData<'src> {
 
 impl IocGetter for InitModuleData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.path.to_string_lossy()]
+        vec![escape_invalid_utf8_path(&self.exe.path)]
     }
 }
 
@@ -1075,7 +1076,10 @@ def_user_data!(
 
 impl IocGetter for FileData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.path.to_string_lossy(), self.path.to_string_lossy()]
+        vec![
+            escape_invalid_utf8_path(&self.exe.path),
+            escape_invalid_utf8_path(&self.path),
+        ]
     }
 }
 
@@ -1099,7 +1103,10 @@ def_user_data!(
 
 impl IocGetter for UnlinkData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![self.exe.path.to_string_lossy(), self.path.to_string_lossy()]
+        vec![
+            escape_invalid_utf8_path(&self.exe.path),
+            escape_invalid_utf8_path(&self.path),
+        ]
     }
 }
 
@@ -1122,9 +1129,9 @@ def_user_data!(
 impl IocGetter for FileRenameData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.path.to_string_lossy(),
-            self.old.to_string_lossy(),
-            self.new.to_string_lossy(),
+            escape_invalid_utf8_path(&self.exe.path),
+            escape_invalid_utf8_path(&self.old),
+            escape_invalid_utf8_path(&self.new),
         ]
     }
 }
@@ -1171,7 +1178,7 @@ def_user_data!(
 impl IocGetter for BpfProgLoadData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.path.to_string_lossy(),
+            escape_invalid_utf8_path(&self.exe.path),
             self.bpf_prog.md5.as_str().into(),
             self.bpf_prog.sha1.as_str().into(),
             self.bpf_prog.sha256.as_str().into(),
@@ -1233,7 +1240,7 @@ impl Scannable for BpfSocketFilterData<'_> {
 impl IocGetter for BpfSocketFilterData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            self.exe.path.to_string_lossy(),
+            escape_invalid_utf8_path(&self.exe.path),
             self.filter.md5.as_str().into(),
             self.filter.sha1.as_str().into(),
             self.filter.sha256.as_str().into(),
@@ -1327,7 +1334,7 @@ impl Scannable for FileScanData {
 impl IocGetter for FileScanData {
     // we might want to scan hashes against IoCs later than execve
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![self.path.to_string_lossy()];
+        let mut v = vec![escape_invalid_utf8_path(&self.path)];
         v.extend(self.meta.iocs());
         v
     }
@@ -1420,6 +1427,27 @@ mod tests {
         let file = File::from(PathBuf::from(OsStr::from_bytes(b"/tmp/caf\xc3\xa9_\xff")));
         let json = serde_json::to_value(&file).unwrap();
         assert_eq!(json["path"], "/tmp/café_\\xff");
+    }
+
+    #[test]
+    fn iocs_escape_invalid_utf8_paths() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let path = PathBuf::from(OsStr::from_bytes(b"/tmp/caf\xc3\xa9_\xff"));
+        let mut error = ErrorData {
+            ancestors: vec![],
+            command_line: "".into(),
+            exe: File::from(path.clone()),
+            code: 0,
+            message: String::new(),
+        };
+        let mut scan = FileScanData {
+            path,
+            ..Default::default()
+        };
+
+        assert_eq!(error.iocs()[0], "/tmp/café_\\xff");
+        assert_eq!(scan.iocs()[0], "/tmp/café_\\xff");
     }
 
     #[test]
