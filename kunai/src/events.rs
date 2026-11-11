@@ -1408,6 +1408,15 @@ mod tests {
     }
 
     #[test]
+    fn file_with_invalid_utf8_path_serializes_escaped() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let file = File::from(PathBuf::from(OsStr::from_bytes(b"/tmp/caf\xc3\xa9_\xff")));
+        let json = serde_json::to_value(&file).unwrap();
+        assert_eq!(json["path"], "/tmp/café_\\xff");
+    }
+
+    #[test]
     fn creds_ns_identity() {
         let (overflow_uid, overflow_gid) = overflow_ids();
         let rootless = &[(0, 1000, 1), (1, 524288, 65536)];

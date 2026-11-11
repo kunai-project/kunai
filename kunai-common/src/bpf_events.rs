@@ -365,4 +365,29 @@ mod test {
 
         assert_eq!(d.data.error_code, 42);
     }
+
+    fn task_with_comm(comm: &[u8]) -> TaskInfo {
+        let mut ti = TaskInfo::default();
+        ti.comm[..comm.len()].copy_from_slice(comm);
+        ti
+    }
+
+    #[test]
+    fn comm_string_escapes_invalid_bytes() {
+        let ti = task_with_comm(b"kunai_bad_\xff");
+        assert_eq!(ti.comm_string(), "kunai_bad_\\xff");
+    }
+
+    #[test]
+    fn comm_string_escapes_truncated_multibyte() {
+        // the kernel cuts comm at 15 bytes, possibly inside a character
+        let ti = task_with_comm(b"aaaaaaaaaaaaaa\xc3");
+        assert_eq!(ti.comm_string(), "aaaaaaaaaaaaaa\\xc3");
+    }
+
+    #[test]
+    fn comm_string_reads_full_buffer_without_nul() {
+        let ti = task_with_comm(b"0123456789abcdef");
+        assert_eq!(ti.comm_string(), "0123456789abcdef");
+    }
 }

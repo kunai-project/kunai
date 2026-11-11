@@ -4461,6 +4461,30 @@ mod tests {
         }))
     }
 
+    fn execve_event(task: TaskInfo, exe: &[u8]) -> EbpfEvent {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let exe =
+            kunai_common::path::Path::try_from(PathBuf::from(OsStr::from_bytes(exe))).unwrap();
+
+        EbpfEvent::Execve(Box::new(bpf_events::Event {
+            info: bpf_events::EventInfo {
+                etype: Type::Execve,
+                process: task,
+                ..Default::default()
+            },
+            data: bpf_events::ExecveData {
+                executable: exe,
+                interpreter: exe,
+                argv: Default::default(),
+                cgroup: Default::default(),
+                nodename: Default::default(),
+                user_ns: Default::default(),
+                rc: 0,
+            },
+        }))
+    }
+
     fn commit_creds_event(task: TaskInfo, new: creds::Creds) -> EbpfEvent {
         EbpfEvent::CommitCreds(Box::new(bpf_events::Event {
             info: bpf_events::EventInfo {
@@ -4484,6 +4508,19 @@ mod tests {
             },
             data: Default::default(),
         }))
+    }
+
+    #[test]
+    fn execve_with_hostile_exe_and_comm_is_printed() {
+        let mut consumer = event_consumer();
+        let mut task = task_info(100, creds(1000));
+        task.comm[..11].copy_from_slice(b"kunai_bad_\xff");
+
+        consumer.handle_event(execve_event(task, b"/tmp/kunai_bad_\xff"));
+
+        let json: serde_json::Value = serde_json::from_slice(&consumer.sink.json_buf).unwrap();
+        assert_eq!(json["info"]["task"]["name"], "kunai_bad_\\xff");
+        assert_eq!(json["data"]["exe"]["path"], "/tmp/kunai_bad_\\xff");
     }
 
     #[test]

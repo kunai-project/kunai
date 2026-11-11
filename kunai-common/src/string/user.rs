@@ -67,3 +67,81 @@ impl<const N: usize> String<N> {
         s
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{String, escape_invalid_utf8};
+
+    #[test]
+    fn escape_keeps_text_between_invalid_bytes() {
+        assert_eq!(escape_invalid_utf8(b"\xfea\xffb"), "\\xfea\\xffb");
+    }
+
+    #[test]
+    fn escape_empty_input() {
+        assert_eq!(escape_invalid_utf8(b""), "");
+    }
+
+    fn string<const N: usize>(bytes: &[u8]) -> String<N> {
+        let mut s = String::<N>::new();
+        s.s[..bytes.len()].copy_from_slice(bytes);
+        s.len = bytes.len();
+        s
+    }
+
+    #[test]
+    fn lossy_escapes_invalid_bytes() {
+        let s = string::<16>(b"opt=\xff");
+        assert_eq!(s.to_string_lossy(), "opt=\\xff");
+    }
+
+    #[test]
+    fn lossy_escapes_truncated_multibyte() {
+        // "é" is 0xc3 0xa9, a bounded probe read can stop in the middle
+        let s = string::<16>(b"caf\xc3");
+        assert_eq!(s.to_string_lossy(), "caf\\xc3");
+    }
+
+    #[test]
+    fn lossy_keeps_valid_non_ascii() {
+        let s = string::<16>("café".as_bytes());
+        assert_eq!(s.to_string_lossy(), "café");
+    }
+
+    #[test]
+    fn lossy_keeps_backslashes() {
+        let s = string::<16>(b"a\\xff");
+        assert_eq!(s.to_string_lossy(), "a\\xff");
+    }
+
+    #[test]
+    fn lossy_trims_trailing_nul() {
+        let s = string::<16>(b"opt=1\0");
+        assert_eq!(s.to_string_lossy(), "opt=1");
+    }
+
+    #[test]
+    fn lossy_trims_nul_after_invalid_bytes() {
+        let s = string::<16>(b"opt=\xff\0");
+        assert_eq!(s.to_string_lossy(), "opt=\\xff");
+    }
+
+    #[test]
+    fn lossy_reads_full_buffer_without_nul() {
+        let s = string::<4>(b"abcd");
+        assert_eq!(s.to_string_lossy(), "abcd");
+    }
+
+    #[test]
+    fn lossy_clamps_len_to_capacity() {
+        let mut s = string::<4>(b"abcd");
+        s.len = 32;
+        assert_eq!(s.to_string_lossy(), "abcd");
+    }
+
+    #[test]
+    fn into_std_string_escapes_invalid_bytes() {
+        let s: std::string::String = string::<16>(b"opt=\xff").into();
+        assert_eq!(s, "opt=\\xff");
+    }
+}

@@ -80,3 +80,20 @@ impl Path {
         self.into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::PathBuf};
+
+    use super::Path;
+
+    const RAW: &[u8] = b"/tmp/kunai_bad_\xff";
+
+    #[test]
+    fn path_buf_round_trip_keeps_raw_bytes() {
+        let pb = PathBuf::from(OsStr::from_bytes(RAW));
+        let p = Path::try_from(&pb).unwrap();
+        assert_eq!(p.as_slice(), RAW);
+        assert_eq!(p.to_path_buf().as_os_str().as_bytes(), RAW);
+    }
+}
