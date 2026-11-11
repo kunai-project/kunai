@@ -1,6 +1,16 @@
-use std::time::Duration;
+use std::{os::unix::ffi::OsStrExt, path::Path, time::Duration};
 
+use kunai_common::string::escape_invalid_utf8;
 use serde::{Deserialize, Deserializer, Serializer};
+
+// Serde's default path serialization fails on bytes that are not valid UTF-8
+pub(crate) fn serialize_path<P, S>(path: &P, serializer: S) -> Result<S::Ok, S::Error>
+where
+    P: AsRef<Path>,
+    S: Serializer,
+{
+    serializer.serialize_str(&escape_invalid_utf8(path.as_ref().as_os_str().as_bytes()))
+}
 
 // Custom serialization function for Option<Duration>
 pub(crate) fn serialize_opt_duration<S>(
