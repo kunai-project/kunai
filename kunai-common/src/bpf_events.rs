@@ -217,15 +217,6 @@ pub struct TaskInfo {
 
 impl TaskInfo {
     #[inline(always)]
-    pub fn comm_str(&self) -> &str {
-        // comm string may or may not contain null byte so CStr are not appropriate
-        if let Some(first) = self.comm.split(|&b| b == b'\0').next() {
-            return unsafe { core::str::from_utf8_unchecked(first) };
-        }
-        unsafe { core::str::from_utf8_unchecked(&self.comm[..]) }
-    }
-
-    #[inline(always)]
     pub fn is_thread_leader(&self) -> bool {
         self.pid == self.tgid
     }
@@ -243,7 +234,9 @@ impl TaskInfo {
     #[cfg(feature = "user")]
     #[inline(always)]
     pub fn comm_string(&self) -> std::string::String {
-        self.comm_str().into()
+        // comm may or may not contain a NUL byte so CStr is not appropriate
+        let len = self.comm.iter().position(|&b| b == 0).unwrap_or(COMM_SIZE);
+        crate::string::escape_invalid_utf8(&self.comm[..len]).into_owned()
     }
 }
 
