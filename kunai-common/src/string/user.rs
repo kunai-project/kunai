@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 use thiserror::Error;
 
 use super::String;
@@ -43,28 +43,33 @@ impl<const N: usize> Display for String<N> {
     }
 }
 
+/// Converts untrusted bytes to text: valid UTF-8 is kept as is and every
+/// invalid byte is written as `\xNN`. Backslashes are not escaped, so the
+/// conversion cannot always be reversed.
+pub fn escape_invalid_utf8(bytes: &[u8]) -> Cow<'_, str> {
+    let mut out = std::string::String::new();
+    for chunk in bytes.utf8_chunks() {
+        if chunk.valid().len() == bytes.len() {
+            return Cow::Borrowed(chunk.valid());
+        }
+        out.push_str(chunk.valid());
+        for byte in chunk.invalid() {
+            write!(out, "\\x{byte:02x}").expect("writing to a String cannot fail");
+        }
+    }
+    Cow::Owned(out)
+}
+
 impl<const N: usize> String<N> {
     pub fn to_string_lossy(&'_ self) -> Cow<'_, str> {
-        Cow::from(self.as_str())
+        escape_invalid_utf8(self.as_bytes())
     }
 
-    #[inline(always)]
-    pub fn as_str(&self) -> &str {
-        // String API guarantee that characters are valid UTF8 chars
-        let s = {
-            #[cfg(not(debug_assertions))]
-            unsafe {
-                core::str::from_utf8_unchecked(&self.s[..self.len])
-            }
-            #[cfg(debug_assertions)]
-            core::str::from_utf8(&self.s[..self.len]).expect("string should have only valid utf8 char")
-        };
+    fn as_bytes(&self) -> &[u8] {
+        let bytes = &self.s[..self.len.min(N)];
         // there is currently a bug in bpf_probe_read_[user|kernel]_str_bytes that returns
         // a len containing NULL byte so we attempt to fix that
-        if s.ends_with(0 as char) && !s.is_empty() {
-            return &s[..s.len() - 1];
-        }
-        s
+        bytes.strip_suffix(&[0]).unwrap_or(bytes)
     }
 }
 
