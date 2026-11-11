@@ -1,8 +1,9 @@
-use core::cmp::min;
-
 use super::{Error, Mode, Path};
 
-use {core::fmt::Display, std::path};
+use {
+    core::fmt::Display,
+    std::{ffi::OsStr, os::unix::ffi::OsStrExt, path},
+};
 
 impl std::error::Error for Error {
     fn cause(&self) -> Option<&dyn std::error::Error> {
@@ -26,9 +27,7 @@ impl Display for Error {
 
 impl From<Path> for path::PathBuf {
     fn from(value: Path) -> Self {
-        // Path is supposed to hold valid utf8 characters controlled by the kernel
-        let p = unsafe { core::str::from_utf8_unchecked(value.as_slice()) };
-        path::PathBuf::from(p)
+        path::PathBuf::from(OsStr::from_bytes(value.as_slice()))
     }
 }
 
@@ -44,20 +43,15 @@ impl TryFrom<&path::PathBuf> for Path {
 
     fn try_from(value: &path::PathBuf) -> Result<Self, Self::Error> {
         let mut out = Self::default();
-        let path_buf_len = value.to_string_lossy().len();
+        let bytes = value.as_os_str().as_bytes();
 
-        if path_buf_len > out.buffer.len() {
+        if bytes.len() > out.buffer.len() {
             return Err(Error::FilePathTooLong);
         }
 
-        let len = min(path_buf_len, out.buffer.len());
-
-        out.buffer[..len]
-            .as_mut()
-            .copy_from_slice(&value.to_string_lossy().as_bytes()[..len]);
-
+        out.buffer[..bytes.len()].copy_from_slice(bytes);
         out.mode = Mode::Append;
-        out.len = len as u32;
+        out.len = bytes.len() as u32;
 
         Ok(out)
     }
