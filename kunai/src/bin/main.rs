@@ -40,7 +40,7 @@ use kunai_common::config::Filter;
 use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
-use kunai_common::string::escape_invalid_utf8;
+use kunai_common::string::{escape_invalid_utf8, escape_invalid_utf8_path};
 use kunai_common::user_ns::{IdMap, UserNs};
 use kunai_common::{creds, inspect_err, kernel};
 
@@ -65,7 +65,6 @@ use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
 
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -112,14 +111,11 @@ struct ProcSeed<'a> {
 }
 
 impl ProcSeed<'_> {
-    fn nodename(&self) -> Option<String> {
-        let nn = self.nodename?;
-        Some(
-            core::ffi::CStr::from_bytes_until_nul(nn.as_slice())
-                .ok()?
-                .to_string_lossy()
-                .to_string(),
-        )
+    fn nodename(&self) -> Option<Cow<'_, str>> {
+        let bytes = core::ffi::CStr::from_bytes_until_nul(self.nodename?.as_slice())
+            .ok()?
+            .to_bytes();
+        Some(escape_invalid_utf8(bytes))
     }
 }
 
@@ -184,7 +180,7 @@ impl Processes {
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| escape_invalid_utf8(c.image.as_os_str().as_bytes()))
+            .map(|c| escape_invalid_utf8_path(&c.image))
             .unwrap_or(Cow::Borrowed("?"))
     }
 
