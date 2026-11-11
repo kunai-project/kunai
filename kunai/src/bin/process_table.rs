@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
-use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,7 +10,7 @@ use kunai::info::{ProcKey, StdEventInfo, TaskKey};
 use kunai::util::tgkill;
 use kunai_common::bpf_events::TaskInfo;
 use kunai_common::creds;
-use kunai_common::string::escape_invalid_utf8;
+use kunai_common::string::escape_invalid_utf8_path;
 use kunai_common::user_ns::UserNs;
 
 const MAX_ANCESTORS: usize = 1024;
@@ -113,7 +112,7 @@ impl Processes {
         while let Some(task) = self.get(&k) {
             last = Some(task);
             if skip == 0 {
-                ancestors.push(escape_invalid_utf8(task.image.as_os_str().as_bytes()));
+                ancestors.push(escape_invalid_utf8_path(&task.image));
             } else {
                 skip -= 1;
             }
