@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::{Display, Write};
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use thiserror::Error;
 
 use super::String;
@@ -58,6 +60,11 @@ pub fn escape_invalid_utf8(bytes: &[u8]) -> Cow<'_, str> {
         }
     }
     Cow::Owned(out)
+}
+
+/// Converts a path to text the same way as [`escape_invalid_utf8`].
+pub fn escape_invalid_utf8_path(path: &Path) -> Cow<'_, str> {
+    escape_invalid_utf8(path.as_os_str().as_bytes())
 }
 
 impl<const N: usize> String<N> {
