@@ -7,14 +7,13 @@ use std::{
 };
 
 use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
-use gene::{Event, FieldGetter, FieldNameIterator, FieldValue, rules::MAX_SEVERITY};
+use gene::{Event, FieldGetter, FieldNameIterator, FieldValue, RawPath, rules::MAX_SEVERITY};
 use gene_derive::{Event, FieldGetter};
 
 use kunai_common::{
     bpf_events::{self, TaskInfo, Type},
     consts::caps_to_str_vec,
     creds, net,
-    string::escape_invalid_utf8_path,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
 use uuid::Uuid;
@@ -35,23 +34,18 @@ pub use start::*;
 
 #[derive(Debug, Default, Serialize, Deserialize, FieldGetter)]
 pub struct File<'src> {
-    #[serde(serialize_with = "crate::util::serde::serialize_path")]
-    pub path: Cow<'src, Path>,
+    pub path: RawPath<'src>,
 }
 
 impl From<PathBuf> for File<'static> {
     fn from(value: PathBuf) -> Self {
-        Self {
-            path: Cow::Owned(value),
-        }
+        Self { path: value.into() }
     }
 }
 
 impl<'src> From<&'src Path> for File<'src> {
     fn from(value: &'src Path) -> Self {
-        Self {
-            path: Cow::Borrowed(value),
-        }
+        Self { path: value.into() }
     }
 }
 
@@ -565,7 +559,7 @@ macro_rules! def_user_data {
 
                 impl <$lt> $struct_name <$lt> {
                     fn _iocs(&self) -> Vec<Cow<'_,str>>{
-                        vec![escape_invalid_utf8_path(&self.exe.path)]
+                        vec![self.exe.path.escaped()]
                     }
                 }
             };
@@ -587,7 +581,7 @@ impl Scannable for ExecveData<'_> {
     fn scannable_files(&self) -> Vec<Cow<'_, Path>> {
         let mut v = vec![Cow::Borrowed(self.exe.path.as_ref())];
         if let Some(interp) = self.interpreter.as_ref() {
-            v.push(Cow::Borrowed(interp.path.as_path()));
+            v.push(Cow::Borrowed(interp.path.as_ref()));
         }
         v
     }
@@ -867,7 +861,7 @@ impl Scannable for MmapExecData<'_> {
 
 impl IocGetter for MmapExecData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![escape_invalid_utf8_path(&self.exe.path)];
+        let mut v = vec![self.exe.path.escaped()];
         v.extend(self.mapped.iocs());
         v
     }
@@ -1001,7 +995,7 @@ impl Scannable for DnsQueryData<'_> {
 impl IocGetter for DnsQueryData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         // set executable
-        let mut v = vec![escape_invalid_utf8_path(&self.exe.path)];
+        let mut v = vec![self.exe.path.escaped()];
         // the ip addresses in the response
         v.extend(
             self.response
@@ -1037,7 +1031,7 @@ impl Scannable for SendDataData<'_> {
 
 impl IocGetter for SendDataData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![escape_invalid_utf8_path(&self.exe.path)];
+        let mut v = vec![self.exe.path.escaped()];
         v.extend(self.dst.iocs());
         v
     }
@@ -1056,7 +1050,7 @@ pub struct InitModuleData<'src> {
 
 impl IocGetter for InitModuleData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![escape_invalid_utf8_path(&self.exe.path)]
+        vec![self.exe.path.escaped()]
     }
 }
 
@@ -1069,17 +1063,13 @@ impl Scannable for InitModuleData<'_> {
 
 def_user_data!(
     pub struct FileData<'src> {
-        #[serde(serialize_with = "crate::util::serde::serialize_path")]
-        pub path: PathBuf,
+        pub path: RawPath<'src>,
     }
 );
 
 impl IocGetter for FileData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![
-            escape_invalid_utf8_path(&self.exe.path),
-            escape_invalid_utf8_path(&self.path),
-        ]
+        vec![self.exe.path.escaped(), self.path.escaped()]
     }
 }
 
@@ -1095,18 +1085,14 @@ impl Scannable for FileData<'_> {
 
 def_user_data!(
     pub struct UnlinkData<'src> {
-        #[serde(serialize_with = "crate::util::serde::serialize_path")]
-        pub path: PathBuf,
+        pub path: RawPath<'src>,
         pub success: bool,
     }
 );
 
 impl IocGetter for UnlinkData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        vec![
-            escape_invalid_utf8_path(&self.exe.path),
-            escape_invalid_utf8_path(&self.path),
-        ]
+        vec![self.exe.path.escaped(), self.path.escaped()]
     }
 }
 
@@ -1119,19 +1105,17 @@ impl Scannable for UnlinkData<'_> {
 
 def_user_data!(
     pub struct FileRenameData<'src> {
-        #[serde(serialize_with = "crate::util::serde::serialize_path")]
-        pub old: PathBuf,
-        #[serde(serialize_with = "crate::util::serde::serialize_path")]
-        pub new: PathBuf,
+        pub old: RawPath<'src>,
+        pub new: RawPath<'src>,
     }
 );
 
 impl IocGetter for FileRenameData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            escape_invalid_utf8_path(&self.exe.path),
-            escape_invalid_utf8_path(&self.old),
-            escape_invalid_utf8_path(&self.new),
+            self.exe.path.escaped(),
+            self.old.escaped(),
+            self.new.escaped(),
         ]
     }
 }
@@ -1178,7 +1162,7 @@ def_user_data!(
 impl IocGetter for BpfProgLoadData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            escape_invalid_utf8_path(&self.exe.path),
+            self.exe.path.escaped(),
             self.bpf_prog.md5.as_str().into(),
             self.bpf_prog.sha1.as_str().into(),
             self.bpf_prog.sha256.as_str().into(),
@@ -1240,7 +1224,7 @@ impl Scannable for BpfSocketFilterData<'_> {
 impl IocGetter for BpfSocketFilterData<'_> {
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
         vec![
-            escape_invalid_utf8_path(&self.exe.path),
+            self.exe.path.escaped(),
             self.filter.md5.as_str().into(),
             self.filter.sha1.as_str().into(),
             self.filter.sha256.as_str().into(),
@@ -1303,8 +1287,7 @@ impl_std_iocs!(ErrorData<'_>);
 
 #[derive(Default, Debug, Serialize, Deserialize, FieldGetter)]
 pub struct FileScanData {
-    #[serde(serialize_with = "crate::util::serde::serialize_path")]
-    pub path: PathBuf,
+    pub path: RawPath<'static>,
     pub meta: FileMeta,
     #[getter(skip)]
     pub signatures: Arc<[String]>,
@@ -1334,7 +1317,7 @@ impl Scannable for FileScanData {
 impl IocGetter for FileScanData {
     // we might want to scan hashes against IoCs later than execve
     fn iocs(&mut self) -> Vec<Cow<'_, str>> {
-        let mut v = vec![escape_invalid_utf8_path(&self.path)];
+        let mut v = vec![self.path.escaped()];
         v.extend(self.meta.iocs());
         v
     }
@@ -1430,6 +1413,46 @@ mod tests {
     }
 
     #[test]
+    fn file_with_invalid_utf8_path_deserializes_raw_bytes() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let raw = b"/tmp/caf\xc3\xa9_\xff";
+        let file = File::from(PathBuf::from(OsStr::from_bytes(raw)));
+        let json = serde_json::to_string(&file).unwrap();
+        let replayed: File = serde_json::from_str(&json).unwrap();
+        assert_eq!(replayed.path.as_os_str().as_bytes(), raw);
+    }
+
+    #[derive(Event, FieldGetter)]
+    #[event(id = 1, source = "test".into())]
+    struct FileEvent<'a> {
+        file: File<'a>,
+    }
+
+    #[test]
+    fn rule_written_from_output_matches_invalid_utf8_path() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let mut compiler = gene::Compiler::new();
+        compiler
+            .load_rules_from_str(
+                r#"
+name: escaped.path
+matches:
+    $path: .file.path == '/tmp/a\xffb'
+condition: $path"#,
+            )
+            .unwrap();
+        let mut engine = gene::Engine::try_from(compiler).unwrap();
+        let event = FileEvent {
+            file: File::from(Path::new(OsStr::from_bytes(b"/tmp/a\xffb"))),
+        };
+
+        let result = engine.scan(&event).unwrap();
+        assert!(result.includes_detection("escaped.path"));
+    }
+
+    #[test]
     fn iocs_escape_invalid_utf8_paths() {
         use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
@@ -1442,7 +1465,7 @@ mod tests {
             message: String::new(),
         };
         let mut scan = FileScanData {
-            path,
+            path: path.into(),
             ..Default::default()
         };
 

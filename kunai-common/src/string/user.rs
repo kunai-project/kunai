@@ -1,7 +1,5 @@
 use std::borrow::Cow;
-use std::fmt::{Display, Write};
-use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::fmt::Display;
 use thiserror::Error;
 
 use super::String;
@@ -45,27 +43,8 @@ impl<const N: usize> Display for String<N> {
     }
 }
 
-/// Converts untrusted bytes to text: valid UTF-8 is kept as is and every
-/// invalid byte is written as `\xNN`. Backslashes are not escaped, so the
-/// conversion cannot always be reversed.
-pub fn escape_invalid_utf8(bytes: &[u8]) -> Cow<'_, str> {
-    let mut out = std::string::String::new();
-    for chunk in bytes.utf8_chunks() {
-        if chunk.valid().len() == bytes.len() {
-            return Cow::Borrowed(chunk.valid());
-        }
-        out.push_str(chunk.valid());
-        for byte in chunk.invalid() {
-            write!(out, "\\x{byte:02x}").expect("writing to a String cannot fail");
-        }
-    }
-    Cow::Owned(out)
-}
-
-/// Converts a path to text the same way as [`escape_invalid_utf8`].
-pub fn escape_invalid_utf8_path(path: &Path) -> Cow<'_, str> {
-    escape_invalid_utf8(path.as_os_str().as_bytes())
-}
+// gene's encoding, so event text and rule matching use the same escaping
+pub use gene_encoding::escape_invalid_utf8;
 
 impl<const N: usize> String<N> {
     pub fn to_string_lossy(&'_ self) -> Cow<'_, str> {
@@ -82,17 +61,7 @@ impl<const N: usize> String<N> {
 
 #[cfg(test)]
 mod tests {
-    use super::{String, escape_invalid_utf8};
-
-    #[test]
-    fn escape_keeps_text_between_invalid_bytes() {
-        assert_eq!(escape_invalid_utf8(b"\xfea\xffb"), "\\xfea\\xffb");
-    }
-
-    #[test]
-    fn escape_empty_input() {
-        assert_eq!(escape_invalid_utf8(b""), "");
-    }
+    use super::String;
 
     fn string<const N: usize>(bytes: &[u8]) -> String<N> {
         let mut s = String::<N>::new();
@@ -121,9 +90,9 @@ mod tests {
     }
 
     #[test]
-    fn lossy_keeps_backslashes() {
+    fn lossy_doubles_backslash_before_escape_sequence() {
         let s = string::<16>(b"a\\xff");
-        assert_eq!(s.to_string_lossy(), "a\\xff");
+        assert_eq!(s.to_string_lossy(), "a\\\\xff");
     }
 
     #[test]

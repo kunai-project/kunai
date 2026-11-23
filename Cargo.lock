@@ -1226,11 +1226,12 @@ dependencies = [
 
 [[package]]
 name = "gene"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af55658ba2b29b3f6ac74fe0eb5cdc9e3136de605b8c9c98ca6e9c0a642916f5"
+checksum = "7f8a72225b2a6f015d7b60b2e49476fb9b9f369f7553f31959172814a5e9d625"
 dependencies = [
  "gene_derive",
+ "gene_encoding",
  "hashbrown 0.17.1",
  "lazy_static",
  "pest",
@@ -1244,14 +1245,20 @@ dependencies = [
 
 [[package]]
 name = "gene_derive"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a91f629090b162b63bd9375ef03ada5303a1069fd6477eaa6d7cc0777114c601"
+checksum = "8635e3c5147423c0402892f2bdfc30c18b51c2051b58a711322c4e783ef730ab"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "gene_encoding"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0835a473ebb3a40d68368917f1fd87239fe2033ba44836350afb03b5bea9bf28"
 
 [[package]]
 name = "generic-array"
@@ -1657,6 +1664,7 @@ dependencies = [
  "aya-ebpf",
  "base64ct",
  "bindgen",
+ "gene_encoding",
  "kunai-macros",
  "paste",
  "serde",

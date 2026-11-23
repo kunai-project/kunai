@@ -40,7 +40,7 @@ use kunai_common::config::Filter;
 use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
-use kunai_common::string::{escape_invalid_utf8, escape_invalid_utf8_path};
+use kunai_common::string::escape_invalid_utf8;
 use kunai_common::user_ns::{IdMap, UserNs};
 use kunai_common::{creds, inspect_err, kernel};
 
@@ -180,7 +180,7 @@ impl Processes {
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| escape_invalid_utf8_path(&c.image))
+            .map(|c| escape_invalid_utf8(c.image.as_os_str().as_encoded_bytes()))
             .unwrap_or(Cow::Borrowed("?"))
     }
 
@@ -304,7 +304,7 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            path: bpf_data.path.to_path_buf(),
+            path: bpf_data.path.to_path_buf().into(),
         };
 
         UserEvent::new(data, info)
@@ -321,7 +321,7 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            path: bpf_data.path.into(),
+            path: bpf_data.path.to_path_buf().into(),
             success: bpf_data.success,
         };
 
@@ -445,8 +445,8 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            old: bpf_data.old_name.into(),
-            new: bpf_data.new_name.into(),
+            old: bpf_data.old_name.to_path_buf().into(),
+            new: bpf_data.new_name.to_path_buf().into(),
         };
 
         UserEvent::new(data, info)
