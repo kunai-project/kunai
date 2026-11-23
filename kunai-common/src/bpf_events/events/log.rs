@@ -50,11 +50,11 @@ mod user {
             write!(
                 f,
                 "{} line={} pid={} tgid={} comm={}",
-                self.data.location.as_str(),
+                self.data.location.escaped(),
                 self.data.line,
                 self.info.process.pid,
                 self.info.process.tgid,
-                self.info.process.comm_str(),
+                self.info.process.comm_string(),
             )?;
 
             if let BpfOption::Some(msg) = self.data.message.as_ref() {

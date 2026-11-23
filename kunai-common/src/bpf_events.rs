@@ -217,15 +217,6 @@ pub struct TaskInfo {
 
 impl TaskInfo {
     #[inline(always)]
-    pub fn comm_str(&self) -> &str {
-        // comm string may or may not contain null byte so CStr are not appropriate
-        if let Some(first) = self.comm.split(|&b| b == b'\0').next() {
-            return unsafe { core::str::from_utf8_unchecked(first) };
-        }
-        unsafe { core::str::from_utf8_unchecked(&self.comm[..]) }
-    }
-
-    #[inline(always)]
     pub fn is_thread_leader(&self) -> bool {
         self.pid == self.tgid
     }
@@ -243,7 +234,9 @@ impl TaskInfo {
     #[cfg(feature = "user")]
     #[inline(always)]
     pub fn comm_string(&self) -> std::string::String {
-        self.comm_str().into()
+        // comm may or may not contain a NUL byte so CStr is not appropriate
+        let len = self.comm.iter().position(|&b| b == 0).unwrap_or(COMM_SIZE);
+        gene_encoding::escape_invalid_utf8(&self.comm[..len]).into_owned()
     }
 }
 
@@ -364,5 +357,30 @@ mod test {
         assert!(matches!(info.etype, Type::Exit));
 
         assert_eq!(d.data.error_code, 42);
+    }
+
+    fn task_with_comm(comm: &[u8]) -> TaskInfo {
+        let mut ti = TaskInfo::default();
+        ti.comm[..comm.len()].copy_from_slice(comm);
+        ti
+    }
+
+    #[test]
+    fn comm_string_escapes_invalid_bytes() {
+        let ti = task_with_comm(b"kunai_bad_\xff");
+        assert_eq!(ti.comm_string(), "kunai_bad_\\xff");
+    }
+
+    #[test]
+    fn comm_string_escapes_truncated_multibyte() {
+        // the kernel cuts comm at 15 bytes, possibly inside a character
+        let ti = task_with_comm(b"aaaaaaaaaaaaaa\xc3");
+        assert_eq!(ti.comm_string(), "aaaaaaaaaaaaaa\\xc3");
+    }
+
+    #[test]
+    fn comm_string_reads_full_buffer_without_nul() {
+        let ti = task_with_comm(b"0123456789abcdef");
+        assert_eq!(ti.comm_string(), "0123456789abcdef");
     }
 }

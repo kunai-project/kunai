@@ -5,6 +5,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use gene::escape_invalid_utf8;
 use kunai::containers::Container;
 use kunai::info::{ProcKey, StdEventInfo, TaskKey};
 use kunai::util::tgkill;
@@ -111,7 +112,9 @@ impl Processes {
         while let Some(task) = self.get(&k) {
             last = Some(task);
             if skip == 0 {
-                ancestors.push(task.image.to_string_lossy());
+                ancestors.push(escape_invalid_utf8(
+                    task.image.as_os_str().as_encoded_bytes(),
+                ));
             } else {
                 skip -= 1;
             }

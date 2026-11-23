@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use gene::{FieldGetter, FieldNameIterator, FieldValue};
+use gene::{FieldGetter, FieldNameIterator, FieldValue, RawPath};
 use gene_derive::FieldGetter;
 
 use huby::ByteSize;
@@ -189,7 +189,7 @@ impl FileMeta {
 
 #[derive(Debug, Clone, FieldGetter, Serialize, Deserialize)]
 pub struct Hashes {
-    pub path: PathBuf,
+    pub path: RawPath<'static>,
     pub magic: String,
     pub md5: String,
     pub sha1: String,
@@ -202,7 +202,7 @@ pub struct Hashes {
 impl Default for Hashes {
     fn default() -> Self {
         Self {
-            path: PathBuf::default(),
+            path: RawPath::default(),
             magic: "?".into(),
             md5: "?".into(),
             sha1: "?".into(),
@@ -217,7 +217,7 @@ impl Default for Hashes {
 impl Hashes {
     pub fn with_meta(p: PathBuf, meta: FileMeta) -> Self {
         Self {
-            path: p,
+            path: p.into(),
             magic: meta.magic,
             md5: meta.md5,
             sha1: meta.sha1,
@@ -233,7 +233,7 @@ impl Hashes {
         match OpenedFile::new(path) {
             Ok(file) => Self::from_file(path.to_path_buf(), file, magic_db),
             Err(e) => Self {
-                path: path.to_path_buf(),
+                path: path.to_path_buf().into(),
                 error: Some(format!("failed to open file: {e}")),
                 ..Self::default()
             },
@@ -250,7 +250,7 @@ impl Hashes {
 
     fn with_error(path: PathBuf, size: u64, error: String) -> Self {
         Self {
-            path,
+            path: path.into(),
             size,
             error: Some(error),
             ..Self::default()
@@ -259,7 +259,7 @@ impl Hashes {
 
     fn from_reader(path: PathBuf, size: u64, f: &mut DataReader<'_>, magic_db: &MagicDb) -> Self {
         let mut h = Self {
-            path,
+            path: path.into(),
             size,
             ..Self::default()
         };
@@ -313,7 +313,7 @@ impl Hashes {
 
     pub(crate) fn iocs(&self) -> Vec<Cow<'_, str>> {
         vec![
-            self.path.to_string_lossy(),
+            self.path.escaped(),
             self.md5.as_str().into(),
             self.sha1.as_str().into(),
             self.sha256.as_str().into(),
@@ -1299,7 +1299,7 @@ mod file_tests {
         fs::write(&path, data).unwrap();
         let db = magic_db::load().unwrap();
         let hashes = Hashes::from_path_ref(&path, &db);
-        assert_eq!(hashes.path, path);
+        assert_eq!(hashes.path.as_ref(), path.as_path());
         assert_eq!(hashes.size, data.len() as u64);
         assert_digests(&hashes, data);
 

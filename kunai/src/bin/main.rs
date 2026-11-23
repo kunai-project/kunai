@@ -10,7 +10,7 @@ use firo::Trigger;
 use flate2::bufread::GzDecoder;
 use fs_walk::WalkOptions;
 use gene::rules::CompiledRule;
-use gene::{Compiler, Engine};
+use gene::{Compiler, Engine, escape_invalid_utf8};
 use huby::ByteSize;
 use kunai::containers::Container;
 use kunai::events::{
@@ -110,14 +110,11 @@ struct ProcSeed<'a> {
 }
 
 impl ProcSeed<'_> {
-    fn nodename(&self) -> Option<String> {
-        let nn = self.nodename?;
-        Some(
-            core::ffi::CStr::from_bytes_until_nul(nn.as_slice())
-                .ok()?
-                .to_string_lossy()
-                .to_string(),
-        )
+    fn nodename(&self) -> Option<Cow<'_, str>> {
+        let bytes = core::ffi::CStr::from_bytes_until_nul(self.nodename?.as_slice())
+            .ok()?
+            .to_bytes();
+        Some(escape_invalid_utf8(bytes))
     }
 }
 
@@ -182,7 +179,7 @@ impl Processes {
         self.get(&ck)
             .and_then(|t| t.real_parent_key)
             .and_then(|ptk| self.get(&ptk))
-            .map(|c| c.image.to_string_lossy())
+            .map(|c| escape_invalid_utf8(c.image.as_os_str().as_encoded_bytes()))
             .unwrap_or(Cow::Borrowed("?"))
     }
 
@@ -306,7 +303,7 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            path: bpf_data.path.to_path_buf(),
+            path: bpf_data.path.to_path_buf().into(),
         };
 
         UserEvent::new(data, info)
@@ -323,7 +320,7 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            path: bpf_data.path.into(),
+            path: bpf_data.path.to_path_buf().into(),
             success: bpf_data.success,
         };
 
@@ -428,8 +425,8 @@ impl Processes {
             command_line,
             exe: exe.into(),
             syscall: Cow::Borrowed(bpf_data.args.syscall_name()),
-            module_name: Cow::Borrowed(bpf_data.name.as_str()),
-            args: Cow::Borrowed(bpf_data.uargs.as_str()),
+            module_name: bpf_data.name.escaped(),
+            args: bpf_data.uargs.escaped(),
             loaded: bpf_data.loaded,
         };
 
@@ -447,8 +444,8 @@ impl Processes {
             ancestors: self.get_task_ancestors(info),
             command_line,
             exe: exe.into(),
-            old: bpf_data.old_name.into(),
-            new: bpf_data.new_name.into(),
+            old: bpf_data.old_name.to_path_buf().into(),
+            new: bpf_data.new_name.to_path_buf().into(),
         };
 
         UserEvent::new(data, info)
@@ -489,7 +486,7 @@ impl Processes {
         // we always display a warning on stderr
         warn!(
             "comm={} pid={} tgid={} guuid={}: {}",
-            ti.comm_str(),
+            ti.comm_string(),
             ti.pid,
             ti.tgid,
             ti.tg_uuid.into_uuid(),
@@ -2039,20 +2036,10 @@ impl EventConsumer<'_> {
             }
         };
 
-        let (command_line, opt_err) = seed.argv.to_argv();
-        opt_err.inspect(|e| {
-            error!(
-                "utf8 decoding error while parsing argv for comm={} pid={} task={}: {e}",
-                ti.comm_string(),
-                ti.tgid,
-                ti.tg_uuid.into_uuid()
-            )
-        });
-
         self.table.insert_process(
             ti,
             image,
-            command_line.join(" "),
+            seed.argv.to_argv().join(" "),
             cgroups,
             parent_key,
             parent_task_info,
@@ -4461,6 +4448,30 @@ mod tests {
         }))
     }
 
+    fn execve_event(task: TaskInfo, exe: &[u8]) -> EbpfEvent {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let exe =
+            kunai_common::path::Path::try_from(PathBuf::from(OsStr::from_bytes(exe))).unwrap();
+
+        EbpfEvent::Execve(Box::new(bpf_events::Event {
+            info: bpf_events::EventInfo {
+                etype: Type::Execve,
+                process: task,
+                ..Default::default()
+            },
+            data: bpf_events::ExecveData {
+                executable: exe,
+                interpreter: exe,
+                argv: Default::default(),
+                cgroup: Default::default(),
+                nodename: Default::default(),
+                user_ns: Default::default(),
+                rc: 0,
+            },
+        }))
+    }
+
     fn commit_creds_event(task: TaskInfo, new: creds::Creds) -> EbpfEvent {
         EbpfEvent::CommitCreds(Box::new(bpf_events::Event {
             info: bpf_events::EventInfo {
@@ -4484,6 +4495,19 @@ mod tests {
             },
             data: Default::default(),
         }))
+    }
+
+    #[test]
+    fn execve_with_hostile_exe_and_comm_is_printed() {
+        let mut consumer = event_consumer();
+        let mut task = task_info(100, creds(1000));
+        task.comm[..11].copy_from_slice(b"kunai_bad_\xff");
+
+        consumer.handle_event(execve_event(task, b"/tmp/kunai_bad_\xff"));
+
+        let json: serde_json::Value = serde_json::from_slice(&consumer.sink.json_buf).unwrap();
+        assert_eq!(json["info"]["task"]["name"], "kunai_bad_\\xff");
+        assert_eq!(json["data"]["exe"]["path"], "/tmp/kunai_bad_\\xff");
     }
 
     #[test]
