@@ -126,7 +126,17 @@ pub fn getrandom<T: Sized>() -> Result<T, RandError> {
     Ok(unsafe { t.assume_init() })
 }
 
+/// Signals a single process. Nonpositive `pid` values, which `kill(2)` treats
+/// as process groups or every reachable process, are rejected with
+/// [`io::ErrorKind::InvalidInput`].
 pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
+    if pid <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to signal nonpositive pid={pid}"),
+        ));
+    }
+
     if unsafe { libc::kill(pid, sig) } == -1 {
         return Err(io::Error::last_os_error());
     }
@@ -220,5 +230,14 @@ mod test {
     fn test_page_size() {
         println!("PAGE_SIZE: {}", page_size().unwrap());
         println!("PAGE_SHIFT: {}", page_shift().unwrap());
+    }
+
+    #[test]
+    fn kill_rejects_nonpositive_pid() {
+        // signal 0 only checks permissions, so these calls never signal anything
+        for pid in [0, -1] {
+            let err = kill(pid, 0).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "pid={pid}");
+        }
     }
 }

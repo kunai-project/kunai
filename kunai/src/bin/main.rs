@@ -904,6 +904,8 @@ struct EventSink<'s> {
     magic_db: MagicDb,
     // used to check if we must generate FileScan events
     scan_events_enabled: bool,
+    // actions target live processes and files, so replay disables them
+    actions_enabled: bool,
 }
 
 struct EventConsumer<'s> {
@@ -994,6 +996,10 @@ impl EventSink<'_> {
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
+        if !self.actions_enabled {
+            return;
+        }
+
         // some actions are allowed only for detections
         #[allow(clippy::collapsible_if)]
         if is_detection {
@@ -1263,6 +1269,7 @@ impl EventConsumer<'_> {
                 file_scanner: None,
                 magic_db: magic_db::load().map_err(|e| anyhow!("failed to open magic-db: {e}"))?,
                 scan_events_enabled,
+                actions_enabled: true,
             },
         };
 
@@ -3363,7 +3370,8 @@ enum Command {
     Uninstall(UninstallOpt),
     /// Run kunai with custom options
     Run(RunOpt),
-    /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
+    /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection).
+    /// Rule actions are not executed.
     Replay(ReplayOpt),
     /// Test kunai detection rules
     Test(TestOpt),
@@ -3679,6 +3687,7 @@ impl Command {
         let mut data_size = ByteSize::from_bytes(0);
 
         let mut c = EventConsumer::with_config(conf.stdout_output())?;
+        c.sink.actions_enabled = false;
         for f in log_files {
             let reader = if f == "-" {
                 std::io::BufReader::new(Input::from_stdin())
@@ -4412,6 +4421,7 @@ mod tests {
                 file_scanner: None,
                 magic_db: magic_db::load().unwrap(),
                 scan_events_enabled: false,
+                actions_enabled: true,
             },
         }
     }
@@ -4595,6 +4605,50 @@ mod tests {
         consumer.handle_event(prctl_event(ti));
         assert_eq!(consumer.table.tasks[&key].expected_creds, new);
         assert_eq!(consumer.table.tasks[&key].reported_creds, Some(ti.creds));
+    }
+
+    #[test]
+    fn replay_does_not_run_actions() {
+        use std::os::unix::process::ExitStatusExt;
+
+        // the only possible victim is a child owned by this test
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+
+        let mut consumer = event_consumer();
+        consumer.handle_event(prctl_event(task_info(pid, creds(0))));
+
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.json");
+        let rule = dir.path().join("kill.gen");
+        fs::write(&log, &consumer.sink.json_buf).unwrap();
+        fs::write(
+            &rule,
+            format!(
+                "name: test.replay.kill\nactions: [kill]\nmatches:\n  $task: .info.task.pid == \
+                 '{pid}'\ncondition: $task\n"
+            ),
+        )
+        .unwrap();
+
+        let replayed = Command::replay(ReplayOpt {
+            config: None,
+            all: false,
+            bench: false,
+            rules: Some(vec![rule]),
+            iocs: None,
+            min_severity: None,
+            log_files: vec![log.to_string_lossy().into_owned()],
+        });
+
+        // a SIGKILL sent by replay is queued before this SIGTERM, so it wins
+        kill(pid, libc::SIGTERM).unwrap();
+        let status = child.wait().unwrap();
+        replayed.unwrap();
+        assert_eq!(status.signal(), Some(libc::SIGTERM));
     }
 
     #[test]
