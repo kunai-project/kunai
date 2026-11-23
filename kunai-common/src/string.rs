@@ -337,14 +337,14 @@ mod test {
     fn test_from_str_fitting_exact_fit() {
         let s = from_str_fitting::<5>("hello");
         assert_eq!(s.len(), 5);
-        assert_eq!(s.to_string_lossy(), "hello");
+        assert_eq!(s.escaped(), "hello");
     }
 
     #[test]
     fn test_from_str_fitting_truncates() {
         let s = from_str_fitting::<5>("hello world");
         assert_eq!(s.len(), 5);
-        assert_eq!(s.to_string_lossy(), "hello");
+        assert_eq!(s.escaped(), "hello");
     }
 
     #[test]
@@ -359,12 +359,12 @@ mod test {
         // Only fits "caf" (3 bytes) if N=3
         let s = from_str_fitting::<3>("café");
         assert_eq!(s.len(), 3);
-        assert_eq!(s.to_string_lossy(), "caf");
+        assert_eq!(s.escaped(), "caf");
 
         // "café" is 5 bytes: c(1) a(1) f(1) é(2)
         let s = from_str_fitting::<5>("café");
         assert_eq!(s.len(), 5);
-        assert_eq!(s.to_string_lossy(), "café");
+        assert_eq!(s.escaped(), "café");
     }
 
     #[test]
@@ -381,7 +381,7 @@ mod test {
         let mut s: String<10> = String::new();
         assert!(s.push_byte(b'a').is_ok());
         assert_eq!(s.len(), 1);
-        assert_eq!(s.to_string_lossy(), "a");
+        assert_eq!(s.escaped(), "a");
     }
 
     #[test]
@@ -392,7 +392,7 @@ mod test {
         assert!(s.push_byte(b'c').is_ok());
         assert!(s.is_full());
         assert!(matches!(s.push_byte(b'b'), Err(Error::InsufficientSpace)));
-        assert_eq!(s.to_string_lossy(), "abc");
+        assert_eq!(s.escaped(), "abc");
     }
 
     // --- copy_from tests ---
@@ -405,7 +405,7 @@ mod test {
         s2.clone_from(&s1);
 
         assert_eq!(s2.len(), 5);
-        assert_eq!(s2.to_string_lossy(), "hello");
+        assert_eq!(s2.escaped(), "hello");
     }
 
     // --- Property tests ---
@@ -415,7 +415,7 @@ mod test {
         let mut s: String<256> = from_str_fitting("test");
         assert_eq!(s.len(), 4);
         assert_eq!(s.cap(), 256);
-        assert_eq!(s.to_string_lossy(), "test");
+        assert_eq!(s.escaped(), "test");
         s.reset();
         assert_eq!(s.len(), 0);
         assert_eq!(s.cap(), 256);
@@ -425,8 +425,8 @@ mod test {
     fn test_const_vstring() {
         let s = from_str_fitting::<42>("hello world");
         assert_eq!(s.len(), 11);
-        assert_eq!(s.to_string_lossy(), "hello world");
-        assert_eq!(s.to_string_lossy(), "hello world");
+        assert_eq!(s.escaped(), "hello world");
+        assert_eq!(s.escaped(), "hello world");
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod test {
         // With N=3, only "a" should fit (1 byte), not enough for "€" (3 bytes)
         let s = from_str_fitting::<3>("a€");
         assert_eq!(s.len(), 1);
-        assert_eq!(s.to_string_lossy(), "a");
+        assert_eq!(s.escaped(), "a");
     }
 
     #[test]

@@ -425,8 +425,8 @@ impl Processes {
             command_line,
             exe: exe.into(),
             syscall: Cow::Borrowed(bpf_data.args.syscall_name()),
-            module_name: bpf_data.name.to_string_lossy(),
-            args: bpf_data.uargs.to_string_lossy(),
+            module_name: bpf_data.name.escaped(),
+            args: bpf_data.uargs.escaped(),
             loaded: bpf_data.loaded,
         };
 

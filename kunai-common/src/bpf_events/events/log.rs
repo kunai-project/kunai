@@ -50,7 +50,7 @@ mod user {
             write!(
                 f,
                 "{} line={} pid={} tgid={} comm={}",
-                self.data.location.to_string_lossy(),
+                self.data.location.escaped(),
                 self.data.line,
                 self.info.process.pid,
                 self.info.process.tgid,
