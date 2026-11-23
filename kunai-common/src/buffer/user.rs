@@ -1,5 +1,5 @@
 use super::Buffer;
-use crate::string::escape_invalid_utf8;
+use gene_encoding::escape_invalid_utf8;
 
 impl<const N: usize> Buffer<N> {
     /// Returns the NUL separated arguments, with invalid UTF-8 bytes escaped.

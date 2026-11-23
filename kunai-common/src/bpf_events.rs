@@ -236,7 +236,7 @@ impl TaskInfo {
     pub fn comm_string(&self) -> std::string::String {
         // comm may or may not contain a NUL byte so CStr is not appropriate
         let len = self.comm.iter().position(|&b| b == 0).unwrap_or(COMM_SIZE);
-        crate::string::escape_invalid_utf8(&self.comm[..len]).into_owned()
+        gene_encoding::escape_invalid_utf8(&self.comm[..len]).into_owned()
     }
 }
 

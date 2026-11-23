@@ -44,7 +44,7 @@ impl<const N: usize> Display for String<N> {
 }
 
 // gene's encoding, so event text and rule matching use the same escaping
-pub use gene_encoding::escape_invalid_utf8;
+use gene_encoding::escape_invalid_utf8;
 
 impl<const N: usize> String<N> {
     pub fn to_string_lossy(&'_ self) -> Cow<'_, str> {

@@ -5,12 +5,12 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use gene::escape_invalid_utf8;
 use kunai::containers::Container;
 use kunai::info::{ProcKey, StdEventInfo, TaskKey};
 use kunai::util::tgkill;
 use kunai_common::bpf_events::TaskInfo;
 use kunai_common::creds;
-use kunai_common::string::escape_invalid_utf8;
 use kunai_common::user_ns::UserNs;
 
 const MAX_ANCESTORS: usize = 1024;

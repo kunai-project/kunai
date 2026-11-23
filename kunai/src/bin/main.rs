@@ -10,7 +10,7 @@ use firo::Trigger;
 use flate2::bufread::GzDecoder;
 use fs_walk::WalkOptions;
 use gene::rules::CompiledRule;
-use gene::{Compiler, Engine};
+use gene::{Compiler, Engine, escape_invalid_utf8};
 use huby::ByteSize;
 use kunai::containers::Container;
 use kunai::events::{
@@ -40,7 +40,6 @@ use kunai_common::config::Filter;
 use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
-use kunai_common::string::escape_invalid_utf8;
 use kunai_common::user_ns::{IdMap, UserNs};
 use kunai_common::{creds, inspect_err, kernel};
 
