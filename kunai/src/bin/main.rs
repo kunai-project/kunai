@@ -4598,6 +4598,50 @@ mod tests {
     }
 
     #[test]
+    fn replay_does_not_run_actions() {
+        use std::os::unix::process::ExitStatusExt;
+
+        // the only possible victim is a child owned by this test
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+
+        let mut consumer = event_consumer();
+        consumer.handle_event(prctl_event(task_info(pid, creds(0))));
+
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.json");
+        let rule = dir.path().join("kill.gen");
+        fs::write(&log, &consumer.sink.json_buf).unwrap();
+        fs::write(
+            &rule,
+            format!(
+                "name: test.replay.kill\nactions: [kill]\nmatches:\n  $task: .info.task.pid == \
+                 '{pid}'\ncondition: $task\n"
+            ),
+        )
+        .unwrap();
+
+        let replayed = Command::replay(ReplayOpt {
+            config: None,
+            all: false,
+            bench: false,
+            rules: Some(vec![rule]),
+            iocs: None,
+            min_severity: None,
+            log_files: vec![log.to_string_lossy().into_owned()],
+        });
+
+        // a SIGKILL sent by replay is queued before this SIGTERM, so it wins
+        kill(pid, libc::SIGTERM).unwrap();
+        let status = child.wait().unwrap();
+        replayed.unwrap();
+        assert_eq!(status.signal(), Some(libc::SIGTERM));
+    }
+
+    #[test]
     fn no_divergence_never_fires() {
         assert!(!creds_diverged(creds(0), creds(0), None));
         assert!(!creds_diverged(creds(0), creds(0), Some(creds(1000))));

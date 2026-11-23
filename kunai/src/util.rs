@@ -221,4 +221,13 @@ mod test {
         println!("PAGE_SIZE: {}", page_size().unwrap());
         println!("PAGE_SHIFT: {}", page_shift().unwrap());
     }
+
+    #[test]
+    fn kill_rejects_nonpositive_pid() {
+        // signal 0 only checks permissions, so these calls never signal anything
+        for pid in [0, -1] {
+            let err = kill(pid, 0).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "pid={pid}");
+        }
+    }
 }
