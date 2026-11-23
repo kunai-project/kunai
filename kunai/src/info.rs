@@ -11,6 +11,7 @@ use thiserror::Error;
 use crate::{
     containers::Container,
     util::{
+        NS_PER_SEC,
         account::{Groups, Users},
         get_clk_tck,
     },
@@ -41,7 +42,7 @@ impl ProcKey {
     /// is in `CLK_TCK` ticks.
     pub fn from_proc_uuid(value: ProcUuid) -> Self {
         Self {
-            start_time_sec: value.leader_start_time_ns / 1_000_000_000,
+            start_time_sec: value.leader_start_time_ns / NS_PER_SEC,
             pid: value.tgid,
         }
     }
@@ -59,15 +60,12 @@ pub enum KeyError {
     ProcFs(#[from] procfs::ProcError),
     #[error("io: {0}")]
     Io(#[from] io::Error),
-    #[error("CLK_TCK is 0, cannot scale ticks to seconds")]
-    InvalidClkTck,
 }
 
 /// Scales a `starttime` expressed in `CLK_TCK` ticks (as reported by procfs) down
 /// to seconds, the unit [ProcKey] and [TaskKey] compare on.
 fn start_time_sec_from_ticks(ticks: u64) -> Result<u64, KeyError> {
-    let clk_tck = get_clk_tck()? as u64;
-    ticks.checked_div(clk_tck).ok_or(KeyError::InvalidClkTck)
+    Ok(ticks / get_clk_tck()?)
 }
 
 impl TryFrom<&procfs::process::Process> for ProcKey {
@@ -103,7 +101,7 @@ impl From<&TaskInfo> for TaskKey {
         // same reasoning as ProcKey: task_struct start_time has a higher
         // resolution than procfs, scale it down to be comparable
         Self {
-            start_time_sec: ti.start_time / 1_000_000_000,
+            start_time_sec: ti.start_time / NS_PER_SEC,
             pid: ti.pid,
         }
     }

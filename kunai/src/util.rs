@@ -8,9 +8,12 @@ use std::{
     fs,
     io::{self, Write},
     net::IpAddr,
+    os::fd::AsRawFd,
     sync::OnceLock,
 };
 use thiserror::Error;
+
+pub const NS_PER_SEC: u64 = 1_000_000_000;
 
 pub mod account;
 pub mod bpf;
@@ -50,7 +53,7 @@ pub fn ktime_get_ns() -> Result<u64, io::Error> {
 
     if result == 0 {
         // Convert seconds and nanoseconds to total nanoseconds
-        Ok((ts.tv_sec as u64 * 1_000_000_000).wrapping_add(ts.tv_nsec as u64))
+        Ok((ts.tv_sec as u64 * NS_PER_SEC).wrapping_add(ts.tv_nsec as u64))
     } else {
         Err(io::Error::last_os_error())
     }
@@ -64,9 +67,17 @@ fn sysconf<T: From<i64>>(var: libc::c_int) -> Result<T, io::Error> {
     Ok(v.into())
 }
 
-#[inline]
-pub fn get_clk_tck() -> Result<i64, io::Error> {
-    sysconf(libc::_SC_CLK_TCK)
+/// Returns `CLK_TCK`, guaranteed to be in `1..=NS_PER_SEC` so callers can
+/// divide by it and by `NS_PER_SEC / CLK_TCK`.
+pub fn get_clk_tck() -> Result<u64, io::Error> {
+    let clk_tck: i64 = sysconf(libc::_SC_CLK_TCK)?;
+    if clk_tck <= 0 || clk_tck as u64 > NS_PER_SEC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid CLK_TCK={clk_tck}"),
+        ));
+    }
+    Ok(clk_tck as u64)
 }
 
 #[inline]
@@ -138,6 +149,46 @@ pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
     }
 
     if unsafe { libc::kill(pid, sig) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Signals process `tgid` only if its leader started at `leader_start_time_ns`
+/// (`CLOCK_BOOTTIME`), so a PID reused by another process is never signalled.
+/// The start time is compared at `/proc/<tgid>/stat` tick precision.
+pub fn kill_process(tgid: i32, leader_start_time_ns: u64, sig: i32) -> Result<(), io::Error> {
+    if tgid <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to signal nonpositive pid={tgid}"),
+        ));
+    }
+
+    // opened before the identity check so that a match pins the checked process
+    let pidfd = namespace::pidfd_open(tgid, 0)?;
+
+    let start_ticks = procfs::process::Process::new(tgid)
+        .and_then(|p| p.stat())
+        .map_err(io::Error::other)?
+        .starttime;
+    let ns_per_tick = NS_PER_SEC / get_clk_tck()?;
+    if start_ticks != leader_start_time_ns / ns_per_tick {
+        return Err(io::Error::other(format!(
+            "pid={tgid} belongs to another process"
+        )));
+    }
+
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            sig,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    if rc == -1 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
@@ -239,5 +290,19 @@ mod test {
             let err = kill(pid, 0).unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "pid={pid}");
         }
+    }
+
+    #[test]
+    fn kill_process_rejects_nonpositive_tgid() {
+        for tgid in [0, -1] {
+            let err = kill_process(tgid, 0, 0).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "tgid={tgid}");
+        }
+    }
+
+    #[test]
+    fn kill_process_fails_on_missing_process() {
+        // above the kernel's PID_MAX_LIMIT, so no process can have it
+        assert!(kill_process(i32::MAX, 0, 0).is_err());
     }
 }

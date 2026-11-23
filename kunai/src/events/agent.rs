@@ -7,7 +7,7 @@ use kunai_common::{
 };
 use thiserror::Error;
 
-use crate::util::{get_clk_tck, ktime_get_ns};
+use crate::util::{NS_PER_SEC, get_clk_tck, ktime_get_ns};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -30,7 +30,7 @@ impl AgentEventInfo {
         let stat = p.stat()?;
         let status = p.status()?;
         let namespaces = p.namespaces()?;
-        let clk_tck = get_clk_tck()? as u64;
+        let clk_tck = get_clk_tck()?;
 
         // user is missing without CONFIG_USER_NS
         let inum = |name: &str| {
@@ -50,7 +50,7 @@ impl AgentEventInfo {
         });
 
         // converts time to nanoseconds
-        let start_time = (stat.starttime / clk_tck) * 1_000_000_000;
+        let start_time = (stat.starttime / clk_tck) * NS_PER_SEC;
 
         Ok(TaskInfo {
             flags: stat.flags,

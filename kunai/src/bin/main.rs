@@ -27,8 +27,8 @@ use kunai::kallsyms::KernelSymbols;
 use kunai::util::uname::Utsname;
 use kunai::util::uptime::Uptime;
 use kunai::util::{
-    ask_yes_no, get_current_uid, getrlimit, is_bpf_lsm_enabled, is_public_ip, kill, md5_data,
-    setrlimit, sha1_data, sha256_data, sha512_data,
+    ask_yes_no, get_current_uid, getrlimit, is_bpf_lsm_enabled, is_public_ip, kill, kill_process,
+    md5_data, setrlimit, sha1_data, sha256_data, sha512_data,
 };
 
 use kunai::yara::{Scanner, SourceCode};
@@ -41,6 +41,7 @@ use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
 use kunai_common::user_ns::{IdMap, UserNs};
+use kunai_common::uuid::ProcUuid;
 use kunai_common::{creds, inspect_err, kernel};
 
 use kunai::util::namespace::{Mnt, Namespace};
@@ -1011,20 +1012,23 @@ impl EventSink<'_> {
             // care as sending a SIGKILL to a critical process
             // might impact the system.
             if actions.contains(Action::Kill.as_str()) {
-                let pid = event.info().task.pid;
+                // SIGKILL kills the whole thread group, so we target the
+                // process rather than the thread which raised the event
+                let tgid = event.info().task.tgid;
                 let guuid = event.info().task.guuid;
+                let leader_start_time_ns = ProcUuid::from(guuid).leader_start_time_ns;
                 // don't kill ourself: this check is redundant because kunai
                 // events aren't supposed to arrive until here but it is a cheap test
-                if pid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
+                if tgid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
                     // this is the kind of information we want to have
                     // at all time so we put this as a warning not to
                     // be disabled by the default logging policy
-                    warn!("sending SIGKILL to PID={pid}");
-                    if let Err(e) = kill(pid, libc::SIGKILL) {
-                        error!("error sending SIGKILL to PID={pid}: {e}")
-                    } else {
-                        self.killed_tasks.insert(guuid);
+                    warn!("sending SIGKILL to PID={tgid}");
+                    if let Err(e) = kill_process(tgid, leader_start_time_ns, libc::SIGKILL) {
+                        error!("error sending SIGKILL to PID={tgid}: {e}")
                     }
+                    // a failed attempt would fail again on later detections
+                    self.killed_tasks.insert(guuid);
                 }
             }
         }
@@ -4390,6 +4394,7 @@ fn main() -> Result<(), anyhow::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kunai::util::NS_PER_SEC;
 
     fn creds(uid: u32) -> creds::Creds {
         creds::Creds {
@@ -4507,6 +4512,48 @@ mod tests {
         }))
     }
 
+    // the only possible kill victim is a child owned by the test
+    fn spawn_victim() -> (std::process::Child, TaskInfo) {
+        let child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+        let start_ticks = procfs::process::Process::new(pid)
+            .unwrap()
+            .stat()
+            .unwrap()
+            .starttime;
+        let ns_per_tick = NS_PER_SEC / kunai::util::get_clk_tck().unwrap();
+
+        let mut task = task_info(pid, creds(0));
+        task.tgid = pid;
+        task.tg_uuid = kunai_common::uuid::ProcUuid::new(start_ticks * ns_per_tick, 0, pid);
+        (child, task)
+    }
+
+    fn consumer_killing(tgid: i32) -> EventConsumer<'static> {
+        let mut compiler = Compiler::new();
+        compiler
+            .load_rules_from_str(format!(
+                "name: test.kill\nactions: [kill]\nmatches:\n  $task: .info.task.tgid == \
+                 '{tgid}'\ncondition: $task\n"
+            ))
+            .unwrap();
+
+        let mut consumer = event_consumer();
+        consumer.sink.engine = Engine::try_from(compiler).unwrap();
+        consumer
+    }
+
+    // a SIGKILL sent earlier is queued before this SIGTERM, so it wins
+    fn terminate(mut child: std::process::Child) -> Option<i32> {
+        use std::os::unix::process::ExitStatusExt;
+
+        kill(child.id() as i32, libc::SIGTERM).unwrap();
+        child.wait().unwrap().signal()
+    }
+
     #[test]
     fn execve_with_hostile_exe_and_comm_is_printed() {
         let mut consumer = event_consumer();
@@ -4609,17 +4656,12 @@ mod tests {
 
     #[test]
     fn replay_does_not_run_actions() {
-        use std::os::unix::process::ExitStatusExt;
-
-        // the only possible victim is a child owned by this test
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
-        let pid = child.id() as i32;
+        // the event identifies the child, so a kill run by replay would reach it
+        let (child, task) = spawn_victim();
+        let pid = task.pid;
 
         let mut consumer = event_consumer();
-        consumer.handle_event(prctl_event(task_info(pid, creds(0))));
+        consumer.handle_event(prctl_event(task));
 
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("events.json");
@@ -4644,11 +4686,50 @@ mod tests {
             log_files: vec![log.to_string_lossy().into_owned()],
         });
 
-        // a SIGKILL sent by replay is queued before this SIGTERM, so it wins
-        kill(pid, libc::SIGTERM).unwrap();
-        let status = child.wait().unwrap();
+        let signal = terminate(child);
         replayed.unwrap();
-        assert_eq!(status.signal(), Some(libc::SIGTERM));
+        assert_eq!(signal, Some(libc::SIGTERM));
+    }
+
+    #[test]
+    fn kill_signals_matching_process() {
+        let (child, task) = spawn_victim();
+        let mut consumer = consumer_killing(task.tgid);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn kill_spares_process_reusing_pid() {
+        let (child, mut task) = spawn_victim();
+        // the event comes from an older process which held the same PID
+        task.tg_uuid.leader_start_time_ns -= NS_PER_SEC;
+        let mut consumer = consumer_killing(task.tgid);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGTERM));
+        // a mismatch is final, so later detections must not retry it
+        assert!(
+            consumer
+                .sink
+                .killed_tasks
+                .contains(&task.tg_uuid.into_uuid())
+        );
+    }
+
+    #[test]
+    fn kill_targets_thread_group_of_event_thread() {
+        let (child, mut task) = spawn_victim();
+        // above the kernel's PID_MAX_LIMIT, so this TID can never be signalled
+        task.pid = i32::MAX;
+        let mut consumer = consumer_killing(task.tgid);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGKILL));
     }
 
     #[test]
