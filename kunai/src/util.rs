@@ -13,7 +13,7 @@ use std::{
 };
 use thiserror::Error;
 
-const NS_PER_SEC: u64 = 1_000_000_000;
+pub const NS_PER_SEC: u64 = 1_000_000_000;
 
 pub mod account;
 pub mod bpf;
@@ -53,7 +53,7 @@ pub fn ktime_get_ns() -> Result<u64, io::Error> {
 
     if result == 0 {
         // Convert seconds and nanoseconds to total nanoseconds
-        Ok((ts.tv_sec as u64 * 1_000_000_000).wrapping_add(ts.tv_nsec as u64))
+        Ok((ts.tv_sec as u64 * NS_PER_SEC).wrapping_add(ts.tv_nsec as u64))
     } else {
         Err(io::Error::last_os_error())
     }
@@ -67,9 +67,17 @@ fn sysconf<T: From<i64>>(var: libc::c_int) -> Result<T, io::Error> {
     Ok(v.into())
 }
 
-#[inline]
-pub fn get_clk_tck() -> Result<i64, io::Error> {
-    sysconf(libc::_SC_CLK_TCK)
+/// Returns `CLK_TCK`, guaranteed to be in `1..=NS_PER_SEC` so callers can
+/// divide by it and by `NS_PER_SEC / CLK_TCK`.
+pub fn get_clk_tck() -> Result<u64, io::Error> {
+    let clk_tck: i64 = sysconf(libc::_SC_CLK_TCK)?;
+    if clk_tck <= 0 || clk_tck as u64 > NS_PER_SEC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid CLK_TCK={clk_tck}"),
+        ));
+    }
+    Ok(clk_tck as u64)
 }
 
 #[inline]
@@ -164,7 +172,7 @@ pub fn kill_process(tgid: i32, leader_start_time_ns: u64, sig: i32) -> Result<()
         .and_then(|p| p.stat())
         .map_err(io::Error::other)?
         .starttime;
-    let ns_per_tick = NS_PER_SEC / get_clk_tck()? as u64;
+    let ns_per_tick = NS_PER_SEC / get_clk_tck()?;
     if start_ticks != leader_start_time_ns / ns_per_tick {
         return Err(io::Error::other(format!(
             "pid={tgid} belongs to another process"

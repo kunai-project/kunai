@@ -4394,6 +4394,7 @@ fn main() -> Result<(), anyhow::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kunai::util::NS_PER_SEC;
 
     fn creds(uid: u32) -> creds::Creds {
         creds::Creds {
@@ -4523,7 +4524,7 @@ mod tests {
             .stat()
             .unwrap()
             .starttime;
-        let ns_per_tick = 1_000_000_000 / kunai::util::get_clk_tck().unwrap() as u64;
+        let ns_per_tick = NS_PER_SEC / kunai::util::get_clk_tck().unwrap();
 
         let mut task = task_info(pid, creds(0));
         task.tgid = pid;
@@ -4704,7 +4705,7 @@ mod tests {
     fn kill_spares_process_reusing_pid() {
         let (child, mut task) = spawn_victim();
         // the event comes from an older process which held the same PID
-        task.tg_uuid.leader_start_time_ns -= 1_000_000_000;
+        task.tg_uuid.leader_start_time_ns -= NS_PER_SEC;
         let mut consumer = consumer_killing(task.tgid);
 
         consumer.handle_event(prctl_event(task));
