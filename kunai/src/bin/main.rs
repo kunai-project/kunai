@@ -4651,17 +4651,12 @@ mod tests {
 
     #[test]
     fn replay_does_not_run_actions() {
-        use std::os::unix::process::ExitStatusExt;
-
-        // the only possible victim is a child owned by this test
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
-        let pid = child.id() as i32;
+        // the event identifies the child, so a kill run by replay would reach it
+        let (child, task) = spawn_victim();
+        let pid = task.pid;
 
         let mut consumer = event_consumer();
-        consumer.handle_event(prctl_event(task_info(pid, creds(0))));
+        consumer.handle_event(prctl_event(task));
 
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("events.json");
@@ -4686,11 +4681,9 @@ mod tests {
             log_files: vec![log.to_string_lossy().into_owned()],
         });
 
-        // a SIGKILL sent by replay is queued before this SIGTERM, so it wins
-        kill(pid, libc::SIGTERM).unwrap();
-        let status = child.wait().unwrap();
+        let signal = terminate(child);
         replayed.unwrap();
-        assert_eq!(status.signal(), Some(libc::SIGTERM));
+        assert_eq!(signal, Some(libc::SIGTERM));
     }
 
     #[test]

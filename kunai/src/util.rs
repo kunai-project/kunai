@@ -240,4 +240,18 @@ mod test {
             assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "pid={pid}");
         }
     }
+
+    #[test]
+    fn kill_process_rejects_nonpositive_tgid() {
+        for tgid in [0, -1] {
+            let err = kill_process(tgid, 0, 0).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "tgid={tgid}");
+        }
+    }
+
+    #[test]
+    fn kill_process_fails_on_missing_process() {
+        // above the kernel's PID_MAX_LIMIT, so no process can have it
+        assert!(kill_process(i32::MAX, 0, 0).is_err());
+    }
 }
