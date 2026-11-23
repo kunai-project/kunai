@@ -904,6 +904,8 @@ struct EventSink<'s> {
     magic_db: MagicDb,
     // used to check if we must generate FileScan events
     scan_events_enabled: bool,
+    // actions target live processes and files, so replay disables them
+    actions_enabled: bool,
 }
 
 struct EventConsumer<'s> {
@@ -994,6 +996,10 @@ impl EventSink<'_> {
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
+        if !self.actions_enabled {
+            return;
+        }
+
         // some actions are allowed only for detections
         #[allow(clippy::collapsible_if)]
         if is_detection {
@@ -1263,6 +1269,7 @@ impl EventConsumer<'_> {
                 file_scanner: None,
                 magic_db: magic_db::load().map_err(|e| anyhow!("failed to open magic-db: {e}"))?,
                 scan_events_enabled,
+                actions_enabled: true,
             },
         };
 
@@ -3363,7 +3370,8 @@ enum Command {
     Uninstall(UninstallOpt),
     /// Run kunai with custom options
     Run(RunOpt),
-    /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection)
+    /// Replay logs into detection / filtering engine (useful to test rules and IoC based detection).
+    /// Rule actions are not executed.
     Replay(ReplayOpt),
     /// Test kunai detection rules
     Test(TestOpt),
@@ -3679,6 +3687,7 @@ impl Command {
         let mut data_size = ByteSize::from_bytes(0);
 
         let mut c = EventConsumer::with_config(conf.stdout_output())?;
+        c.sink.actions_enabled = false;
         for f in log_files {
             let reader = if f == "-" {
                 std::io::BufReader::new(Input::from_stdin())
@@ -4412,6 +4421,7 @@ mod tests {
                 file_scanner: None,
                 magic_db: magic_db::load().unwrap(),
                 scan_events_enabled: false,
+                actions_enabled: true,
             },
         }
     }

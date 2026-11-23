@@ -126,7 +126,17 @@ pub fn getrandom<T: Sized>() -> Result<T, RandError> {
     Ok(unsafe { t.assume_init() })
 }
 
+/// Signals a single process. Nonpositive `pid` values, which `kill(2)` treats
+/// as process groups or every reachable process, are rejected with
+/// [`io::ErrorKind::InvalidInput`].
 pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
+    if pid <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to signal nonpositive pid={pid}"),
+        ));
+    }
+
     if unsafe { libc::kill(pid, sig) } == -1 {
         return Err(io::Error::last_os_error());
     }
