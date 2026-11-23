@@ -8,9 +8,12 @@ use std::{
     fs,
     io::{self, Write},
     net::IpAddr,
+    os::fd::AsRawFd,
     sync::OnceLock,
 };
 use thiserror::Error;
+
+const NS_PER_SEC: u64 = 1_000_000_000;
 
 pub mod account;
 pub mod bpf;
@@ -138,6 +141,46 @@ pub fn kill(pid: i32, sig: i32) -> Result<(), io::Error> {
     }
 
     if unsafe { libc::kill(pid, sig) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Signals process `tgid` only if its leader started at `leader_start_time_ns`
+/// (`CLOCK_BOOTTIME`), so a PID reused by another process is never signalled.
+/// The start time is compared at `/proc/<tgid>/stat` tick precision.
+pub fn kill_process(tgid: i32, leader_start_time_ns: u64, sig: i32) -> Result<(), io::Error> {
+    if tgid <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to signal nonpositive pid={tgid}"),
+        ));
+    }
+
+    // opened before the identity check so that a match pins the checked process
+    let pidfd = namespace::pidfd_open(tgid, 0)?;
+
+    let start_ticks = procfs::process::Process::new(tgid)
+        .and_then(|p| p.stat())
+        .map_err(io::Error::other)?
+        .starttime;
+    let ns_per_tick = NS_PER_SEC / get_clk_tck()? as u64;
+    if start_ticks != leader_start_time_ns / ns_per_tick {
+        return Err(io::Error::other(format!(
+            "pid={tgid} belongs to another process"
+        )));
+    }
+
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            sig,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    if rc == -1 {
         return Err(io::Error::last_os_error());
     }
     Ok(())

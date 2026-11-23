@@ -27,8 +27,8 @@ use kunai::kallsyms::KernelSymbols;
 use kunai::util::uname::Utsname;
 use kunai::util::uptime::Uptime;
 use kunai::util::{
-    ask_yes_no, get_current_uid, getrlimit, is_bpf_lsm_enabled, is_public_ip, kill, md5_data,
-    setrlimit, sha1_data, sha256_data, sha512_data,
+    ask_yes_no, get_current_uid, getrlimit, is_bpf_lsm_enabled, is_public_ip, kill, kill_process,
+    md5_data, setrlimit, sha1_data, sha256_data, sha512_data,
 };
 
 use kunai::yara::{Scanner, SourceCode};
@@ -41,6 +41,7 @@ use kunai_common::consts::PF_KTHREAD;
 use kunai_common::io_uring::io_uring_op;
 use kunai_common::option::BpfOption;
 use kunai_common::user_ns::{IdMap, UserNs};
+use kunai_common::uuid::ProcUuid;
 use kunai_common::{creds, inspect_err, kernel};
 
 use kunai::util::namespace::{Mnt, Namespace};
@@ -1011,20 +1012,23 @@ impl EventSink<'_> {
             // care as sending a SIGKILL to a critical process
             // might impact the system.
             if actions.contains(Action::Kill.as_str()) {
-                let pid = event.info().task.pid;
+                // SIGKILL kills the whole thread group, so we target the
+                // process rather than the thread which raised the event
+                let tgid = event.info().task.tgid;
                 let guuid = event.info().task.guuid;
+                let leader_start_time_ns = ProcUuid::from(guuid).leader_start_time_ns;
                 // don't kill ourself: this check is redundant because kunai
                 // events aren't supposed to arrive until here but it is a cheap test
-                if pid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
+                if tgid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
                     // this is the kind of information we want to have
                     // at all time so we put this as a warning not to
                     // be disabled by the default logging policy
-                    warn!("sending SIGKILL to PID={pid}");
-                    if let Err(e) = kill(pid, libc::SIGKILL) {
-                        error!("error sending SIGKILL to PID={pid}: {e}")
-                    } else {
-                        self.killed_tasks.insert(guuid);
+                    warn!("sending SIGKILL to PID={tgid}");
+                    if let Err(e) = kill_process(tgid, leader_start_time_ns, libc::SIGKILL) {
+                        error!("error sending SIGKILL to PID={tgid}: {e}")
                     }
+                    // a failed attempt would fail again on later detections
+                    self.killed_tasks.insert(guuid);
                 }
             }
         }

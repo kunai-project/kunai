@@ -2,6 +2,7 @@ use std::hash::Hash;
 use std::io::Error as IoError;
 use std::num::ParseIntError;
 
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::RawFd;
 
@@ -13,15 +14,14 @@ use std::{fs::File, os::fd::AsRawFd};
 use libc::{CLONE_NEWNS, SYS_pidfd_open, c_int, pid_t, syscall};
 use thiserror::Error;
 
-#[allow(dead_code)]
-pub fn pidfd_open(pid: pid_t, flags: c_int) -> Result<RawFd, IoError> {
+pub fn pidfd_open(pid: pid_t, flags: c_int) -> Result<OwnedFd, IoError> {
     let result = unsafe { syscall(SYS_pidfd_open, pid, flags) };
 
     if result < 0 {
         return Err(IoError::last_os_error());
     }
 
-    Ok(result as RawFd)
+    Ok(unsafe { OwnedFd::from_raw_fd(result as RawFd) })
 }
 
 pub fn setns(fd: c_int, nstype: c_int) -> Result<(), IoError> {

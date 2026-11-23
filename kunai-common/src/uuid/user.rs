@@ -30,6 +30,13 @@ impl From<ProcUuid> for uuid::Uuid {
     }
 }
 
+impl From<uuid::Uuid> for ProcUuid {
+    fn from(value: uuid::Uuid) -> Self {
+        // every 16-byte pattern is a valid ProcUuid: repr(C) integers, no padding
+        unsafe { core::mem::transmute(value) }
+    }
+}
+
 impl ProcUuid {
     pub fn into_uuid(self) -> uuid::Uuid {
         self.into()
