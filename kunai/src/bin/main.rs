@@ -4507,6 +4507,48 @@ mod tests {
         }))
     }
 
+    // the only possible kill victim is a child owned by the test
+    fn spawn_victim() -> (std::process::Child, TaskInfo) {
+        let child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+        let start_ticks = procfs::process::Process::new(pid)
+            .unwrap()
+            .stat()
+            .unwrap()
+            .starttime;
+        let ns_per_tick = 1_000_000_000 / kunai::util::get_clk_tck().unwrap() as u64;
+
+        let mut task = task_info(pid, creds(0));
+        task.tgid = pid;
+        task.tg_uuid = kunai_common::uuid::ProcUuid::new(start_ticks * ns_per_tick, 0, pid);
+        (child, task)
+    }
+
+    fn consumer_killing(tgid: i32) -> EventConsumer<'static> {
+        let mut compiler = Compiler::new();
+        compiler
+            .load_rules_from_str(format!(
+                "name: test.kill\nactions: [kill]\nmatches:\n  $task: .info.task.tgid == \
+                 '{tgid}'\ncondition: $task\n"
+            ))
+            .unwrap();
+
+        let mut consumer = event_consumer();
+        consumer.sink.engine = Engine::try_from(compiler).unwrap();
+        consumer
+    }
+
+    // a SIGKILL sent earlier is queued before this SIGTERM, so it wins
+    fn terminate(mut child: std::process::Child) -> Option<i32> {
+        use std::os::unix::process::ExitStatusExt;
+
+        kill(child.id() as i32, libc::SIGTERM).unwrap();
+        child.wait().unwrap().signal()
+    }
+
     #[test]
     fn execve_with_hostile_exe_and_comm_is_printed() {
         let mut consumer = event_consumer();
@@ -4649,6 +4691,47 @@ mod tests {
         let status = child.wait().unwrap();
         replayed.unwrap();
         assert_eq!(status.signal(), Some(libc::SIGTERM));
+    }
+
+    #[test]
+    fn kill_signals_matching_process() {
+        let (child, task) = spawn_victim();
+        let mut consumer = consumer_killing(task.tgid);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn kill_spares_process_reusing_pid() {
+        let (child, mut task) = spawn_victim();
+        // the event comes from an older process which held the same PID
+        task.tg_uuid.leader_start_time_ns -= 1_000_000_000;
+        let mut consumer = consumer_killing(task.tgid);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGTERM));
+        // a mismatch is final, so later detections must not retry it
+        assert!(
+            consumer
+                .sink
+                .killed_tasks
+                .contains(&task.tg_uuid.into_uuid())
+        );
+    }
+
+    #[test]
+    fn kill_targets_thread_group_of_event_thread() {
+        let (child, mut task) = spawn_victim();
+        // above the kernel's PID_MAX_LIMIT, so this TID can never be signalled
+        task.pid = i32::MAX;
+        let mut consumer = consumer_killing(task.tgid);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGKILL));
     }
 
     #[test]
