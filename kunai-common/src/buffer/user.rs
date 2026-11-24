@@ -27,6 +27,16 @@ impl<const N: usize> Buffer<N> {
 }
 
 #[cfg(test)]
+impl<const N: usize> Buffer<N> {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
+        let mut b = Self::new();
+        b.buf[..bytes.len()].copy_from_slice(bytes);
+        b.len = bytes.len();
+        b
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::Buffer;
 

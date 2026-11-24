@@ -1256,9 +1256,9 @@ dependencies = [
 
 [[package]]
 name = "gene_encoding"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0835a473ebb3a40d68368917f1fd87239fe2033ba44836350afb03b5bea9bf28"
+checksum = "214b46e824bcfb577976ee7c6a31d7a3c354c6a152f91962b93f664342161610"
 
 [[package]]
 name = "generic-array"

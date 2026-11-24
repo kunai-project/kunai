@@ -48,7 +48,11 @@ pub use user::*;
 mod user {
     use super::*;
     use base64ct::{Base64, Encoding};
-    use simple_dns::{Packet, QTYPE, ResourceRecord, SimpleDnsError, TYPE, rdata::RData};
+    use gene_encoding::escape_invalid_utf8_or_byte;
+    use simple_dns::{
+        Name, Packet, QTYPE, ResourceRecord, SimpleDnsError, TYPE,
+        rdata::{RData, TXT},
+    };
     use std::{
         borrow::Cow,
         collections::{HashMap, hash_map::Entry},
@@ -77,48 +81,86 @@ mod user {
         pub records: Vec<String>,
     }
 
+    const LABEL_SEPARATOR: u8 = b'.';
+
+    /// Converts a DNS name to text. Labels are joined with `.`, invalid UTF-8
+    /// bytes are written as `\xNN` and a `.` inside a label as `\x2e`, so a
+    /// name cannot look like another one and decodes back to its label bytes.
+    fn name_to_string(name: &Name) -> String {
+        let labels: Vec<Cow<'_, str>> = name
+            .as_bytes()
+            .map(|label| escape_invalid_utf8_or_byte(label, LABEL_SEPARATOR))
+            .collect();
+        labels.join(".")
+    }
+
+    const TXT_SEPARATOR: u8 = b';';
+
+    /// Converts TXT strings to text, in packet order, joined with `;`.
+    /// Invalid UTF-8 bytes are written as `\xNN` and a `;` inside a string
+    /// as `\x3b`, so no string is lost or split.
+    fn txt_to_string(txt: &TXT) -> String {
+        let mut strings = vec![];
+        for (key, value) in txt.iter_raw() {
+            // iter_raw splits each string on its first '=', we put it back
+            let mut raw = key.to_vec();
+            if let Some(value) = value {
+                raw.push(b'=');
+                raw.extend_from_slice(value);
+            }
+            strings.push(escape_invalid_utf8_or_byte(&raw, TXT_SEPARATOR).into_owned());
+        }
+        strings.join(";")
+    }
+
     #[inline(always)]
     fn rdata_to_string(rdata: &RData) -> String {
         match rdata {
             RData::A(r) => Ipv4Addr::from(r.address).to_string(),
             RData::AAAA(r) => Ipv6Addr::from(r.address).to_string(),
-            RData::CNAME(r) => r.0.to_string(),
-            RData::MX(r) => r.exchange.to_string(),
-            RData::NS(r) => r.0.to_string(),
-            RData::PTR(r) => r.0.to_string(),
-            RData::SRV(r) => r.target.to_string(),
-            RData::TXT(r) => {
-                let mut out = vec![];
-                for (key, value) in r.attributes() {
-                    let mut txt = key;
-                    if let Some(v) = value {
-                        txt.push('=');
-                        txt.push_str(&v);
-                    }
-                    out.push(txt);
-                }
-                out.join(";")
-            }
-            RData::MD(md) => md.0.to_string(),
-            RData::MB(mb) => mb.0.to_string(),
-            RData::MG(mg) => mg.0.to_string(),
-            RData::MR(mr) => mr.0.to_string(),
-            RData::MF(mf) => mf.0.to_string(),
+            RData::CNAME(r) => name_to_string(&r.0),
+            RData::MX(r) => name_to_string(&r.exchange),
+            RData::NS(r) => name_to_string(&r.0),
+            RData::PTR(r) => name_to_string(&r.0),
+            RData::SRV(r) => name_to_string(&r.target),
+            RData::TXT(r) => txt_to_string(r),
+            RData::MD(md) => name_to_string(&md.0),
+            RData::MB(mb) => name_to_string(&mb.0),
+            RData::MG(mg) => name_to_string(&mg.0),
+            RData::MR(mr) => name_to_string(&mr.0),
+            RData::MF(mf) => name_to_string(&mf.0),
             RData::HINFO(hinfo) => format!("cpu={} os={}", hinfo.cpu, hinfo.os),
-            RData::MINFO(minfo) => {
-                format!("rmailbox={} emailbox={}", minfo.rmailbox, minfo.emailbox)
-            }
+            RData::MINFO(minfo) => format!(
+                "rmailbox={} emailbox={}",
+                name_to_string(&minfo.rmailbox),
+                name_to_string(&minfo.emailbox)
+            ),
             RData::SOA(soa) => format!(
                 "mname={} rname={} serial={} refresh={} retry={} expire={} minimum={}",
-                soa.mname, soa.rname, soa.serial, soa.refresh, soa.retry, soa.expire, soa.minimum
+                name_to_string(&soa.mname),
+                name_to_string(&soa.rname),
+                soa.serial,
+                soa.refresh,
+                soa.retry,
+                soa.expire,
+                soa.minimum
             ),
             RData::WKS(wks) => format!("address={} protocol={}", wks.address, wks.protocol),
-            RData::RP(rp) => format!("mbox={} txt={}", rp.mbox, rp.txt),
-            RData::AFSDB(afsdb) => format!("subtype={} hostname={}", afsdb.subtype, afsdb.hostname),
+            RData::RP(rp) => format!(
+                "mbox={} txt={}",
+                name_to_string(&rp.mbox),
+                name_to_string(&rp.txt)
+            ),
+            RData::AFSDB(afsdb) => format!(
+                "subtype={} hostname={}",
+                afsdb.subtype,
+                name_to_string(&afsdb.hostname)
+            ),
             RData::ISDN(isdn) => format!("address={} sa={}", isdn.address, isdn.sa),
             RData::RouteThrough(route_through) => format!(
                 "intermediate_host={} preference={}",
-                route_through.intermediate_host, route_through.preference
+                name_to_string(&route_through.intermediate_host),
+                route_through.preference
             ),
             RData::NAPTR(naptr) => format!(
                 "order={} preference={} flags={} services={} regexp={} replacement={}",
@@ -127,7 +169,7 @@ mod user {
                 naptr.flags,
                 naptr.services,
                 naptr.regexp,
-                naptr.replacement
+                name_to_string(&naptr.replacement)
             ),
             RData::NSAP(nsap) => format!(
                 "{:02x}.{:04x}.{:02x}.{:06x}.{:04x}.{:04x}.{:04x}.{:012x}.{:02x}",
@@ -141,7 +183,7 @@ mod user {
                 nsap.id,
                 nsap.sel
             ),
-            RData::NSAP_PTR(nsap_ptr) => nsap_ptr.0.to_string(),
+            RData::NSAP_PTR(nsap_ptr) => name_to_string(&nsap_ptr.0),
             RData::LOC(loc) => format!(
                 "version={} size={} horizontal_precision={} vertical_precision={} latitude={} \
                  longitude={} altitude={}",
@@ -166,9 +208,17 @@ mod user {
                 caa.tag,
                 Base64::encode_string(&caa.value)
             ),
-            RData::SVCB(svcb) => format!("priority={} target={}", svcb.priority, svcb.target),
+            RData::SVCB(svcb) => format!(
+                "priority={} target={}",
+                svcb.priority,
+                name_to_string(&svcb.target)
+            ),
             RData::HTTPS(https) => {
-                format!("priority={} target={}", https.0.priority, https.0.target)
+                format!(
+                    "priority={} target={}",
+                    https.0.priority,
+                    name_to_string(&https.0.target)
+                )
             }
             RData::EUI48(eui48) => {
                 let mac = &eui48.address;
@@ -198,13 +248,17 @@ mod user {
                 zonemd.algorithm,
                 Base64::encode_string(&zonemd.digest)
             ),
-            RData::KX(kx) => format!("preference={} exchanger={}", kx.preference, kx.exchanger),
+            RData::KX(kx) => format!(
+                "preference={} exchanger={}",
+                kx.preference,
+                name_to_string(&kx.exchanger)
+            ),
             RData::IPSECKEY(ipseckey) => {
                 let gw = match &ipseckey.gateway {
                     simple_dns::rdata::Gateway::None => "none".into(),
                     simple_dns::rdata::Gateway::IPv4(ipv4_addr) => ipv4_addr.to_string(),
                     simple_dns::rdata::Gateway::IPv6(ipv6_addr) => ipv6_addr.to_string(),
-                    simple_dns::rdata::Gateway::Domain(name) => name.to_string(),
+                    simple_dns::rdata::Gateway::Domain(name) => name_to_string(name),
                 };
                 format!(
                     "precedence={} algorithm={} gateway={} public_key={}",
@@ -231,7 +285,7 @@ mod user {
                 rrsig.signature_expiration,
                 rrsig.signature_inception,
                 rrsig.key_tag,
-                rrsig.signer_name,
+                name_to_string(&rrsig.signer_name),
                 Base64::encode_string(&rrsig.signature)
             ),
             RData::DS(ds) => format!(
@@ -243,7 +297,7 @@ mod user {
             ),
             RData::NSEC(nsec) => {
                 // we don't format type_bit_maps to simplify output, let's wait and see if that is an issue for users
-                format!("next_domain={}", nsec.next_name)
+                format!("next_domain={}", name_to_string(&nsec.next_name))
             }
             RData::DHCID(dhcid) => format!(
                 "identifier={} digest_type={} digest={}",
@@ -342,7 +396,7 @@ mod user {
 
             let mut domain_records: HashMap<String, Vec<ResourceRecord<'_>>> = HashMap::new();
             packet.answers.into_iter().for_each(|r| {
-                match domain_records.entry(r.name.to_string()) {
+                match domain_records.entry(name_to_string(&r.name)) {
                     Entry::Occupied(mut occupied_entry) => occupied_entry.get_mut().push(r),
                     Entry::Vacant(vacant_entry) => {
                         vacant_entry.insert(vec![r]);
@@ -353,12 +407,14 @@ mod user {
             for q in packet.questions.iter() {
                 let mut cname_resp = None;
 
-                if let Some(records) = domain_records.remove(&q.qname.to_string()) {
+                let qname = name_to_string(&q.qname);
+
+                if let Some(records) = domain_records.remove(&qname) {
                     for r in records.iter() {
                         // we have a CNAME in response so we must also
                         // have the matching record for that one
                         if let RData::CNAME(cname) = &r.rdata {
-                            let cname_str = cname.0.to_string();
+                            let cname_str = name_to_string(&cname.0);
                             // check if we have response for the CNAME record
                             if let Some(records) = domain_records.remove(&cname_str) {
                                 cname_resp = Some(DomainResponse {
@@ -374,7 +430,7 @@ mod user {
                     }
 
                     out.push(DomainResponse {
-                        qname: q.qname.to_string(),
+                        qname,
                         qtype: Cow::Borrowed(qtype_as_str(&q.qtype)),
                         records: records
                             .into_iter()
@@ -391,5 +447,168 @@ mod user {
             }
             Ok(out)
         }
+    }
+}
+
+#[cfg(all(test, feature = "user"))]
+mod tests {
+    use super::*;
+    use gene_encoding::unescape_invalid_utf8;
+    use simple_dns::{
+        CLASS, CharacterString, Label, Name, Packet, QCLASS, QTYPE, Question, ResourceRecord, TYPE,
+        rdata::{A, CNAME, RData, TXT},
+    };
+
+    const TTL: u32 = 60;
+    const IP_1_2_3_4: u32 = 0x01020304;
+
+    fn name<'a>(labels: &[&'a [u8]]) -> Name<'a> {
+        let labels: Vec<Label<'a>> = labels.iter().map(|l| Label::new_unchecked(*l)).collect();
+        Name::new_with_labels(&labels)
+    }
+
+    fn a_record(owner: Name<'_>) -> ResourceRecord<'_> {
+        let rdata = RData::A(A {
+            address: IP_1_2_3_4,
+        });
+        ResourceRecord::new(owner, CLASS::IN, TTL, rdata)
+    }
+
+    fn query_data(question: Name<'_>, answers: Vec<ResourceRecord<'_>>) -> DnsQueryData {
+        let mut packet = Packet::new_reply(1);
+        packet.questions.push(Question::new(
+            question,
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
+        packet.answers = answers;
+
+        DnsQueryData {
+            socket: SocketInfo::default(),
+            src: SockAddr::default(),
+            dst: SockAddr::default(),
+            data: Buffer::from_bytes(&packet.build_bytes_vec().unwrap()),
+            tcp_header: false,
+            error: DnsError::None,
+        }
+    }
+
+    /// Returns the records printed for a single TXT answer made of `strings`.
+    fn txt_records(strings: &[&[u8]]) -> Vec<String> {
+        let mut txt = TXT::new();
+        for string in strings {
+            txt.add_char_string(CharacterString::new(string).unwrap());
+        }
+        let owner = name(&[b"www", b"example"]);
+        let record = ResourceRecord::new(owner.clone(), CLASS::IN, TTL, RData::TXT(txt));
+
+        let responses = query_data(owner, vec![record]).domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        responses.into_iter().next().unwrap().records
+    }
+
+    #[test]
+    fn label_dot_is_escaped() {
+        let data = query_data(
+            name(&[b"good.example"]),
+            vec![a_record(name(&[b"good.example"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, r"good\x2eexample");
+        assert_eq!(responses[0].records, ["1.2.3.4"]);
+    }
+
+    #[test]
+    fn label_dot_does_not_match_label_separator() {
+        // the answer is for good.example, not for the single label "good.example"
+        let data = query_data(
+            name(&[b"good.example"]),
+            vec![a_record(name(&[b"good", b"example"]))],
+        );
+
+        assert!(data.domain_responses().unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_utf8_label_is_escaped() {
+        let data = query_data(
+            name(&[b"bad\xff", b"example"]),
+            vec![a_record(name(&[b"bad\xff", b"example"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, r"bad\xff.example");
+    }
+
+    #[test]
+    fn backslash_before_label_dot_round_trips() {
+        let data = query_data(name(&[b"a\\.b"]), vec![a_record(name(&[b"a\\.b"]))]);
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, r"a\\\x2eb");
+        assert_eq!(&*unescape_invalid_utf8(&responses[0].qname), b"a\\.b");
+    }
+
+    #[test]
+    fn cname_target_label_dot_is_escaped() {
+        let cname = ResourceRecord::new(
+            name(&[b"www", b"example"]),
+            CLASS::IN,
+            TTL,
+            RData::CNAME(CNAME(name(&[b"cdn.evil", b"com"]))),
+        );
+        let data = query_data(
+            name(&[b"www", b"example"]),
+            vec![cname, a_record(name(&[b"cdn.evil", b"com"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].qname, "www.example");
+        assert_eq!(responses[0].records, [r"cdn\x2eevil.com"]);
+        assert_eq!(responses[1].qname, r"cdn\x2eevil.com");
+        assert_eq!(responses[1].records, ["1.2.3.4"]);
+    }
+
+    #[test]
+    fn txt_keeps_invalid_utf8_key() {
+        assert_eq!(txt_records(&[b"k\xff=v"]), [r"k\xff=v"]);
+    }
+
+    #[test]
+    fn txt_keeps_invalid_utf8_value() {
+        assert_eq!(txt_records(&[b"k=v\xff"]), [r"k=v\xff"]);
+    }
+
+    #[test]
+    fn txt_keeps_duplicate_keys() {
+        assert_eq!(txt_records(&[b"k=1", b"k=2"]), ["k=1;k=2"]);
+    }
+
+    #[test]
+    fn txt_keeps_string_order() {
+        let strings: [&[u8]; 5] = [b"e=5", b"d=4", b"c", b"b=2", b"a="];
+        assert_eq!(txt_records(&strings), ["e=5;d=4;c;b=2;a="]);
+    }
+
+    #[test]
+    fn txt_semicolon_in_string_is_escaped() {
+        // one string holding a ';' must not read like two strings
+        assert_eq!(txt_records(&[b"a=1;b=2"]), [r"a=1\x3bb=2"]);
+    }
+
+    #[test]
+    fn txt_keeps_empty_string() {
+        assert_eq!(txt_records(&[b"", b"a"]), [";a"]);
     }
 }
