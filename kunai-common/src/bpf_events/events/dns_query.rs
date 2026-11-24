@@ -393,3 +393,119 @@ mod user {
         }
     }
 }
+
+#[cfg(all(test, feature = "user"))]
+mod tests {
+    use super::*;
+    use gene_encoding::unescape_invalid_utf8;
+    use simple_dns::{
+        CLASS, Label, Name, Packet, QCLASS, QTYPE, Question, ResourceRecord, TYPE,
+        rdata::{A, CNAME, RData},
+    };
+
+    const TTL: u32 = 60;
+    const IP_1_2_3_4: u32 = 0x01020304;
+
+    fn name<'a>(labels: &[&'a [u8]]) -> Name<'a> {
+        let labels: Vec<Label<'a>> = labels.iter().map(|l| Label::new_unchecked(*l)).collect();
+        Name::new_with_labels(&labels)
+    }
+
+    fn a_record(owner: Name<'_>) -> ResourceRecord<'_> {
+        let rdata = RData::A(A {
+            address: IP_1_2_3_4,
+        });
+        ResourceRecord::new(owner, CLASS::IN, TTL, rdata)
+    }
+
+    fn query_data(question: Name<'_>, answers: Vec<ResourceRecord<'_>>) -> DnsQueryData {
+        let mut packet = Packet::new_reply(1);
+        packet.questions.push(Question::new(
+            question,
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
+        packet.answers = answers;
+
+        DnsQueryData {
+            socket: SocketInfo::default(),
+            src: SockAddr::default(),
+            dst: SockAddr::default(),
+            data: Buffer::from_bytes(&packet.build_bytes_vec().unwrap()),
+            tcp_header: false,
+            error: DnsError::None,
+        }
+    }
+
+    #[test]
+    fn label_dot_is_escaped() {
+        let data = query_data(
+            name(&[b"good.example"]),
+            vec![a_record(name(&[b"good.example"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, r"good\x2eexample");
+        assert_eq!(responses[0].records, ["1.2.3.4"]);
+    }
+
+    #[test]
+    fn label_dot_does_not_match_label_separator() {
+        // the answer is for good.example, not for the single label "good.example"
+        let data = query_data(
+            name(&[b"good.example"]),
+            vec![a_record(name(&[b"good", b"example"]))],
+        );
+
+        assert!(data.domain_responses().unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_utf8_label_is_escaped() {
+        let data = query_data(
+            name(&[b"bad\xff", b"example"]),
+            vec![a_record(name(&[b"bad\xff", b"example"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, r"bad\xff.example");
+    }
+
+    #[test]
+    fn backslash_before_label_dot_round_trips() {
+        let data = query_data(name(&[b"a\\.b"]), vec![a_record(name(&[b"a\\.b"]))]);
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, r"a\\\x2eb");
+        assert_eq!(&*unescape_invalid_utf8(&responses[0].qname), b"a\\.b");
+    }
+
+    #[test]
+    fn cname_target_label_dot_is_escaped() {
+        let cname = ResourceRecord::new(
+            name(&[b"www", b"example"]),
+            CLASS::IN,
+            TTL,
+            RData::CNAME(CNAME(name(&[b"cdn.evil", b"com"]))),
+        );
+        let data = query_data(
+            name(&[b"www", b"example"]),
+            vec![cname, a_record(name(&[b"cdn.evil", b"com"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].qname, "www.example");
+        assert_eq!(responses[0].records, [r"cdn\x2eevil.com"]);
+        assert_eq!(responses[1].qname, r"cdn\x2eevil.com");
+        assert_eq!(responses[1].records, ["1.2.3.4"]);
+    }
+}
