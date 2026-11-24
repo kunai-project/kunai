@@ -49,7 +49,10 @@ mod user {
     use super::*;
     use base64ct::{Base64, Encoding};
     use gene_encoding::escape_invalid_utf8_or_byte;
-    use simple_dns::{Name, Packet, QTYPE, ResourceRecord, SimpleDnsError, TYPE, rdata::RData};
+    use simple_dns::{
+        Name, Packet, QTYPE, ResourceRecord, SimpleDnsError, TYPE,
+        rdata::{RData, TXT},
+    };
     use std::{
         borrow::Cow,
         collections::{HashMap, hash_map::Entry},
@@ -91,6 +94,25 @@ mod user {
         labels.join(".")
     }
 
+    const TXT_SEPARATOR: u8 = b';';
+
+    /// Converts TXT strings to text, in packet order, joined with `;`.
+    /// Invalid UTF-8 bytes are written as `\xNN` and a `;` inside a string
+    /// as `\x3b`, so no string is lost or split.
+    fn txt_to_string(txt: &TXT) -> String {
+        let mut strings = vec![];
+        for (key, value) in txt.iter_raw() {
+            // iter_raw splits each string on its first '=', we put it back
+            let mut raw = key.to_vec();
+            if let Some(value) = value {
+                raw.push(b'=');
+                raw.extend_from_slice(value);
+            }
+            strings.push(escape_invalid_utf8_or_byte(&raw, TXT_SEPARATOR).into_owned());
+        }
+        strings.join(";")
+    }
+
     #[inline(always)]
     fn rdata_to_string(rdata: &RData) -> String {
         match rdata {
@@ -101,18 +123,7 @@ mod user {
             RData::NS(r) => name_to_string(&r.0),
             RData::PTR(r) => name_to_string(&r.0),
             RData::SRV(r) => name_to_string(&r.target),
-            RData::TXT(r) => {
-                let mut out = vec![];
-                for (key, value) in r.attributes() {
-                    let mut txt = key;
-                    if let Some(v) = value {
-                        txt.push('=');
-                        txt.push_str(&v);
-                    }
-                    out.push(txt);
-                }
-                out.join(";")
-            }
+            RData::TXT(r) => txt_to_string(r),
             RData::MD(md) => name_to_string(&md.0),
             RData::MB(mb) => name_to_string(&mb.0),
             RData::MG(mg) => name_to_string(&mg.0),
