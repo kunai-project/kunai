@@ -606,4 +606,9 @@ mod tests {
         // one string holding a ';' must not read like two strings
         assert_eq!(txt_records(&[b"a=1;b=2"]), [r"a=1\x3bb=2"]);
     }
+
+    #[test]
+    fn txt_keeps_empty_string() {
+        assert_eq!(txt_records(&[b"", b"a"]), [";a"]);
+    }
 }
