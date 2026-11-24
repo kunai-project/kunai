@@ -444,8 +444,8 @@ mod tests {
     use super::*;
     use gene_encoding::unescape_invalid_utf8;
     use simple_dns::{
-        CLASS, Label, Name, Packet, QCLASS, QTYPE, Question, ResourceRecord, TYPE,
-        rdata::{A, CNAME, RData},
+        CLASS, CharacterString, Label, Name, Packet, QCLASS, QTYPE, Question, ResourceRecord, TYPE,
+        rdata::{A, CNAME, RData, TXT},
     };
 
     const TTL: u32 = 60;
@@ -481,6 +481,21 @@ mod tests {
             tcp_header: false,
             error: DnsError::None,
         }
+    }
+
+    /// Returns the records printed for a single TXT answer made of `strings`.
+    fn txt_records(strings: &[&[u8]]) -> Vec<String> {
+        let mut txt = TXT::new();
+        for string in strings {
+            txt.add_char_string(CharacterString::new(string).unwrap());
+        }
+        let owner = name(&[b"www", b"example"]);
+        let record = ResourceRecord::new(owner.clone(), CLASS::IN, TTL, RData::TXT(txt));
+
+        let responses = query_data(owner, vec![record]).domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        responses.into_iter().next().unwrap().records
     }
 
     #[test]
@@ -552,5 +567,32 @@ mod tests {
         assert_eq!(responses[0].records, [r"cdn\x2eevil.com"]);
         assert_eq!(responses[1].qname, r"cdn\x2eevil.com");
         assert_eq!(responses[1].records, ["1.2.3.4"]);
+    }
+
+    #[test]
+    fn txt_keeps_invalid_utf8_key() {
+        assert_eq!(txt_records(&[b"k\xff=v"]), [r"k\xff=v"]);
+    }
+
+    #[test]
+    fn txt_keeps_invalid_utf8_value() {
+        assert_eq!(txt_records(&[b"k=v\xff"]), [r"k=v\xff"]);
+    }
+
+    #[test]
+    fn txt_keeps_duplicate_keys() {
+        assert_eq!(txt_records(&[b"k=1", b"k=2"]), ["k=1;k=2"]);
+    }
+
+    #[test]
+    fn txt_keeps_string_order() {
+        let strings: [&[u8]; 5] = [b"e=5", b"d=4", b"c", b"b=2", b"a="];
+        assert_eq!(txt_records(&strings), ["e=5;d=4;c;b=2;a="]);
+    }
+
+    #[test]
+    fn txt_semicolon_in_string_is_escaped() {
+        // one string holding a ';' must not read like two strings
+        assert_eq!(txt_records(&[b"a=1;b=2"]), [r"a=1\x3bb=2"]);
     }
 }
