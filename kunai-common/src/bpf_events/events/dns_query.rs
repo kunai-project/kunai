@@ -83,13 +83,18 @@ mod user {
 
     const LABEL_SEPARATOR: u8 = b'.';
 
-    /// Converts a DNS name to text. Labels are joined with `.`, invalid UTF-8
-    /// bytes are written as `\xNN` and a `.` inside a label as `\x2e`, so a
-    /// name cannot look like another one and decodes back to its label bytes.
+    /// Converts a DNS name to text. ASCII letters are lowercased, since DNS
+    /// names are case-insensitive for them only (RFC 4343). Labels are joined
+    /// with `.`, invalid UTF-8 bytes are written as `\xNN` and a `.` inside a
+    /// label as `\x2e`, so a name cannot look like another one and decodes
+    /// back to its lowercased label bytes.
     fn name_to_string(name: &Name) -> String {
-        let labels: Vec<Cow<'_, str>> = name
+        let labels: Vec<String> = name
             .as_bytes()
-            .map(|label| escape_invalid_utf8_or_byte(label, LABEL_SEPARATOR))
+            .map(|label| {
+                escape_invalid_utf8_or_byte(&label.to_ascii_lowercase(), LABEL_SEPARATOR)
+                    .into_owned()
+            })
             .collect();
         labels.join(".")
     }
