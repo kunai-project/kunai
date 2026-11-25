@@ -83,13 +83,18 @@ mod user {
 
     const LABEL_SEPARATOR: u8 = b'.';
 
-    /// Converts a DNS name to text. Labels are joined with `.`, invalid UTF-8
-    /// bytes are written as `\xNN` and a `.` inside a label as `\x2e`, so a
-    /// name cannot look like another one and decodes back to its label bytes.
+    /// Converts a DNS name to text. ASCII letters are lowercased, since DNS
+    /// names are case-insensitive for them only (RFC 4343). Labels are joined
+    /// with `.`, invalid UTF-8 bytes are written as `\xNN` and a `.` inside a
+    /// label as `\x2e`, so a name cannot look like another one and decodes
+    /// back to its lowercased label bytes.
     fn name_to_string(name: &Name) -> String {
-        let labels: Vec<Cow<'_, str>> = name
+        let labels: Vec<String> = name
             .as_bytes()
-            .map(|label| escape_invalid_utf8_or_byte(label, LABEL_SEPARATOR))
+            .map(|label| {
+                escape_invalid_utf8_or_byte(&label.to_ascii_lowercase(), LABEL_SEPARATOR)
+                    .into_owned()
+            })
             .collect();
         labels.join(".")
     }
@@ -578,6 +583,56 @@ mod tests {
         assert_eq!(responses[0].records, [r"cdn\x2eevil.com"]);
         assert_eq!(responses[1].qname, r"cdn\x2eevil.com");
         assert_eq!(responses[1].records, ["1.2.3.4"]);
+    }
+
+    #[test]
+    fn name_is_lowercased() {
+        // the answer's case differs from the question's (0x20 encoding)
+        let data = query_data(
+            name(&[b"EvIl", b"CoM"]),
+            vec![a_record(name(&[b"evil", b"com"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, "evil.com");
+        assert_eq!(responses[0].records, ["1.2.3.4"]);
+    }
+
+    #[test]
+    fn cname_target_is_lowercased() {
+        let cname = ResourceRecord::new(
+            name(&[b"www", b"example"]),
+            CLASS::IN,
+            TTL,
+            RData::CNAME(CNAME(name(&[b"CDN", b"Evil", b"com"]))),
+        );
+        let data = query_data(
+            name(&[b"www", b"example"]),
+            vec![cname, a_record(name(&[b"cdn", b"evil", b"com"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].records, ["cdn.evil.com"]);
+        assert_eq!(responses[1].qname, "cdn.evil.com");
+        assert_eq!(responses[1].records, ["1.2.3.4"]);
+    }
+
+    #[test]
+    fn only_ascii_letters_are_lowercased() {
+        // DNS names are case-insensitive for ASCII letters only (RFC 4343)
+        let data = query_data(
+            name(&["ÉVIL".as_bytes(), b"com"]),
+            vec![a_record(name(&["Évil".as_bytes(), b"com"]))],
+        );
+
+        let responses = data.domain_responses().unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].qname, "Évil.com");
     }
 
     #[test]
