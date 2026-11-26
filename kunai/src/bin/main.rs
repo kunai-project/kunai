@@ -505,29 +505,12 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    fn get_resolved<'s>(
-        &'s self,
-        global: &'s HashMap<IpAddr, String>,
-        ip: IpAddr,
-        i: &StdEventInfo,
-    ) -> Cow<'s, str> {
-        let ck = i.process_key();
-
-        // we lookup in the local table
-        if let Some(domain) = self
-            .get(&ck)
-            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
-        {
-            return domain;
-        }
-
-        // we lookup in the global table
-        if let Some(domain) = global.get(&ip) {
-            return domain.into();
-        }
-
-        // default value
-        "?".into()
+    // only the process's own DNS answers count: any other process could forge them
+    fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> &str {
+        self.get(&i.process_key())
+            .and_then(|p| p.resolved.get(&ip))
+            .map(String::as_str)
+            .unwrap_or("?")
     }
 
     fn kill_event<'src>(
@@ -620,7 +603,6 @@ impl Processes {
         &'src self,
         info: &'src StdEventInfo,
         bpf_data: bpf_events::ConnectData,
-        glob_resolved: &HashMap<IpAddr, String>,
     ) -> UserEvent<'src, ConnectData<'src>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
         let src: SockAddr = bpf_data.src.into();
@@ -641,7 +623,7 @@ impl Processes {
             socket: SocketInfo::from(bpf_data.socket),
             src,
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                hostname: Some(self.get_resolved(dst.ip, info).into()),
                 ip: dst.ip,
                 port: dst.port,
                 public: is_public_ip(dst.ip),
@@ -658,7 +640,6 @@ impl Processes {
         &'src self,
         info: &'src StdEventInfo,
         bpf_data: bpf_events::SendEntropyData,
-        glob_resolved: &HashMap<IpAddr, String>,
     ) -> UserEvent<'src, SendDataData<'src>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
         let dst: SockAddr = bpf_data.dst.into();
@@ -679,7 +660,7 @@ impl Processes {
             socket: SocketInfo::from(bpf_data.socket),
             src: bpf_data.src.into(),
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                hostname: Some(self.get_resolved(dst.ip, info).into()),
                 ip: dst.ip,
                 port: dst.port,
                 public: is_public_ip(dst.ip),
@@ -914,7 +895,6 @@ struct EventConsumer<'s> {
     filter: Filter,
     random: u32,
     table: ProcessTable,
-    resolved: HashMap<IpAddr, String>,
     exited_tasks: u64,
     sink: EventSink<'s>,
 }
@@ -1261,7 +1241,6 @@ impl EventConsumer<'_> {
             random: util::getrandom::<u32>()?,
             table: ProcessTable::with_capacity(512),
             exited_tasks: 0,
-            resolved: HashMap::new(),
             sink: EventSink {
                 config,
                 json_buf: Vec::new(),
@@ -1723,12 +1702,6 @@ impl EventConsumer<'_> {
                 .and_modify(|r| *r = resolved.to_owned())
                 .or_insert_with(|| resolved.to_owned())
         });
-
-        // update global resolve table
-        self.resolved
-            .entry(ip)
-            .and_modify(|r| *r = resolved.to_owned())
-            .or_insert_with(|| resolved.to_owned());
     }
 
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
@@ -2343,10 +2316,7 @@ impl EventConsumer<'_> {
 
             EbpfEvent::Connect(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self
-                    .table
-                    .processes
-                    .connect_event(&std_info, e.data, &self.resolved);
+                let mut e = self.table.processes.connect_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2367,10 +2337,7 @@ impl EventConsumer<'_> {
 
             EbpfEvent::SendEntropy(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self
-                    .table
-                    .processes
-                    .send_data_event(&std_info, e.data, &self.resolved);
+                let mut e = self.table.processes.send_data_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -4413,7 +4380,6 @@ mod tests {
             filter: Filter::all_enabled(),
             random: 0,
             table: ProcessTable::default(),
-            resolved: HashMap::new(),
             exited_tasks: 0,
             sink: EventSink {
                 config: Config::default(),
@@ -4760,5 +4726,147 @@ mod tests {
         // last_reported happens to equal the baseline itself (not current):
         // still a live divergence, must fire
         assert!(creds_diverged(creds(0), creds(1000), Some(creds(0))));
+    }
+
+    const RESOLVED_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(203, 0, 113, 7);
+
+    fn tracked_process(consumer: &mut EventConsumer, tgid: i32, parent: TaskInfo) -> TaskInfo {
+        let mut task = task_info(tgid, creds(1000));
+        task.tgid = tgid;
+        task.tg_uuid.tgid = tgid;
+        consumer.table.insert_process(
+            &task,
+            PathBuf::from("/usr/bin/app"),
+            String::new(),
+            &[],
+            ProcKey::from(&parent),
+            parent,
+        );
+        task
+    }
+
+    fn resolve(consumer: &mut EventConsumer, task: TaskInfo, name: &str) {
+        let info = consumer.build_std_event_info(bpf_events::EventInfo {
+            process: task,
+            ..Default::default()
+        });
+        consumer.update_resolved(IpAddr::V4(RESOLVED_IP), name, &info);
+    }
+
+    fn connect_event(task: TaskInfo) -> EbpfEvent {
+        EbpfEvent::Connect(Box::new(bpf_events::Event {
+            info: bpf_events::EventInfo {
+                etype: Type::Connect,
+                process: task,
+                ..Default::default()
+            },
+            data: bpf_events::ConnectData {
+                socket: Default::default(),
+                src: Default::default(),
+                dst: kunai_common::net::SockAddr::new_v4_from_be(u32::from(RESOLVED_IP), 443),
+                connected: true,
+            },
+        }))
+    }
+
+    fn send_data_event(task: TaskInfo) -> EbpfEvent {
+        EbpfEvent::SendEntropy(Box::new(bpf_events::Event {
+            info: bpf_events::EventInfo {
+                etype: Type::SendData,
+                process: task,
+                ..Default::default()
+            },
+            data: bpf_events::SendEntropyData {
+                socket: Default::default(),
+                src: Default::default(),
+                dst: kunai_common::net::SockAddr::new_v4_from_be(u32::from(RESOLVED_IP), 443),
+                freq: [0; 256],
+                freq_sum: 0,
+                real_data_size: 0,
+            },
+        }))
+    }
+
+    fn printed_json(consumer: &mut EventConsumer, event: EbpfEvent) -> serde_json::Value {
+        consumer.handle_event(event);
+        serde_json::from_slice(&consumer.sink.json_buf).unwrap()
+    }
+
+    #[test]
+    fn own_dns_answer_labels_own_connection() {
+        let mut consumer = event_consumer();
+        let app = tracked_process(&mut consumer, 200, TaskInfo::default());
+        let other = tracked_process(&mut consumer, 300, TaskInfo::default());
+        resolve(&mut consumer, app, "good.example");
+        resolve(&mut consumer, other, "evil.example");
+
+        let json = printed_json(&mut consumer, connect_event(app));
+
+        assert_eq!(json["data"]["dst"]["hostname"], "good.example");
+    }
+
+    #[test]
+    fn other_process_dns_answer_does_not_label_connection() {
+        let mut consumer = event_consumer();
+        let app = tracked_process(&mut consumer, 200, TaskInfo::default());
+        let other = tracked_process(&mut consumer, 300, TaskInfo::default());
+        resolve(&mut consumer, other, "evil.example");
+
+        let json = printed_json(&mut consumer, connect_event(app));
+
+        assert_eq!(json["data"]["dst"]["hostname"], "?");
+    }
+
+    #[test]
+    fn other_process_dns_answer_does_not_label_sent_data() {
+        let mut consumer = event_consumer();
+        let app = tracked_process(&mut consumer, 200, TaskInfo::default());
+        let other = tracked_process(&mut consumer, 300, TaskInfo::default());
+        resolve(&mut consumer, other, "evil.example");
+
+        let json = printed_json(&mut consumer, send_data_event(app));
+
+        assert_eq!(json["data"]["dst"]["hostname"], "?");
+    }
+
+    // a parent could otherwise make a legitimate child carry its forged label
+    #[test]
+    fn parent_dns_answer_does_not_label_child_connection() {
+        let mut consumer = event_consumer();
+        let parent = tracked_process(&mut consumer, 200, TaskInfo::default());
+        let child = tracked_process(&mut consumer, 201, parent);
+        resolve(&mut consumer, parent, "update.example");
+
+        let json = printed_json(&mut consumer, connect_event(child));
+
+        assert_eq!(json["data"]["dst"]["hostname"], "?");
+    }
+
+    #[test]
+    fn exec_drops_dns_answers_of_previous_image() {
+        let mut consumer = event_consumer();
+        let app = tracked_process(&mut consumer, 200, TaskInfo::default());
+        resolve(&mut consumer, app, "update.example");
+
+        consumer.handle_event(execve_event(app, b"/usr/bin/curl"));
+        let json = printed_json(&mut consumer, connect_event(app));
+
+        assert_eq!(json["data"]["dst"]["hostname"], "?");
+    }
+
+    #[test]
+    fn ip_ioc_matches_connection_to_ip_resolved_elsewhere() {
+        let mut consumer = event_consumer();
+        consumer.sink.iocs.insert(RESOLVED_IP.to_string(), 5);
+        let attacker = tracked_process(&mut consumer, 300, TaskInfo::default());
+        let victim = tracked_process(&mut consumer, 400, TaskInfo::default());
+        resolve(&mut consumer, attacker, "update.example");
+
+        let json = printed_json(&mut consumer, connect_event(victim));
+
+        assert_eq!(
+            json["detection"]["iocs"],
+            serde_json::json!([RESOLVED_IP.to_string()])
+        );
     }
 }
