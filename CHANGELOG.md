@@ -98,6 +98,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   events are no longer lost.
 - Events from Kunai's own worker threads are no longer reported.
 - Events read on different CPUs are no longer delivered out of order.
+- An event matching both a detection and a filter is printed once instead
+  of twice, and `scan-files` requested by both runs once.
 - Hibernation and resume problems caused by the `syscore_resume` probe.
 - Corrupted data read from `bio_vec`-backed I/O.
 - Mount namespaces are released when their last process exits. They were
