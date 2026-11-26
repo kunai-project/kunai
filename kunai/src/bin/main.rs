@@ -505,29 +505,12 @@ impl Processes {
         UserEvent::new(data, info)
     }
 
-    fn get_resolved<'s>(
-        &'s self,
-        global: &'s HashMap<IpAddr, String>,
-        ip: IpAddr,
-        i: &StdEventInfo,
-    ) -> Cow<'s, str> {
-        let ck = i.process_key();
-
-        // we lookup in the local table
-        if let Some(domain) = self
-            .get(&ck)
-            .and_then(|c| c.resolved.get(&ip).map(Cow::from))
-        {
-            return domain;
-        }
-
-        // we lookup in the global table
-        if let Some(domain) = global.get(&ip) {
-            return domain.into();
-        }
-
-        // default value
-        "?".into()
+    // only the process's own DNS answers count: any other process could forge them
+    fn get_resolved(&self, ip: IpAddr, i: &StdEventInfo) -> &str {
+        self.get(&i.process_key())
+            .and_then(|p| p.resolved.get(&ip))
+            .map(String::as_str)
+            .unwrap_or("?")
     }
 
     fn kill_event<'src>(
@@ -620,7 +603,6 @@ impl Processes {
         &'src self,
         info: &'src StdEventInfo,
         bpf_data: bpf_events::ConnectData,
-        glob_resolved: &HashMap<IpAddr, String>,
     ) -> UserEvent<'src, ConnectData<'src>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
         let src: SockAddr = bpf_data.src.into();
@@ -641,7 +623,7 @@ impl Processes {
             socket: SocketInfo::from(bpf_data.socket),
             src,
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                hostname: Some(self.get_resolved(dst.ip, info).into()),
                 ip: dst.ip,
                 port: dst.port,
                 public: is_public_ip(dst.ip),
@@ -658,7 +640,6 @@ impl Processes {
         &'src self,
         info: &'src StdEventInfo,
         bpf_data: bpf_events::SendEntropyData,
-        glob_resolved: &HashMap<IpAddr, String>,
     ) -> UserEvent<'src, SendDataData<'src>> {
         let (exe, command_line) = self.get_exe_and_command_line(info);
         let dst: SockAddr = bpf_data.dst.into();
@@ -679,7 +660,7 @@ impl Processes {
             socket: SocketInfo::from(bpf_data.socket),
             src: bpf_data.src.into(),
             dst: NetworkInfo {
-                hostname: Some(self.get_resolved(glob_resolved, dst.ip, info).into()),
+                hostname: Some(self.get_resolved(dst.ip, info).into()),
                 ip: dst.ip,
                 port: dst.port,
                 public: is_public_ip(dst.ip),
@@ -914,7 +895,6 @@ struct EventConsumer<'s> {
     filter: Filter,
     random: u32,
     table: ProcessTable,
-    resolved: HashMap<IpAddr, String>,
     exited_tasks: u64,
     sink: EventSink<'s>,
 }
@@ -1261,7 +1241,6 @@ impl EventConsumer<'_> {
             random: util::getrandom::<u32>()?,
             table: ProcessTable::with_capacity(512),
             exited_tasks: 0,
-            resolved: HashMap::new(),
             sink: EventSink {
                 config,
                 json_buf: Vec::new(),
@@ -1723,12 +1702,6 @@ impl EventConsumer<'_> {
                 .and_modify(|r| *r = resolved.to_owned())
                 .or_insert_with(|| resolved.to_owned())
         });
-
-        // update global resolve table
-        self.resolved
-            .entry(ip)
-            .and_modify(|r| *r = resolved.to_owned())
-            .or_insert_with(|| resolved.to_owned());
     }
 
     fn mnt_ns_from_task(ti: &bpf_events::TaskInfo) -> Option<Mnt> {
@@ -2343,10 +2316,7 @@ impl EventConsumer<'_> {
 
             EbpfEvent::Connect(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self
-                    .table
-                    .processes
-                    .connect_event(&std_info, e.data, &self.resolved);
+                let mut e = self.table.processes.connect_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -2367,10 +2337,7 @@ impl EventConsumer<'_> {
 
             EbpfEvent::SendEntropy(e) => {
                 let std_info = self.build_std_event_info(e.info);
-                let mut e = self
-                    .table
-                    .processes
-                    .send_data_event(&std_info, e.data, &self.resolved);
+                let mut e = self.table.processes.send_data_event(&std_info, e.data);
                 self.sink.scan_and_print(&mut e);
             }
 
@@ -4413,7 +4380,6 @@ mod tests {
             filter: Filter::all_enabled(),
             random: 0,
             table: ProcessTable::default(),
-            resolved: HashMap::new(),
             exited_tasks: 0,
             sink: EventSink {
                 config: Config::default(),
