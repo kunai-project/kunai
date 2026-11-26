@@ -973,7 +973,7 @@ impl EventSink<'_> {
         scan_result
     }
 
-    fn handle_actions<T>(&mut self, event: &T, actions: &HashSet<String>, is_detection: bool)
+    fn handle_actions<T>(&mut self, event: &T)
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
@@ -981,40 +981,46 @@ impl EventSink<'_> {
             return;
         }
 
+        let detection_actions = event.get_detection().as_ref().map(|d| &d.actions);
+        let filter_actions = event.get_filter().as_ref().map(|f| &f.actions);
+
         // some actions are allowed only for detections
-        #[allow(clippy::collapsible_if)]
-        if is_detection {
-            // for the moment we only support killing the
-            // task itself and not its parent. Additional
-            // care must be taken to the parent as we need
-            // to be sure we are not killing something critical.
-            // Generally speaking killing action must be done with
-            // care as sending a SIGKILL to a critical process
-            // might impact the system.
-            if actions.contains(Action::Kill.as_str()) {
-                // SIGKILL kills the whole thread group, so we target the
-                // process rather than the thread which raised the event
-                let tgid = event.info().task.tgid;
-                let guuid = event.info().task.guuid;
-                let leader_start_time_ns = ProcUuid::from(guuid).leader_start_time_ns;
-                // don't kill ourself: this check is redundant because kunai
-                // events aren't supposed to arrive until here but it is a cheap test
-                if tgid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
-                    // this is the kind of information we want to have
-                    // at all time so we put this as a warning not to
-                    // be disabled by the default logging policy
-                    warn!("sending SIGKILL to PID={tgid}");
-                    if let Err(e) = kill_process(tgid, leader_start_time_ns, libc::SIGKILL) {
-                        error!("error sending SIGKILL to PID={tgid}: {e}")
-                    }
-                    // a failed attempt would fail again on later detections
-                    self.killed_tasks.insert(guuid);
+        let is_kill = detection_actions.is_some_and(|a| a.contains(Action::Kill.as_str()));
+        // both rule kinds may ask for a scan, it must still run once
+        let is_scan_files = [detection_actions, filter_actions]
+            .into_iter()
+            .flatten()
+            .any(|a| a.contains(Action::ScanFiles.as_str()));
+
+        // for the moment we only support killing the
+        // task itself and not its parent. Additional
+        // care must be taken to the parent as we need
+        // to be sure we are not killing something critical.
+        // Generally speaking killing action must be done with
+        // care as sending a SIGKILL to a critical process
+        // might impact the system.
+        if is_kill {
+            // SIGKILL kills the whole thread group, so we target the
+            // process rather than the thread which raised the event
+            let tgid = event.info().task.tgid;
+            let guuid = event.info().task.guuid;
+            let leader_start_time_ns = ProcUuid::from(guuid).leader_start_time_ns;
+            // don't kill ourself: this check is redundant because kunai
+            // events aren't supposed to arrive until here but it is a cheap test
+            if tgid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
+                // this is the kind of information we want to have
+                // at all time so we put this as a warning not to
+                // be disabled by the default logging policy
+                warn!("sending SIGKILL to PID={tgid}");
+                if let Err(e) = kill_process(tgid, leader_start_time_ns, libc::SIGKILL) {
+                    error!("error sending SIGKILL to PID={tgid}: {e}")
                 }
+                // a failed attempt would fail again on later detections
+                self.killed_tasks.insert(guuid);
             }
         }
 
-        // if action contains scan-file and if scan events are enabled
-        if self.scan_events_enabled && actions.contains(Action::ScanFiles.as_str()) {
+        if self.scan_events_enabled && is_scan_files {
             let _ = self
                 .action_scan_files(event)
                 .inspect_err(|e| error!("{} action failed: {e}", Action::ScanFiles));
@@ -1139,7 +1145,7 @@ impl EventSink<'_> {
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
-        let mut printed = false;
+        let mut print = false;
 
         // default: we have neither rules nor iocs
         // to scan for so we print event
@@ -1154,26 +1160,21 @@ impl EventSink<'_> {
             event.set_detection(d);
 
             // we print event only if needed
-            printed = if severity >= self.config.scanner.min_severity {
-                self.serialize_print(event)
-            } else {
-                false
-            };
-
-            // get_detection will always be false for filters
-            if let Some(d) = event.get_detection() {
-                self.handle_actions(event, &d.actions, true)
-            }
+            print = severity >= self.config.scanner.min_severity;
         }
+
         if let Some(f) = sr.filter {
             event.set_filter(f);
-            printed = self.serialize_print(event);
-            if let Some(f) = event.get_filter() {
-                self.handle_actions(event, &f.actions, false)
-            }
+            print = true;
         }
 
-        printed
+        if print {
+            self.serialize_print(event);
+        }
+
+        self.handle_actions(event);
+
+        print
     }
 }
 
