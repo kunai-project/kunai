@@ -804,7 +804,7 @@ pub enum Output {
     // variant too big, boxing suggested by clippy
     File(Box<firo::File>),
     #[cfg(test)]
-    Sink(io::Sink),
+    Memory(Vec<u8>),
 }
 
 impl Output {
@@ -830,7 +830,7 @@ impl io::Write for Output {
             Self::Stderr(o) => o.write(buf),
             Self::File(o) => o.write(buf),
             #[cfg(test)]
-            Self::Sink(o) => o.write(buf),
+            Self::Memory(o) => o.write(buf),
         }
     }
 
@@ -840,7 +840,7 @@ impl io::Write for Output {
             Self::Stderr(o) => o.flush(),
             Self::File(o) => o.flush(),
             #[cfg(test)]
-            Self::Sink(o) => o.flush(),
+            Self::Memory(o) => o.flush(),
         }
     }
 }
@@ -4388,7 +4388,7 @@ mod tests {
                 iocs: HashMap::new(),
                 caches: Caches::with_max_entries(16),
                 killed_tasks: LruHashSet::with_max_entries(16),
-                output: Output::Sink(io::sink()),
+                output: Output::Memory(Vec::new()),
                 file_scanner: None,
                 magic_db: magic_db::load().unwrap(),
                 scan_events_enabled: false,
@@ -4868,5 +4868,90 @@ mod tests {
             json["detection"]["iocs"],
             serde_json::json!([RESOLVED_IP.to_string()])
         );
+    }
+
+    fn output_lines(consumer: &EventConsumer) -> Vec<serde_json::Value> {
+        let Output::Memory(output) = &consumer.sink.output else {
+            panic!("tests must write to memory");
+        };
+        serde_json::Deserializer::from_slice(output)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn consumer_with_rules(rules: &[String]) -> EventConsumer<'static> {
+        let mut compiler = Compiler::new();
+        for rule in rules {
+            compiler.load_rules_from_str(rule).unwrap();
+        }
+        let mut consumer = event_consumer();
+        consumer.sink.engine = Engine::try_from(compiler).unwrap();
+        consumer
+    }
+
+    // header holds the rule's name, and optionally its type and actions
+    fn task_rule(header: &str, tgid: i32) -> String {
+        format!("{header}\nmatches:\n  $task: .info.task.tgid == '{tgid}'\ncondition: $task\n")
+    }
+
+    #[test]
+    fn event_matching_detection_and_filter_is_printed_once_with_both() {
+        let mut consumer = consumer_with_rules(&[
+            task_rule("name: test.detection", 100),
+            task_rule("name: test.filter\ntype: filter", 100),
+        ]);
+
+        consumer.handle_event(prctl_event(task_info(100, creds(1000))));
+
+        let lines = output_lines(&consumer);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0]["detection"]["rules"],
+            serde_json::json!(["test.detection"])
+        );
+        assert_eq!(
+            lines[0]["filter"]["rules"],
+            serde_json::json!(["test.filter"])
+        );
+    }
+
+    #[test]
+    fn filter_rule_cannot_kill() {
+        let (child, task) = spawn_victim();
+        let mut consumer = consumer_with_rules(&[
+            task_rule("name: test.detection", task.tgid),
+            task_rule(
+                "name: test.filter\ntype: filter\nactions: [kill]",
+                task.tgid,
+            ),
+        ]);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGTERM));
+    }
+
+    #[test]
+    fn scan_files_asked_by_detection_and_filter_runs_once() {
+        let mut consumer = consumer_with_rules(&[
+            task_rule("name: test.detection\nactions: [scan-files]", 100),
+            task_rule(
+                "name: test.filter\ntype: filter\nactions: [scan-files]",
+                100,
+            ),
+        ]);
+        consumer.sink.scan_events_enabled = true;
+        let mut task = tracked_process(&mut consumer, 100, TaskInfo::default());
+        // the scan fails in this unknown namespace but still reports a file_scan event
+        task.namespaces.mnt = BpfOption::Some(1);
+
+        consumer.handle_event(prctl_event(task));
+
+        let scans = output_lines(&consumer)
+            .into_iter()
+            .filter(|line| line["info"]["event"]["name"] == "file_scan")
+            .count();
+        assert_eq!(scans, 1);
     }
 }
