@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - DNS names in `dns_query` events are lowercased (ASCII letters only), in
   the query, in answer records and in the `hostname` of later network
   events. Domain IoCs and rules must use lowercase.
+- The `hostname` of `connect` and `send_data` events comes only from DNS
+  answers received by the same process since its last `execve`, so a
+  process can no longer label another one's connections with names it
+  forged. Applications resolving through a local service instead of port
+  53 (glibc `nss-resolve` with systemd-resolved, nscd) now get `?`.
 - DNS names are escaped label by label: invalid UTF-8 bytes are written as
   `\xNN` and a `.` inside a label as `\x2e`, so a label holding a dot cannot
   pass for several labels.
