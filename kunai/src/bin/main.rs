@@ -804,7 +804,7 @@ pub enum Output {
     // variant too big, boxing suggested by clippy
     File(Box<firo::File>),
     #[cfg(test)]
-    Sink(io::Sink),
+    Memory(Vec<u8>),
 }
 
 impl Output {
@@ -830,7 +830,7 @@ impl io::Write for Output {
             Self::Stderr(o) => o.write(buf),
             Self::File(o) => o.write(buf),
             #[cfg(test)]
-            Self::Sink(o) => o.write(buf),
+            Self::Memory(o) => o.write(buf),
         }
     }
 
@@ -840,7 +840,7 @@ impl io::Write for Output {
             Self::Stderr(o) => o.flush(),
             Self::File(o) => o.flush(),
             #[cfg(test)]
-            Self::Sink(o) => o.flush(),
+            Self::Memory(o) => o.flush(),
         }
     }
 }
@@ -973,7 +973,7 @@ impl EventSink<'_> {
         scan_result
     }
 
-    fn handle_actions<T>(&mut self, event: &T, actions: &HashSet<String>, is_detection: bool)
+    fn handle_actions<T>(&mut self, event: &T)
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
@@ -981,40 +981,46 @@ impl EventSink<'_> {
             return;
         }
 
+        let detection_actions = event.get_detection().as_ref().map(|d| &d.actions);
+        let filter_actions = event.get_filter().as_ref().map(|f| &f.actions);
+
         // some actions are allowed only for detections
-        #[allow(clippy::collapsible_if)]
-        if is_detection {
-            // for the moment we only support killing the
-            // task itself and not its parent. Additional
-            // care must be taken to the parent as we need
-            // to be sure we are not killing something critical.
-            // Generally speaking killing action must be done with
-            // care as sending a SIGKILL to a critical process
-            // might impact the system.
-            if actions.contains(Action::Kill.as_str()) {
-                // SIGKILL kills the whole thread group, so we target the
-                // process rather than the thread which raised the event
-                let tgid = event.info().task.tgid;
-                let guuid = event.info().task.guuid;
-                let leader_start_time_ns = ProcUuid::from(guuid).leader_start_time_ns;
-                // don't kill ourself: this check is redundant because kunai
-                // events aren't supposed to arrive until here but it is a cheap test
-                if tgid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
-                    // this is the kind of information we want to have
-                    // at all time so we put this as a warning not to
-                    // be disabled by the default logging policy
-                    warn!("sending SIGKILL to PID={tgid}");
-                    if let Err(e) = kill_process(tgid, leader_start_time_ns, libc::SIGKILL) {
-                        error!("error sending SIGKILL to PID={tgid}: {e}")
-                    }
-                    // a failed attempt would fail again on later detections
-                    self.killed_tasks.insert(guuid);
+        let is_kill = detection_actions.is_some_and(|a| a.contains(Action::Kill.as_str()));
+        // both rule kinds may ask for a scan, it must still run once
+        let is_scan_files = [detection_actions, filter_actions]
+            .into_iter()
+            .flatten()
+            .any(|a| a.contains(Action::ScanFiles.as_str()));
+
+        // for the moment we only support killing the
+        // task itself and not its parent. Additional
+        // care must be taken to the parent as we need
+        // to be sure we are not killing something critical.
+        // Generally speaking killing action must be done with
+        // care as sending a SIGKILL to a critical process
+        // might impact the system.
+        if is_kill {
+            // SIGKILL kills the whole thread group, so we target the
+            // process rather than the thread which raised the event
+            let tgid = event.info().task.tgid;
+            let guuid = event.info().task.guuid;
+            let leader_start_time_ns = ProcUuid::from(guuid).leader_start_time_ns;
+            // don't kill ourself: this check is redundant because kunai
+            // events aren't supposed to arrive until here but it is a cheap test
+            if tgid as u32 != process::id() && !self.killed_tasks.contains(&guuid) {
+                // this is the kind of information we want to have
+                // at all time so we put this as a warning not to
+                // be disabled by the default logging policy
+                warn!("sending SIGKILL to PID={tgid}");
+                if let Err(e) = kill_process(tgid, leader_start_time_ns, libc::SIGKILL) {
+                    error!("error sending SIGKILL to PID={tgid}: {e}")
                 }
+                // a failed attempt would fail again on later detections
+                self.killed_tasks.insert(guuid);
             }
         }
 
-        // if action contains scan-file and if scan events are enabled
-        if self.scan_events_enabled && actions.contains(Action::ScanFiles.as_str()) {
+        if self.scan_events_enabled && is_scan_files {
             let _ = self
                 .action_scan_files(event)
                 .inspect_err(|e| error!("{} action failed: {e}", Action::ScanFiles));
@@ -1139,7 +1145,7 @@ impl EventSink<'_> {
     where
         T: for<'e> KunaiEvent<'e> + Serialize,
     {
-        let mut printed = false;
+        let mut print = false;
 
         // default: we have neither rules nor iocs
         // to scan for so we print event
@@ -1154,26 +1160,21 @@ impl EventSink<'_> {
             event.set_detection(d);
 
             // we print event only if needed
-            printed = if severity >= self.config.scanner.min_severity {
-                self.serialize_print(event)
-            } else {
-                false
-            };
-
-            // get_detection will always be false for filters
-            if let Some(d) = event.get_detection() {
-                self.handle_actions(event, &d.actions, true)
-            }
+            print = severity >= self.config.scanner.min_severity;
         }
+
         if let Some(f) = sr.filter {
             event.set_filter(f);
-            printed = self.serialize_print(event);
-            if let Some(f) = event.get_filter() {
-                self.handle_actions(event, &f.actions, false)
-            }
+            print = true;
         }
 
-        printed
+        if print {
+            self.serialize_print(event);
+        }
+
+        self.handle_actions(event);
+
+        print
     }
 }
 
@@ -4388,7 +4389,7 @@ mod tests {
                 iocs: HashMap::new(),
                 caches: Caches::with_max_entries(16),
                 killed_tasks: LruHashSet::with_max_entries(16),
-                output: Output::Sink(io::sink()),
+                output: Output::Memory(Vec::new()),
                 file_scanner: None,
                 magic_db: magic_db::load().unwrap(),
                 scan_events_enabled: false,
@@ -4868,5 +4869,90 @@ mod tests {
             json["detection"]["iocs"],
             serde_json::json!([RESOLVED_IP.to_string()])
         );
+    }
+
+    fn output_lines(consumer: &EventConsumer) -> Vec<serde_json::Value> {
+        let Output::Memory(output) = &consumer.sink.output else {
+            panic!("tests must write to memory");
+        };
+        serde_json::Deserializer::from_slice(output)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn consumer_with_rules(rules: &[String]) -> EventConsumer<'static> {
+        let mut compiler = Compiler::new();
+        for rule in rules {
+            compiler.load_rules_from_str(rule).unwrap();
+        }
+        let mut consumer = event_consumer();
+        consumer.sink.engine = Engine::try_from(compiler).unwrap();
+        consumer
+    }
+
+    // header holds the rule's name, and optionally its type and actions
+    fn task_rule(header: &str, tgid: i32) -> String {
+        format!("{header}\nmatches:\n  $task: .info.task.tgid == '{tgid}'\ncondition: $task\n")
+    }
+
+    #[test]
+    fn event_matching_detection_and_filter_is_printed_once_with_both() {
+        let mut consumer = consumer_with_rules(&[
+            task_rule("name: test.detection", 100),
+            task_rule("name: test.filter\ntype: filter", 100),
+        ]);
+
+        consumer.handle_event(prctl_event(task_info(100, creds(1000))));
+
+        let lines = output_lines(&consumer);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0]["detection"]["rules"],
+            serde_json::json!(["test.detection"])
+        );
+        assert_eq!(
+            lines[0]["filter"]["rules"],
+            serde_json::json!(["test.filter"])
+        );
+    }
+
+    #[test]
+    fn filter_rule_cannot_kill() {
+        let (child, task) = spawn_victim();
+        let mut consumer = consumer_with_rules(&[
+            task_rule("name: test.detection", task.tgid),
+            task_rule(
+                "name: test.filter\ntype: filter\nactions: [kill]",
+                task.tgid,
+            ),
+        ]);
+
+        consumer.handle_event(prctl_event(task));
+
+        assert_eq!(terminate(child), Some(libc::SIGTERM));
+    }
+
+    #[test]
+    fn scan_files_asked_by_detection_and_filter_runs_once() {
+        let mut consumer = consumer_with_rules(&[
+            task_rule("name: test.detection\nactions: [scan-files]", 100),
+            task_rule(
+                "name: test.filter\ntype: filter\nactions: [scan-files]",
+                100,
+            ),
+        ]);
+        consumer.sink.scan_events_enabled = true;
+        let mut task = tracked_process(&mut consumer, 100, TaskInfo::default());
+        // the scan fails in this unknown namespace but still reports a file_scan event
+        task.namespaces.mnt = BpfOption::Some(1);
+
+        consumer.handle_event(prctl_event(task));
+
+        let scans = output_lines(&consumer)
+            .into_iter()
+            .filter(|line| line["info"]["event"]["name"] == "file_scan")
+            .count();
+        assert_eq!(scans, 1);
     }
 }
