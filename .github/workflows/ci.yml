@@ -23,7 +23,7 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
           - arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             target: aarch64-unknown-linux-musl
 
     steps:
