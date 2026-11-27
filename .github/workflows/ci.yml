@@ -97,7 +97,7 @@ jobs:
             packages: qemu-system-x86
           - arch: aarch64
             runner: ubuntu-latest
-            packages: qemu-system-arm
+            packages: qemu-system-arm zstd
 
     steps:
       - name: Install system tools
