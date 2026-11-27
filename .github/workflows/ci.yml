@@ -149,3 +149,13 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: ./scripts/ci/test_kernel.sh 6.6
+
+      - name: Linux Kernel LTS 6.12
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 6.12
+
+      - name: Linux Kernel LTS 6.18
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 6.18
