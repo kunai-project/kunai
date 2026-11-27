@@ -23,7 +23,7 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
           - arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             target: aarch64-unknown-linux-musl
 
     steps:
@@ -97,7 +97,7 @@ jobs:
             packages: qemu-system-x86
           - arch: aarch64
             runner: ubuntu-latest
-            packages: qemu-system-arm
+            packages: qemu-system-arm zstd
 
     steps:
       - name: Install system tools
@@ -149,3 +149,13 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: ./scripts/ci/test_kernel.sh 6.6
+
+      - name: Linux Kernel LTS 6.12
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 6.12
+
+      - name: Linux Kernel LTS 6.18
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/test_kernel.sh 6.18

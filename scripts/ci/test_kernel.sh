@@ -88,7 +88,17 @@ if [[ "$arch" == "amd64" ]]; then
 elif [[ "$arch" == "arm64" ]]; then
     # we need to run cortex-a57 otherwise older kernels won't boot
     # we need to remove console=ttyS0
-    qemu-system-aarch64 -M virt -smp 4 -cpu cortex-a57 -kernel ${cache_dir}/vmlinuz* -m 2G -initrd $initramfs -append "lsm=bpf" -nographic ${QEMU_ARGS[@]} | tee ${kernel_logs}
+    kernel_image=$(echo ${cache_dir}/vmlinuz*)
+    # recent arm64 kernels are EFI zboot images (header: "zimg" at 4, payload offset at 8, payload size at 12, compression type at 24)
+    # QEMU can't load zstd ones, so we extract the raw Image ourselves
+    if [[ $(head -c 8 $kernel_image | tail -c 4) == "zimg" && $(tail -c +25 $kernel_image | head -c 4) == "zstd" ]]
+    then
+        payload_offset=$(od -An -t u4 -j 8 -N 4 $kernel_image)
+        payload_size=$(od -An -t u4 -j 12 -N 4 $kernel_image)
+        tail -c +$((payload_offset + 1)) $kernel_image | head -c $payload_size | zstd -dc > ${tmp_dir}/Image
+        kernel_image=${tmp_dir}/Image
+    fi
+    qemu-system-aarch64 -M virt -smp 4 -cpu cortex-a57 -kernel ${kernel_image} -m 2G -initrd $initramfs -append "lsm=bpf" -nographic ${QEMU_ARGS[@]} | tee ${kernel_logs}
 else
     echo "inimplemented arch: $arch"
     exit 1
